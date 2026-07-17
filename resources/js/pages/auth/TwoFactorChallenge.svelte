@@ -1,0 +1,127 @@
+<script lang="ts">
+    import { Form, setLayoutProps } from '@inertiajs/svelte';
+    import AppHead from '@/components/AppHead.svelte';
+    import InputError from '@/components/InputError.svelte';
+    import { Button } from '@/components/ui/button';
+    import { Input } from '@/components/ui/input';
+    import {
+        InputOTP,
+        InputOTPGroup,
+        InputOTPSlot,
+    } from '@/components/ui/input-otp';
+    import { t } from '@/lib/i18n';
+    import { store } from '@/routes/two-factor/login';
+    import type { TwoFactorConfigContent } from '@/types';
+
+    let showRecoveryInput = $state(false);
+    let code = $state('');
+
+    const authConfigContent: TwoFactorConfigContent = $derived.by(() => {
+        if (showRecoveryInput) {
+            return {
+                title: t('Recovery code'),
+                description: t(
+                    'Please confirm access to your account by entering one of your emergency recovery codes.',
+                ),
+                buttonText: t('login using an authentication code'),
+            };
+        }
+
+        return {
+            title: t('Authentication code'),
+            description: t(
+                'Enter the authentication code provided by your authenticator application.',
+            ),
+            buttonText: t('login using a recovery code'),
+        };
+    });
+
+    $effect(() => {
+        setLayoutProps({
+            title: authConfigContent.title,
+            description: authConfigContent.description,
+        });
+    });
+
+    function toggleRecoveryMode(clearErrors: () => void) {
+        showRecoveryInput = !showRecoveryInput;
+        clearErrors();
+        code = '';
+    }
+</script>
+
+<AppHead title={t('Two-factor authentication')} />
+
+<div class="space-y-6">
+    {#if !showRecoveryInput}
+        <Form
+            {...store.form()}
+            class="space-y-4"
+            resetOnError
+            onError={() => (code = '')}
+        >
+            {#snippet children({ errors, processing, clearErrors })}
+                <input type="hidden" name="code" value={code} />
+                <div
+                    class="flex flex-col items-center justify-center space-y-3 text-center"
+                >
+                    <div class="flex w-full items-center justify-center">
+                        <InputOTP
+                            id="otp"
+                            bind:value={code}
+                            maxlength={6}
+                            disabled={processing}
+                            autofocus
+                        >
+                            <InputOTPGroup>
+                                {#each { length: 6 } as _, i (i)}
+                                    <InputOTPSlot index={i} />
+                                {/each}
+                            </InputOTPGroup>
+                        </InputOTP>
+                    </div>
+                    <InputError message={errors.code} />
+                </div>
+                <Button type="submit" class="w-full" disabled={processing}
+                    >{t('Continue')}</Button
+                >
+                <div class="text-center text-sm text-muted-foreground">
+                    <span>{t('or you can')} </span>
+                    <button
+                        type="button"
+                        class="text-foreground underline decoration-neutral-300 underline-offset-4 transition-colors duration-300 ease-out hover:decoration-current! dark:decoration-neutral-500"
+                        onclick={() => toggleRecoveryMode(clearErrors)}
+                    >
+                        {authConfigContent.buttonText}
+                    </button>
+                </div>
+            {/snippet}
+        </Form>
+    {:else}
+        <Form {...store.form()} class="space-y-4" resetOnError>
+            {#snippet children({ errors, processing, clearErrors })}
+                <Input
+                    name="recovery_code"
+                    type="text"
+                    placeholder={t('Enter recovery code')}
+                    required
+                />
+                <InputError message={errors.recovery_code} />
+                <Button type="submit" class="w-full" disabled={processing}
+                    >{t('Continue')}</Button
+                >
+
+                <div class="text-center text-sm text-muted-foreground">
+                    <span>{t('or you can')} </span>
+                    <button
+                        type="button"
+                        class="text-foreground underline decoration-neutral-300 underline-offset-4 transition-colors duration-300 ease-out hover:decoration-current! dark:decoration-neutral-500"
+                        onclick={() => toggleRecoveryMode(clearErrors)}
+                    >
+                        {authConfigContent.buttonText}
+                    </button>
+                </div>
+            {/snippet}
+        </Form>
+    {/if}
+</div>

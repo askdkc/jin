@@ -1,0 +1,152 @@
+<script module lang="ts">
+    import NotificationController from '@/actions/App/Http/Controllers/NotificationController';
+    import type { Team } from '@/types';
+
+    export const layout = (props: { currentTeam: Team }) => ({
+        breadcrumbs: [
+            {
+                title: 'Notifications',
+                href: NotificationController.index(props.currentTeam.slug),
+            },
+        ],
+    });
+</script>
+
+<script lang="ts">
+    import { Form, Link } from '@inertiajs/svelte';
+    import CheckInController from '@/actions/App/Http/Controllers/CheckInController';
+    import MessageBoardController from '@/actions/App/Http/Controllers/MessageBoardController';
+    import ProjectTodoController from '@/actions/App/Http/Controllers/ProjectTodoController';
+    import AppHead from '@/components/AppHead.svelte';
+    import { Button } from '@/components/ui/button';
+    import { Card, CardContent } from '@/components/ui/card';
+    import { t } from '@/lib/i18n';
+    import type { ProjectNotification } from '@/types';
+
+    let {
+        currentTeam,
+        notifications,
+    }: {
+        currentTeam: Team;
+        notifications: ProjectNotification[];
+    } = $props();
+
+    const hasUnread = $derived(
+        notifications.some((notification) => !notification.read),
+    );
+    const formatDate = (value: string | null): string =>
+        value
+            ? new Intl.DateTimeFormat('ja-JP', {
+                  dateStyle: 'medium',
+                  timeStyle: 'short',
+              }).format(new Date(value))
+            : '';
+    const notificationText = (notification: ProjectNotification): string => {
+        switch (notification.type) {
+            case 'check_in_due':
+                return t('A check-in is ready for your answer');
+            case 'todo_assigned':
+                return `${notification.actorName ?? t('Deleted user')}${t(' assigned you a to-do')}`;
+            case 'todo_comment':
+                return `${notification.actorName ?? t('Deleted user')}${t(' commented on a to-do you follow')}`;
+            case 'todo_completed':
+                return `${notification.actorName ?? t('Deleted user')}${t(' completed a to-do you follow')}`;
+            case 'todo_due':
+                return t('A to-do assigned to you is due today');
+            case 'mention_message':
+                return `${notification.actorName ?? t('Deleted user')}${t(' mentioned you in a message')}`;
+            case 'mention_todo':
+                return `${notification.actorName ?? t('Deleted user')}${t(' mentioned you in a to-do')}`;
+            default:
+                return `${notification.actorName ?? t('Deleted user')}${t(' commented on a subscribed message')}`;
+        }
+    };
+</script>
+
+<AppHead title={t('Notifications')} />
+
+<div class="mx-auto w-full max-w-3xl space-y-6 p-4 sm:p-6">
+    <div
+        class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+    >
+        <div>
+            <h1 class="text-2xl font-semibold tracking-tight">
+                {t('Notifications')}
+            </h1>
+            <p class="text-sm text-muted-foreground">
+                {t('Updates from work you follow')}
+            </p>
+        </div>
+        {#if hasUnread}
+            <Form
+                {...NotificationController.markAllRead.form(currentTeam.slug)}
+            >
+                {#snippet children({ processing })}
+                    <Button
+                        type="submit"
+                        variant="outline"
+                        size="sm"
+                        disabled={processing}>{t('Mark all as read')}</Button
+                    >
+                {/snippet}
+            </Form>
+        {/if}
+    </div>
+
+    {#if notifications.length === 0}
+        <Card>
+            <CardContent
+                class="py-10 text-center text-sm text-muted-foreground"
+            >
+                {t('No notifications yet')}
+            </CardContent>
+        </Card>
+    {:else}
+        <div class="space-y-3">
+            {#each notifications as notification (notification.id)}
+                <Card class={!notification.read ? 'bg-primary/5' : ''}>
+                    <CardContent class="pt-6">
+                        <Link
+                            href={notification.type === 'message_comment' ||
+                            notification.type === 'mention_message'
+                                ? notification.messageBoardPostId !== null
+                                    ? MessageBoardController.show([
+                                          currentTeam.slug,
+                                          notification.projectId,
+                                          notification.messageBoardPostId,
+                                      ])
+                                    : MessageBoardController.index([
+                                          currentTeam.slug,
+                                          notification.projectId,
+                                      ])
+                                : notification.type === 'check_in_due'
+                                  ? CheckInController.index([
+                                        currentTeam.slug,
+                                        notification.projectId,
+                                    ])
+                                  : ProjectTodoController.index([
+                                        currentTeam.slug,
+                                        notification.projectId,
+                                    ])}
+                            class="block rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                            <p class="break-words text-sm">
+                                {notificationText(notification)}
+                            </p>
+                            <p
+                                class="mt-1 break-words text-sm text-muted-foreground"
+                            >
+                                {notification.projectName} · {notification.messageTitle ??
+                                    notification.todoTitle ??
+                                    notification.checkInQuestion}
+                            </p>
+                            <p class="mt-2 text-xs text-muted-foreground">
+                                {formatDate(notification.createdAt)}
+                            </p>
+                        </Link>
+                    </CardContent>
+                </Card>
+            {/each}
+        </div>
+    {/if}
+</div>

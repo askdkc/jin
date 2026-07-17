@@ -1,0 +1,345 @@
+@import 'trix/dist/trix.css';
+@import 'tailwindcss';
+
+@import 'tw-animate-css';
+
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../storage/framework/views/*.php';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    --font-sans:
+        Instrument Sans, -apple-system, BlinkMacSystemFont, 'Hiragino Sans',
+        'Yu Gothic UI', Meiryo, ui-sans-serif, system-ui, sans-serif,
+        'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',
+        'Noto Color Emoji';
+
+    --radius-lg: var(--radius);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-sm: calc(var(--radius) - 4px);
+
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+
+    --color-popover: var(--popover);
+    --color-popover-foreground: var(--popover-foreground);
+
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+
+    --color-destructive: var(--destructive);
+    --color-destructive-foreground: var(--destructive-foreground);
+
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+
+    --color-chart-1: var(--chart-1);
+    --color-chart-2: var(--chart-2);
+    --color-chart-3: var(--chart-3);
+    --color-chart-4: var(--chart-4);
+    --color-chart-5: var(--chart-5);
+
+    --color-sidebar: var(--sidebar-background);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-ring: var(--sidebar-ring);
+}
+
+/*
+  The default border color has changed to `currentColor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+    *,
+    ::after,
+    ::before,
+    ::backdrop,
+    ::file-selector-button {
+        border-color: var(--color-gray-200, currentColor);
+    }
+}
+
+trix-toolbar .trix-button-group--file-tools {
+    display: none;
+}
+
+trix-editor.rich-text-editor {
+    min-height: 8rem;
+    border-color: var(--color-input);
+    border-radius: var(--radius-md);
+    background: var(--color-card);
+    color: var(--color-foreground);
+    font-size: 0.875rem;
+}
+
+trix-editor.rich-text-editor:focus {
+    border-color: var(--color-ring);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-ring) 35%, transparent);
+}
+
+trix-toolbar .trix-button-group {
+    border-color: var(--color-input);
+    background: var(--color-secondary);
+}
+
+trix-toolbar .trix-button,
+trix-toolbar .trix-button:not(:first-child) {
+    border-color: var(--color-input);
+    color: var(--color-foreground);
+}
+
+trix-toolbar .trix-button:hover {
+    background: var(--color-accent);
+}
+
+trix-toolbar .trix-button.trix-active {
+    background: var(--color-primary);
+    color: var(--color-primary-foreground);
+}
+
+trix-toolbar .trix-dialog {
+    border-color: var(--color-border);
+    background: var(--color-popover);
+    color: var(--color-popover-foreground);
+    box-shadow: 0 0.3em 1em color-mix(in srgb, black 35%, transparent);
+}
+
+trix-toolbar .trix-input--dialog {
+    border-color: var(--color-input);
+    background: var(--color-background);
+    color: var(--color-foreground);
+}
+
+.dark trix-toolbar .trix-button--icon::before {
+    filter: invert(1);
+}
+
+.dark trix-toolbar .trix-button--icon.trix-active::before {
+    filter: none;
+}
+
+.rich-text-content {
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.rich-text-content a {
+    color: var(--color-primary);
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+}
+
+.rich-text-content img,
+trix-editor.rich-text-editor img {
+    display: block;
+    max-width: 20rem;
+    max-height: 20rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+}
+
+.rich-text-content pre,
+trix-editor.rich-text-editor pre {
+    overflow-x: auto;
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+    padding: 0.75rem;
+    font-family:
+        ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.8125rem;
+    white-space: pre;
+}
+
+/* Shiki renders both themes into CSS variables per token (defaultColor: false);
+   these rules pick the active one to match the app's class-based dark mode. */
+.rich-text-content pre.shiki,
+.rich-text-content pre.shiki span {
+    color: var(--shiki-light);
+    background-color: var(--shiki-light-bg);
+}
+
+.dark .rich-text-content pre.shiki,
+.dark .rich-text-content pre.shiki span {
+    color: var(--shiki-dark);
+    background-color: var(--shiki-dark-bg);
+}
+
+.rich-text-content .shiki-block {
+    position: relative;
+}
+
+.rich-text-content .shiki-block pre.shiki {
+    margin: 0;
+}
+
+.rich-text-content .shiki-language-badge {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    z-index: 1;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-foreground) 12%, transparent);
+    padding: 0.125rem 0.5rem;
+    font-family:
+        ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    color: var(--color-muted-foreground);
+}
+
+.rich-text-content .table-scroll,
+trix-editor.rich-text-editor .table-scroll {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.rich-text-content table,
+trix-editor.rich-text-editor table {
+    width: 100%;
+    min-width: 24rem;
+    border-collapse: collapse;
+    white-space: normal;
+}
+
+.rich-text-content th,
+.rich-text-content td,
+trix-editor.rich-text-editor th,
+trix-editor.rich-text-editor td {
+    border: 1px solid var(--color-border);
+    padding: 0.5rem 0.625rem;
+    text-align: left;
+    vertical-align: top;
+}
+
+.rich-text-content th,
+trix-editor.rich-text-editor th {
+    background: var(--color-muted);
+    font-weight: 700;
+}
+
+@media (max-width: 640px) {
+    trix-toolbar .trix-button-row {
+        flex-wrap: wrap;
+        justify-content: flex-start;
+        gap: 0.25rem;
+    }
+
+    trix-toolbar .trix-button-group {
+        margin: 0;
+    }
+}
+
+@layer utilities {
+    body,
+    html {
+        --font-sans:
+            'Instrument Sans', -apple-system, BlinkMacSystemFont,
+            'Hiragino Sans', 'Yu Gothic UI', Meiryo, ui-sans-serif, system-ui,
+            sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+            'Segoe UI Symbol', 'Noto Color Emoji';
+    }
+}
+
+:root {
+    --background: hsl(45 31% 95%);
+    --foreground: hsl(93 10% 14%);
+    --card: hsl(0 0% 100%);
+    --card-foreground: hsl(93 10% 14%);
+    --popover: hsl(0 0% 100%);
+    --popover-foreground: hsl(93 10% 14%);
+    --primary: hsl(156 40% 26%);
+    --primary-foreground: hsl(0 0% 100%);
+    --secondary: hsl(43 23% 91%);
+    --secondary-foreground: hsl(93 10% 18%);
+    --muted: hsl(42 20% 92%);
+    --muted-foreground: hsl(105 5% 42%);
+    --accent: hsl(28 48% 92%);
+    --accent-foreground: hsl(24 54% 27%);
+    --destructive: hsl(5 76% 40%);
+    --destructive-foreground: hsl(0 0% 98%);
+    --border: hsl(48 14% 85%);
+    --input: hsl(48 14% 82%);
+    --ring: hsl(156 40% 26%);
+    --chart-1: hsl(12 76% 61%);
+    --chart-2: hsl(173 58% 39%);
+    --chart-3: hsl(197 37% 24%);
+    --chart-4: hsl(43 74% 66%);
+    --chart-5: hsl(27 87% 67%);
+    --radius: 0.75rem;
+    --sidebar-background: hsl(45 27% 93%);
+    --sidebar-foreground: hsl(93 10% 22%);
+    --sidebar-primary: hsl(156 40% 26%);
+    --sidebar-primary-foreground: hsl(0 0% 100%);
+    --sidebar-accent: hsl(43 23% 88%);
+    --sidebar-accent-foreground: hsl(93 10% 18%);
+    --sidebar-border: hsl(48 14% 83%);
+    --sidebar-ring: hsl(156 40% 26%);
+    --sidebar: hsl(45 27% 93%);
+}
+
+.dark {
+    --background: hsl(218 29% 9%);
+    --foreground: hsl(210 24% 96%);
+    --card: hsl(217 24% 13%);
+    --card-foreground: hsl(210 24% 96%);
+    --popover: hsl(217 23% 15%);
+    --popover-foreground: hsl(210 24% 96%);
+    --primary: hsl(153 42% 57%);
+    --primary-foreground: hsl(218 30% 9%);
+    --secondary: hsl(216 18% 19%);
+    --secondary-foreground: hsl(210 24% 94%);
+    --muted: hsl(216 17% 18%);
+    --muted-foreground: hsl(215 13% 68%);
+    --accent: hsl(37 26% 20%);
+    --accent-foreground: hsl(42 52% 82%);
+    --destructive: hsl(0 84% 60%);
+    --destructive-foreground: hsl(0 0% 98%);
+    --border: hsl(216 15% 25%);
+    --input: hsl(216 16% 29%);
+    --ring: hsl(153 42% 57%);
+    --chart-1: hsl(220 70% 50%);
+    --chart-2: hsl(160 60% 45%);
+    --chart-3: hsl(30 80% 55%);
+    --chart-4: hsl(280 65% 60%);
+    --chart-5: hsl(340 75% 55%);
+    --sidebar-background: hsl(220 31% 8%);
+    --sidebar-foreground: hsl(210 22% 92%);
+    --sidebar-primary: hsl(153 42% 57%);
+    --sidebar-primary-foreground: hsl(218 30% 9%);
+    --sidebar-accent: hsl(216 18% 19%);
+    --sidebar-accent-foreground: hsl(210 24% 94%);
+    --sidebar-border: hsl(216 15% 24%);
+    --sidebar-ring: hsl(153 42% 57%);
+    --sidebar: hsl(220 31% 8%);
+}
+
+@layer base {
+    * {
+        @apply border-border outline-ring/50;
+    }
+    body {
+        @apply bg-background text-foreground;
+    }
+}

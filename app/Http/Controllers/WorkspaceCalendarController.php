@@ -23,28 +23,77 @@ class WorkspaceCalendarController extends Controller
         $date = (string) ($request->validated('date')
             ?? ($request->validated('month') ? $request->validated('month').'-01' : today()->toDateString()));
         $anchor = CarbonImmutable::parse($date, $timezone)->startOfDay();
+        $ganttRange = $view === 'gantt'
+            ? (string) ($request->validated('range') ?? 'quarter')
+            : 'quarter';
 
-        [$start, $end, $previous, $next] = match ($view) {
-            'day' => [$anchor, $anchor->endOfDay(), $anchor->subDay(), $anchor->addDay()],
-            'week' => [
-                $anchor->startOfWeek(CarbonInterface::SUNDAY),
-                $anchor->endOfWeek(CarbonInterface::SATURDAY),
-                $anchor->subWeek(),
-                $anchor->addWeek(),
-            ],
-            'gantt' => [
-                $anchor->startOfWeek(CarbonInterface::SUNDAY)->subWeeks(5),
-                $anchor->startOfWeek(CarbonInterface::SUNDAY)->subWeeks(5)->addWeeks(12)->subSecond(),
-                $anchor->subWeeks(6),
-                $anchor->addWeeks(6),
-            ],
-            default => [
-                $anchor->startOfMonth(),
-                $anchor->endOfMonth(),
-                $anchor->subMonthNoOverflow(),
-                $anchor->addMonthNoOverflow(),
-            ],
-        };
+        if ($view === 'gantt') {
+            $customStart = $ganttRange === 'custom'
+                ? CarbonImmutable::parse((string) $request->validated('start'), $timezone)->startOfDay()
+                : $anchor;
+            $customEnd = $ganttRange === 'custom'
+                ? CarbonImmutable::parse((string) $request->validated('end'), $timezone)->startOfDay()
+                : $anchor;
+            $customDayCount = $customStart->diffInDays($customEnd) + 1;
+            $halfStart = $anchor->month <= 6
+                ? $anchor->startOfYear()
+                : $anchor->startOfYear()->addMonths(6);
+
+            [$start, $end, $previous, $next] = match ($ganttRange) {
+                'week' => [
+                    $anchor->startOfWeek(CarbonInterface::SUNDAY),
+                    $anchor->endOfWeek(CarbonInterface::SATURDAY),
+                    $anchor->startOfWeek(CarbonInterface::SUNDAY)->subWeek(),
+                    $anchor->startOfWeek(CarbonInterface::SUNDAY)->addWeek(),
+                ],
+                'month' => [
+                    $anchor->startOfMonth(),
+                    $anchor->endOfMonth(),
+                    $anchor->startOfMonth()->subMonthNoOverflow(),
+                    $anchor->startOfMonth()->addMonthNoOverflow(),
+                ],
+                'half-year' => [
+                    $halfStart,
+                    $halfStart->addMonths(6)->subSecond(),
+                    $halfStart->subMonths(6),
+                    $halfStart->addMonths(6),
+                ],
+                'year' => [
+                    $anchor->startOfYear(),
+                    $anchor->endOfYear(),
+                    $anchor->startOfYear()->subYear(),
+                    $anchor->startOfYear()->addYear(),
+                ],
+                'custom' => [
+                    $customStart,
+                    $customEnd->endOfDay(),
+                    $customStart->subDays($customDayCount),
+                    $customStart->addDays($customDayCount),
+                ],
+                default => [
+                    $anchor->startOfQuarter(),
+                    $anchor->endOfQuarter(),
+                    $anchor->startOfQuarter()->subQuarter(),
+                    $anchor->startOfQuarter()->addQuarter(),
+                ],
+            };
+        } else {
+            [$start, $end, $previous, $next] = match ($view) {
+                'day' => [$anchor, $anchor->endOfDay(), $anchor->subDay(), $anchor->addDay()],
+                'week' => [
+                    $anchor->startOfWeek(CarbonInterface::SUNDAY),
+                    $anchor->endOfWeek(CarbonInterface::SATURDAY),
+                    $anchor->subWeek(),
+                    $anchor->addWeek(),
+                ],
+                default => [
+                    $anchor->startOfMonth(),
+                    $anchor->endOfMonth(),
+                    $anchor->subMonthNoOverflow(),
+                    $anchor->addMonthNoOverflow(),
+                ],
+            };
+        }
         $events = ScheduleEvent::query()
             ->with('project:id,team_id,name')
             ->where('starts_at', '<=', $end)
@@ -88,12 +137,13 @@ class WorkspaceCalendarController extends Controller
 
         return Inertia::render('calendar/Index', [
             'view' => $view,
-            'date' => $anchor->toDateString(),
+            'date' => ($ganttRange === 'custom' ? $start : $anchor)->toDateString(),
             'today' => CarbonImmutable::now($timezone)->toDateString(),
             'rangeStart' => $start->toDateString(),
             'rangeEnd' => $end->toDateString(),
             'previousDate' => $previous->toDateString(),
             'nextDate' => $next->toDateString(),
+            'ganttRange' => $ganttRange,
             'month' => $anchor->format('Y-m'),
             'previousMonth' => $anchor->subMonthNoOverflow()->format('Y-m'),
             'nextMonth' => $anchor->addMonthNoOverflow()->format('Y-m'),

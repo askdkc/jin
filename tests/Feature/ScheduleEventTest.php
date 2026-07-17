@@ -46,7 +46,10 @@ test('the schedule index supports day, week, and gantt views scoped to their own
     $owner = User::factory()->create();
     $team = Team::factory()->create();
     $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
-    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create([
+        'starts_on' => '2026-08-01',
+        'ends_on' => '2026-09-30',
+    ]);
     ScheduleEvent::factory()->for($project)->for($owner, 'creator')->create([
         'title' => '週内の予定',
         'starts_at' => '2026-08-05 10:00:00',
@@ -82,6 +85,9 @@ test('the schedule index supports day, week, and gantt views scoped to their own
         ->get(route('projects.schedule.index', [$team, $project, 'view' => 'gantt', 'date' => '2026-08-05']))
         ->assertInertia(fn (Assert $page) => $page
             ->where('view', 'gantt')
+            ->where('rangeStart', '2026-08-01')
+            ->where('rangeEnd', '2026-09-30')
+            ->where('ganttUsesProjectDates', true)
             ->has('events', 2)
             ->where('events.0.endsAt', '2026-08-08T11:00'));
 });

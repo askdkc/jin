@@ -116,15 +116,55 @@ test('workspace calendar combines only accessible active project schedules', fun
     $this->get(route('calendar.index', [$team, 'view' => 'gantt', 'date' => '2026-08-05']))
         ->assertInertia(fn (Assert $page) => $page
             ->where('view', 'gantt')
-            ->where('rangeStart', '2026-06-28')
-            ->where('rangeEnd', '2026-09-19')
-            ->where('previousDate', '2026-06-24')
-            ->where('nextDate', '2026-09-16')
+            ->where('ganttRange', 'quarter')
+            ->where('rangeStart', '2026-07-01')
+            ->where('rangeEnd', '2026-09-30')
+            ->where('previousDate', '2026-04-01')
+            ->where('nextDate', '2026-10-01')
             ->has('events', 3)
             ->has('ganttProjects', 1)
             ->where('ganttProjects.0.name', '参加中')
             ->where('ganttProjects.0.startsOn', '2026-07-15')
             ->where('ganttProjects.0.endsOn', '2026-09-15'));
+
+    foreach ([
+        'week' => ['2026-08-02', '2026-08-08'],
+        'month' => ['2026-08-01', '2026-08-31'],
+        'half-year' => ['2026-07-01', '2026-12-31'],
+        'year' => ['2026-01-01', '2026-12-31'],
+    ] as $range => [$rangeStart, $rangeEnd]) {
+        $this->get(route('calendar.index', [
+            $team,
+            'view' => 'gantt',
+            'range' => $range,
+            'date' => '2026-08-05',
+        ]))->assertInertia(fn (Assert $page) => $page
+            ->where('ganttRange', $range)
+            ->where('rangeStart', $rangeStart)
+            ->where('rangeEnd', $rangeEnd));
+    }
+
+    $this->get(route('calendar.index', [
+        $team,
+        'view' => 'gantt',
+        'range' => 'custom',
+        'start' => '2026-07-20',
+        'end' => '2026-08-10',
+    ]))->assertInertia(fn (Assert $page) => $page
+        ->where('ganttRange', 'custom')
+        ->where('date', '2026-07-20')
+        ->where('rangeStart', '2026-07-20')
+        ->where('rangeEnd', '2026-08-10')
+        ->where('previousDate', '2026-06-28')
+        ->where('nextDate', '2026-08-11'));
+
+    $this->get(route('calendar.index', [
+        $team,
+        'view' => 'gantt',
+        'range' => 'custom',
+        'start' => '2026-01-01',
+        'end' => '2027-01-02',
+    ]))->assertSessionHasErrors('end');
 
     $this->get(route('calendar.index', [$team, 'view' => 'year', 'date' => 'invalid']))
         ->assertSessionHasErrors(['view', 'date']);

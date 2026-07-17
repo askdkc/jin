@@ -21,6 +21,7 @@
     import CalendarSubscriptionController from '@/actions/App/Http/Controllers/CalendarSubscriptionController';
     import ScheduleEventController from '@/actions/App/Http/Controllers/ScheduleEventController';
     import AppHead from '@/components/AppHead.svelte';
+    import InputError from '@/components/InputError.svelte';
     import { Badge } from '@/components/ui/badge';
     import { Button } from '@/components/ui/button';
     import { Card, CardContent } from '@/components/ui/card';
@@ -35,6 +36,8 @@
     } from '@/types';
 
     type CalendarView = 'day' | 'week' | 'month' | 'gantt';
+    type GanttRange =
+        'week' | 'month' | 'quarter' | 'half-year' | 'year' | 'custom';
     type CalendarDay = {
         date: string;
         inCurrentMonth: boolean;
@@ -50,6 +53,7 @@
         rangeEnd,
         previousDate,
         nextDate,
+        ganttRange,
         events,
         ganttProjects,
         subscriptions,
@@ -62,6 +66,7 @@
         rangeEnd: string;
         previousDate: string;
         nextDate: string;
+        ganttRange: GanttRange;
         events: WorkspaceCalendarEvent[];
         ganttProjects: WorkspaceGanttProject[];
         subscriptions: CalendarSubscription[];
@@ -74,6 +79,16 @@
         { value: 'week', label: 'Week' },
         { value: 'month', label: 'Month' },
         { value: 'gantt', label: 'Gantt' },
+    ];
+    const ganttRanges: {
+        value: Exclude<GanttRange, 'custom'>;
+        label: string;
+    }[] = [
+        { value: 'week', label: 'Week' },
+        { value: 'month', label: 'Month' },
+        { value: 'quarter', label: 'Quarter' },
+        { value: 'half-year', label: 'Half year' },
+        { value: 'year', label: 'Year' },
     ];
     const weekdays = ['日', '月', '火', '水', '木', '金', '土'];
     const eventColorClasses = [
@@ -118,6 +133,13 @@
         new Date(Date.parse(`${value}T00:00:00Z`) + amount * 86_400_000)
             .toISOString()
             .slice(0, 10);
+    const startOfNextMonth = (value: string): string => {
+        const [year, monthNumber] = value.split('-').map(Number);
+
+        return new Date(Date.UTC(year, monthNumber, 1))
+            .toISOString()
+            .slice(0, 10);
+    };
     const weekday = (value: string): number =>
         new Date(`${value}T00:00:00Z`).getUTCDay();
     const eventsForDate = (value: string): WorkspaceCalendarEvent[] => {
@@ -147,6 +169,37 @@
         eventColorClasses[0];
     const dayNumber = (value: string): number =>
         Date.parse(`${value}T00:00:00Z`) / 86_400_000;
+    const workspaceCalendarHref = (
+        targetView: CalendarView,
+        targetDate: string,
+    ): string => {
+        if (targetView !== 'gantt') {
+            return WorkspaceCalendarController(currentTeam.slug, {
+                query: { view: targetView, date: targetDate },
+            }).url;
+        }
+
+        if (ganttRange === 'custom') {
+            return WorkspaceCalendarController(currentTeam.slug, {
+                query: {
+                    view: 'gantt',
+                    range: 'custom',
+                    start: rangeStart,
+                    end: rangeEnd,
+                },
+            }).url;
+        }
+
+        return WorkspaceCalendarController(currentTeam.slug, {
+            query: { view: 'gantt', range: ganttRange, date: targetDate },
+        }).url;
+    };
+    const ganttRangeHref = (
+        targetRange: Exclude<GanttRange, 'custom'>,
+    ): string =>
+        WorkspaceCalendarController(currentTeam.slug, {
+            query: { view: 'gantt', range: targetRange, date },
+        }).url;
     const dateKeyInTokyo = (value: string, end = false): string =>
         dateKeyFormatter.format(
             new Date(new Date(value).getTime() - (end ? 1 : 0)),
@@ -182,11 +235,57 @@
     let ganttDayCount = $derived(
         dayNumber(rangeEnd) - dayNumber(rangeStart) + 1,
     );
-    let ganttWeeks = $derived(
-        Array.from({ length: 12 }, (_, index) =>
-            addDays(rangeStart, index * 7),
-        ),
-    );
+    let ganttTicks = $derived.by(() => {
+        if (ganttDayCount <= 14) {
+            return Array.from({ length: ganttDayCount }, (_, index) =>
+                addDays(rangeStart, index),
+            );
+        }
+
+        if (ganttDayCount <= 120) {
+            return Array.from(
+                { length: Math.ceil(ganttDayCount / 7) },
+                (_, index) => addDays(rangeStart, index * 7),
+            );
+        }
+
+        const ticks = [rangeStart];
+        let cursor = startOfNextMonth(rangeStart);
+
+        while (cursor <= rangeEnd) {
+            ticks.push(cursor);
+            cursor = startOfNextMonth(cursor);
+        }
+
+        return ticks;
+    });
+    let ganttMinWidthRem = $derived(Math.max(48, Math.min(120, ganttDayCount)));
+    let ganttGridStepDays = $derived(ganttDayCount > 180 ? 7 : 1);
+    const ganttTickOffset = (value: string): number =>
+        ((dayNumber(value) - dayNumber(rangeStart)) / ganttDayCount) * 100;
+    const ganttMonthFormatter = new Intl.DateTimeFormat('ja-JP', {
+        year: 'numeric',
+        month: 'short',
+        timeZone: 'Asia/Tokyo',
+    });
+    const formatGanttTick = (value: string): string =>
+        ganttDayCount > 120
+            ? ganttMonthFormatter.format(parseDate(value))
+            : formatShortDate(value);
+    const ganttNavigationHref = (targetDate: string): string => {
+        if (ganttRange !== 'custom') {
+            return workspaceCalendarHref('gantt', targetDate);
+        }
+
+        return WorkspaceCalendarController(currentTeam.slug, {
+            query: {
+                view: 'gantt',
+                range: 'custom',
+                start: targetDate,
+                end: addDays(targetDate, ganttDayCount - 1),
+            },
+        }).url;
+    };
     let todayInGanttRange = $derived(today >= rangeStart && today <= rangeEnd);
     let todayOffset = $derived(
         ((dayNumber(today) - dayNumber(rangeStart) + 0.5) / ganttDayCount) *
@@ -262,14 +361,9 @@
                         {#snippet children(buttonProps)}
                             <Link
                                 {...buttonProps}
-                                href={WorkspaceCalendarController(
-                                    currentTeam.slug,
-                                    {
-                                        query: {
-                                            view: calendarView.value,
-                                            date,
-                                        },
-                                    },
+                                href={workspaceCalendarHref(
+                                    calendarView.value,
+                                    date,
                                 )}
                                 class={buttonProps.class}
                                 aria-current={view === calendarView.value
@@ -283,33 +377,115 @@
                 {/each}
             </nav>
 
-            <Form
-                {...WorkspaceCalendarController.form(currentTeam.slug)}
-                class="flex items-end gap-2"
-            >
-                {#snippet children({ processing })}
-                    <input type="hidden" name="view" value={view} />
-                    <div class="min-w-0 flex-1 sm:w-44">
-                        <Label for="workspace-calendar-date" class="sr-only">
-                            {t('Date')}
-                        </Label>
-                        <Input
-                            id="workspace-calendar-date"
-                            type="date"
-                            name="date"
-                            value={date}
-                            required
-                        />
-                    </div>
-                    <Button
-                        type="submit"
-                        variant="outline"
-                        disabled={processing}
+            {#if view === 'gantt'}
+                <div class="flex flex-wrap items-end gap-2">
+                    <nav
+                        class="inline-flex w-fit overflow-hidden rounded-lg border bg-muted/30"
+                        aria-label={t('Gantt range')}
                     >
-                        {t('Show')}
-                    </Button>
-                {/snippet}
-            </Form>
+                        {#each ganttRanges as rangeOption, index (rangeOption.value)}
+                            <Link
+                                href={ganttRangeHref(rangeOption.value)}
+                                class={`px-3 py-2 text-sm font-medium ${index > 0 ? 'border-l' : ''} ${
+                                    ganttRange === rangeOption.value
+                                        ? 'bg-primary text-primary-foreground'
+                                        : 'hover:bg-muted'
+                                }`}
+                                aria-current={ganttRange === rangeOption.value
+                                    ? 'page'
+                                    : undefined}
+                            >
+                                {t(rangeOption.label)}
+                            </Link>
+                        {/each}
+                    </nav>
+
+                    <Form
+                        {...WorkspaceCalendarController.form(currentTeam.slug)}
+                        class="flex flex-wrap items-end gap-2"
+                    >
+                        {#snippet children({ errors, processing })}
+                            <input type="hidden" name="view" value="gantt" />
+                            <input type="hidden" name="range" value="custom" />
+                            <div class="grid gap-1">
+                                <Label
+                                    for="workspace-gantt-start"
+                                    class="text-xs"
+                                >
+                                    {t('Start date')}
+                                </Label>
+                                <Input
+                                    id="workspace-gantt-start"
+                                    type="date"
+                                    name="start"
+                                    value={rangeStart}
+                                    required
+                                />
+                                <InputError message={errors.start} />
+                            </div>
+                            <div class="grid gap-1">
+                                <Label
+                                    for="workspace-gantt-end"
+                                    class="text-xs"
+                                >
+                                    {t('End date')}
+                                </Label>
+                                <Input
+                                    id="workspace-gantt-end"
+                                    type="date"
+                                    name="end"
+                                    value={rangeEnd}
+                                    required
+                                />
+                                <InputError message={errors.end} />
+                            </div>
+                            <Button
+                                type="submit"
+                                variant="outline"
+                                disabled={processing}
+                            >
+                                {t('Show')}
+                            </Button>
+                            <p
+                                class="w-full text-xs text-muted-foreground sm:w-auto sm:self-center"
+                            >
+                                {t('Maximum one year')}
+                            </p>
+                        {/snippet}
+                    </Form>
+                </div>
+            {:else}
+                <Form
+                    {...WorkspaceCalendarController.form(currentTeam.slug)}
+                    class="flex items-end gap-2"
+                >
+                    {#snippet children({ processing })}
+                        <input type="hidden" name="view" value={view} />
+                        <div class="min-w-0 flex-1 sm:w-44">
+                            <Label
+                                for="workspace-calendar-date"
+                                class="sr-only"
+                            >
+                                {t('Date')}
+                            </Label>
+                            <Input
+                                id="workspace-calendar-date"
+                                type="date"
+                                name="date"
+                                value={date}
+                                required
+                            />
+                        </div>
+                        <Button
+                            type="submit"
+                            variant="outline"
+                            disabled={processing}
+                        >
+                            {t('Show')}
+                        </Button>
+                    {/snippet}
+                </Form>
+            {/if}
         </div>
     </div>
 
@@ -323,9 +499,9 @@
                 {#snippet children(buttonProps)}
                     <Link
                         {...buttonProps}
-                        href={WorkspaceCalendarController(currentTeam.slug, {
-                            query: { view, date: previousDate },
-                        })}
+                        href={view === 'gantt'
+                            ? ganttNavigationHref(previousDate)
+                            : workspaceCalendarHref(view, previousDate)}
                         class={buttonProps.class}
                         aria-label={t('Previous')}
                     >
@@ -340,9 +516,9 @@
                 {#snippet children(buttonProps)}
                     <Link
                         {...buttonProps}
-                        href={WorkspaceCalendarController(currentTeam.slug, {
-                            query: { view, date: nextDate },
-                        })}
+                        href={view === 'gantt'
+                            ? ganttNavigationHref(nextDate)
+                            : workspaceCalendarHref(view, nextDate)}
                         class={buttonProps.class}
                         aria-label={t('Next')}
                     >
@@ -493,16 +669,17 @@
                 aria-label={t('Gantt')}
                 use:centerGanttOnSelectedDate
             >
-                <div class="min-w-[82rem]">
+                <div style={`min-width: ${ganttMinWidthRem}rem;`}>
                     <div
-                        class="grid grid-cols-12 border-b bg-muted/30 text-xs font-semibold text-muted-foreground"
+                        class="relative h-11 overflow-hidden border-b bg-muted/30 text-xs font-semibold text-muted-foreground"
                     >
-                        {#each ganttWeeks as weekStart (weekStart)}
+                        {#each ganttTicks as tick (tick)}
                             <time
-                                datetime={weekStart}
-                                class="border-r px-3 py-3 last:border-r-0"
+                                datetime={tick}
+                                class="absolute inset-y-0 border-l px-2 py-3 whitespace-nowrap"
+                                style={`left: ${ganttTickOffset(tick)}%;`}
                             >
-                                {formatShortDate(weekStart)}
+                                {formatGanttTick(tick)}
                             </time>
                         {/each}
                     </div>
@@ -538,21 +715,23 @@
 
                                 {#each ganttProjects as project (project.id)}
                                     <div
-                                        class="relative grid min-h-24 grid-cols-[repeat(84,minmax(0,1fr))] overflow-hidden border-y border-slate-200/70 bg-[#fbfaf8] dark:border-slate-800 dark:bg-slate-900/60"
+                                        class="relative grid min-h-24 overflow-hidden border-y border-slate-200/70 bg-[#fbfaf8] dark:border-slate-800 dark:bg-slate-900/60"
+                                        style={`grid-template-columns: repeat(${ganttDayCount}, minmax(0, 1fr));`}
                                     >
                                         <div
-                                            class="pointer-events-none absolute inset-0 grid grid-cols-12"
+                                            class="pointer-events-none absolute inset-0"
                                             aria-hidden="true"
                                         >
-                                            {#each ganttWeeks as weekStart (weekStart)}
+                                            {#each ganttTicks as tick (tick)}
                                                 <span
-                                                    class="border-r border-slate-200/70 last:border-r-0 dark:border-slate-800"
+                                                    class="absolute inset-y-0 border-l border-slate-200/70 dark:border-slate-800"
+                                                    style={`left: ${ganttTickOffset(tick)}%;`}
                                                 ></span>
                                             {/each}
                                         </div>
                                         <div
                                             class="pointer-events-none absolute inset-0 opacity-30"
-                                            style={`background-image: linear-gradient(to right, var(--color-border) 1px, transparent 1px); background-size: calc(100% / ${ganttDayCount}) 100%;`}
+                                            style={`background-image: linear-gradient(to right, var(--color-border) 1px, transparent 1px); background-size: calc(100% / ${ganttDayCount} * ${ganttGridStepDays}) 100%;`}
                                             aria-hidden="true"
                                         ></div>
                                         <Link
@@ -598,21 +777,23 @@
 
                                 {#each events as event (event.id)}
                                     <div
-                                        class="relative grid min-h-16 grid-cols-[repeat(84,minmax(0,1fr))] overflow-hidden border-y border-slate-200/70 bg-white dark:border-slate-800 dark:bg-slate-950"
+                                        class="relative grid min-h-16 overflow-hidden border-y border-slate-200/70 bg-white dark:border-slate-800 dark:bg-slate-950"
+                                        style={`grid-template-columns: repeat(${ganttDayCount}, minmax(0, 1fr));`}
                                     >
                                         <div
-                                            class="pointer-events-none absolute inset-0 grid grid-cols-12"
+                                            class="pointer-events-none absolute inset-0"
                                             aria-hidden="true"
                                         >
-                                            {#each ganttWeeks as weekStart (weekStart)}
+                                            {#each ganttTicks as tick (tick)}
                                                 <span
-                                                    class="border-r border-slate-200/70 last:border-r-0 dark:border-slate-800"
+                                                    class="absolute inset-y-0 border-l border-slate-200/70 dark:border-slate-800"
+                                                    style={`left: ${ganttTickOffset(tick)}%;`}
                                                 ></span>
                                             {/each}
                                         </div>
                                         <div
                                             class="pointer-events-none absolute inset-0 opacity-30"
-                                            style={`background-image: linear-gradient(to right, var(--color-border) 1px, transparent 1px); background-size: calc(100% / ${ganttDayCount}) 100%;`}
+                                            style={`background-image: linear-gradient(to right, var(--color-border) 1px, transparent 1px); background-size: calc(100% / ${ganttDayCount} * ${ganttGridStepDays}) 100%;`}
                                             aria-hidden="true"
                                         ></div>
                                         <Link

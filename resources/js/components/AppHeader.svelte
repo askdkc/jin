@@ -228,7 +228,7 @@
     {#if currentTeam && isProjectPage}
         <Link
             href={dashboardUrl}
-            class="absolute top-0 left-2 z-10 hidden h-16 items-center gap-1.5 rounded-md px-2 text-sm font-semibold text-slate-700 transition hover:bg-white/70 hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none md:flex dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white"
+            class="absolute top-0 left-2 z-10 hidden h-12 items-center gap-1.5 rounded-md px-2 text-sm font-semibold text-slate-700 transition hover:bg-white/70 hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none md:flex dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white"
         >
             <House class="size-3.5" />
             Home
@@ -236,7 +236,7 @@
     {/if}
 
     <div
-        class="relative mx-auto flex h-16 w-full max-w-[96rem] items-center justify-between px-4 sm:px-6"
+        class="relative mx-auto flex h-12 w-full max-w-[96rem] items-center justify-between px-4 sm:px-6"
     >
         <div class="md:hidden">
             <Sheet>

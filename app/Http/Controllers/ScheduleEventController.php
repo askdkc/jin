@@ -42,6 +42,27 @@ class ScheduleEventController extends Controller
         $month = $anchor->startOfMonth();
         $canManageProject = Gate::allows('update', $project);
         $userId = $request->user()->id;
+        $projectStart = $project->starts_on !== null
+            ? CarbonImmutable::instance($project->starts_on)->startOfDay()
+            : null;
+        $projectEnd = $project->ends_on !== null
+            ? CarbonImmutable::instance($project->ends_on)->endOfDay()
+            : null;
+        if ($projectStart !== null
+            && $projectEnd !== null
+            && $projectStart->lessThanOrEqualTo($projectEnd)) {
+            $ganttUsesProjectDates = true;
+            $ganttStart = $projectStart;
+            $ganttEnd = $projectEnd;
+            $ganttPrevious = $projectStart;
+            $ganttNext = $projectEnd;
+        } else {
+            $ganttUsesProjectDates = false;
+            $ganttStart = $anchor->startOfWeek(CarbonImmutable::SUNDAY)->subWeeks(5);
+            $ganttEnd = $ganttStart->addWeeks(12)->subSecond();
+            $ganttPrevious = $anchor->subWeeks(6);
+            $ganttNext = $anchor->addWeeks(6);
+        }
 
         [$rangeStart, $rangeEnd, $previousDate, $nextDate] = match ($view) {
             'day' => [$anchor, $anchor->endOfDay(), $anchor->subDay(), $anchor->addDay()],
@@ -51,12 +72,7 @@ class ScheduleEventController extends Controller
                 $anchor->subWeek(),
                 $anchor->addWeek(),
             ],
-            'gantt' => [
-                $anchor->startOfWeek(CarbonImmutable::SUNDAY)->subWeeks(5),
-                $anchor->startOfWeek(CarbonImmutable::SUNDAY)->subWeeks(5)->addWeeks(12)->subSecond(),
-                $anchor->subWeeks(6),
-                $anchor->addWeeks(6),
-            ],
+            'gantt' => [$ganttStart, $ganttEnd, $ganttPrevious, $ganttNext],
             default => [
                 $month,
                 $month->endOfMonth(),
@@ -111,6 +127,7 @@ class ScheduleEventController extends Controller
             'rangeEnd' => $rangeEnd->toDateString(),
             'previousDate' => $previousDate->toDateString(),
             'nextDate' => $nextDate->toDateString(),
+            'ganttUsesProjectDates' => $ganttUsesProjectDates,
             'month' => $month->format('Y-m'),
             'events' => $events,
             'weeks' => $weeks,

@@ -57,6 +57,7 @@
         rangeEnd,
         previousDate,
         nextDate,
+        ganttUsesProjectDates,
         month,
         events,
         weeks,
@@ -70,6 +71,7 @@
         rangeEnd: string;
         previousDate: string;
         nextDate: string;
+        ganttUsesProjectDates: boolean;
         month: string;
         events: ProjectScheduleEvent[];
         weeks: ScheduleGridDay[][] | null;
@@ -142,14 +144,54 @@
             return { date: dateKey, events: eventsForDate(dateKey) };
         }),
     );
-    const ganttWeeks = $derived(
-        Array.from({ length: 12 }, (_, index) =>
-            addDays(rangeStart, index * 7),
-        ),
-    );
     const ganttDayCount = $derived(
         epochDay(rangeEnd) - epochDay(rangeStart) + 1,
     );
+    const startOfNextMonth = (value: string): string => {
+        const [year, monthNumber] = value.split('-').map(Number);
+
+        return new Date(Date.UTC(year, monthNumber, 1))
+            .toISOString()
+            .slice(0, 10);
+    };
+    const ganttTicks = $derived.by(() => {
+        if (ganttDayCount <= 14) {
+            return Array.from({ length: ganttDayCount }, (_, index) =>
+                addDays(rangeStart, index),
+            );
+        }
+
+        if (ganttDayCount <= 120) {
+            return Array.from(
+                { length: Math.ceil(ganttDayCount / 7) },
+                (_, index) => addDays(rangeStart, index * 7),
+            );
+        }
+
+        const ticks = [rangeStart];
+        let cursor = startOfNextMonth(rangeStart);
+
+        while (cursor <= rangeEnd) {
+            ticks.push(cursor);
+            cursor = startOfNextMonth(cursor);
+        }
+
+        return ticks;
+    });
+    const ganttMinWidthRem = $derived(
+        Math.max(48, Math.min(120, ganttDayCount)),
+    );
+    const ganttGridStepDays = $derived(ganttDayCount > 180 ? 7 : 1);
+    const ganttTickOffset = (value: string): number =>
+        ((epochDay(value) - epochDay(rangeStart)) / ganttDayCount) * 100;
+    const ganttMonthFormatter = new Intl.DateTimeFormat('ja-JP', {
+        year: 'numeric',
+        month: 'short',
+    });
+    const formatGanttTick = (value: string): string =>
+        ganttDayCount > 120
+            ? ganttMonthFormatter.format(new Date(`${value}T00:00:00`))
+            : formatShortDate(value);
     const todayInGanttRange = $derived(
         today >= rangeStart && today <= rangeEnd,
     );
@@ -495,45 +537,47 @@
                     </DialogContent>
                 </Dialog>
             </div>
-            <div class="flex flex-wrap items-center gap-2">
-                <Link
-                    href={viewHref(view, previousDate)}
-                    aria-label={t('Previous')}
-                    class="inline-flex size-9 items-center justify-center rounded-md border hover:bg-muted"
-                    >←</Link
-                >
-                <Form
-                    {...ScheduleEventController.index.form(routeArguments)}
-                    class="flex gap-2"
-                >
-                    {#snippet children({ processing })}
-                        <input type="hidden" name="view" value={view} />
-                        <div>
-                            <Label for="schedule-date" class="sr-only"
-                                >{t('Date')}</Label
+            {#if view !== 'gantt' || !ganttUsesProjectDates}
+                <div class="flex flex-wrap items-center gap-2">
+                    <Link
+                        href={viewHref(view, previousDate)}
+                        aria-label={t('Previous')}
+                        class="inline-flex size-9 items-center justify-center rounded-md border hover:bg-muted"
+                        >←</Link
+                    >
+                    <Form
+                        {...ScheduleEventController.index.form(routeArguments)}
+                        class="flex gap-2"
+                    >
+                        {#snippet children({ processing })}
+                            <input type="hidden" name="view" value={view} />
+                            <div>
+                                <Label for="schedule-date" class="sr-only"
+                                    >{t('Date')}</Label
+                                >
+                                <Input
+                                    id="schedule-date"
+                                    type="date"
+                                    name="date"
+                                    value={date}
+                                    required
+                                />
+                            </div>
+                            <Button
+                                type="submit"
+                                variant="outline"
+                                disabled={processing}>{t('Show')}</Button
                             >
-                            <Input
-                                id="schedule-date"
-                                type="date"
-                                name="date"
-                                value={date}
-                                required
-                            />
-                        </div>
-                        <Button
-                            type="submit"
-                            variant="outline"
-                            disabled={processing}>{t('Show')}</Button
-                        >
-                    {/snippet}
-                </Form>
-                <Link
-                    href={viewHref(view, nextDate)}
-                    aria-label={t('Next')}
-                    class="inline-flex size-9 items-center justify-center rounded-md border hover:bg-muted"
-                    >→</Link
-                >
-            </div>
+                        {/snippet}
+                    </Form>
+                    <Link
+                        href={viewHref(view, nextDate)}
+                        aria-label={t('Next')}
+                        class="inline-flex size-9 items-center justify-center rounded-md border hover:bg-muted"
+                        >→</Link
+                    >
+                </div>
+            {/if}
         </div>
         <h2 class="text-center text-base font-bold sm:text-lg">
             {periodTitle}
@@ -649,14 +693,18 @@
         </div>
     {:else if view === 'gantt'}
         <div class="overflow-x-auto overscroll-x-contain rounded-lg border">
-            <div class="min-w-[82rem]">
+            <div style={`min-width: ${ganttMinWidthRem}rem;`}>
                 <div
-                    class="grid grid-cols-12 border-b bg-muted/40 text-xs font-semibold text-muted-foreground"
+                    class="relative h-11 overflow-hidden border-b bg-muted/40 text-xs font-semibold text-muted-foreground"
                 >
-                    {#each ganttWeeks as weekStart (weekStart)}
-                        <div class="border-r px-3 py-3 last:border-r-0">
-                            {formatShortDate(weekStart)}
-                        </div>
+                    {#each ganttTicks as tick (tick)}
+                        <time
+                            datetime={tick}
+                            class="absolute inset-y-0 border-l px-2 py-3 whitespace-nowrap"
+                            style={`left: ${ganttTickOffset(tick)}%;`}
+                        >
+                            {formatGanttTick(tick)}
+                        </time>
                     {/each}
                 </div>
                 <div class="relative">
@@ -677,20 +725,23 @@
                     >
                         {#each events as event (event.id)}
                             <div
-                                class="relative grid min-h-14 grid-cols-[repeat(84,minmax(0,1fr))] overflow-hidden border-y first:border-t-0 last:border-b-0"
+                                class="relative grid min-h-14 overflow-hidden border-y first:border-t-0 last:border-b-0"
+                                style={`grid-template-columns: repeat(${ganttDayCount}, minmax(0, 1fr));`}
                             >
                                 <div
-                                    class="pointer-events-none absolute inset-0 grid grid-cols-12"
+                                    class="pointer-events-none absolute inset-0"
                                     aria-hidden="true"
                                 >
-                                    {#each ganttWeeks as weekStart (weekStart)}
-                                        <span class="border-r last:border-r-0"
+                                    {#each ganttTicks as tick (tick)}
+                                        <span
+                                            class="absolute inset-y-0 border-l"
+                                            style={`left: ${ganttTickOffset(tick)}%;`}
                                         ></span>
                                     {/each}
                                 </div>
                                 <div
                                     class="pointer-events-none absolute inset-0 opacity-30"
-                                    style={`background-image: linear-gradient(to right, var(--color-border) 1px, transparent 1px); background-size: calc(100% / ${ganttDayCount}) 100%;`}
+                                    style={`background-image: linear-gradient(to right, var(--color-border) 1px, transparent 1px); background-size: calc(100% / ${ganttDayCount} * ${ganttGridStepDays}) 100%;`}
                                     aria-hidden="true"
                                 ></div>
                                 <Link

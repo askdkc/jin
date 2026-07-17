@@ -62,7 +62,7 @@
 </script>
 
 <script lang="ts">
-    import { Form } from '@inertiajs/svelte';
+    import { Form, Link } from '@inertiajs/svelte';
     import Pencil from 'lucide-svelte/icons/pencil';
     import Trash2 from 'lucide-svelte/icons/trash-2';
     import AttachmentController from '@/actions/App/Http/Controllers/AttachmentController';
@@ -130,8 +130,28 @@
         </p>
     </div>
 
-    <div class="rounded-lg border bg-card p-4">
-        <RichTextContent content={post.body} class="text-sm leading-6" />
+    <div class="flex items-start gap-3 rounded-lg border bg-card p-4">
+        <div class="min-w-0 flex-1">
+            <RichTextContent content={post.body} class="text-sm leading-6" />
+        </div>
+        {#if post.canEdit}
+            <Button variant="ghost" size="sm" asChild>
+                {#snippet children(buttonProps)}
+                    <Link
+                        {...buttonProps}
+                        href={MessageBoardController.edit([
+                            currentTeam.slug,
+                            project.id,
+                            post.id,
+                        ])}
+                        class={buttonProps.class}
+                    >
+                        <Pencil class="size-3.5" />
+                        {t('Edit')}
+                    </Link>
+                {/snippet}
+            </Button>
+        {/if}
     </div>
 
     <section class="space-y-3 border-t pt-4" aria-label={t('Comments')}>

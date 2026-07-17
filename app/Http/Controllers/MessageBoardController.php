@@ -241,11 +241,13 @@ class MessageBoardController extends Controller
     /** @return list<array{id: int, name: string}> */
     private function memberOptions(Project $project): array
     {
-        return $project->members()
-            ->orderBy('name')
-            ->get(['users.id', 'users.name'])
-            ->map(fn (User $user): array => ['id' => $user->id, 'name' => $user->name])
-            ->all();
+        return array_values(
+            $project->members()
+                ->orderBy('name')
+                ->get(['users.id', 'users.name'])
+                ->map(fn (User $user): array => ['id' => $user->id, 'name' => $user->name])
+                ->all()
+        );
     }
 
     private function canManage(?int $creatorId, Project $project): bool

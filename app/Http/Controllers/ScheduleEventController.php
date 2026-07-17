@@ -118,7 +118,7 @@ class ScheduleEventController extends Controller
     }
 
     /**
-     * @param  Collection<int, array<string, mixed>>  $events
+     * @param  Collection<int, covariant array{startsAt: string}>  $events
      * @return list<list<array<string, mixed>>>
      */
     private function buildCalendarGrid(CarbonImmutable $gridStart, CarbonImmutable $gridEnd, CarbonImmutable $month, $events): array

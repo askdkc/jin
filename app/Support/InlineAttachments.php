@@ -17,7 +17,7 @@ class InlineAttachments
             return;
         }
 
-        $fileIds = array_unique(array_map('intval', $matches[1] ?? []));
+        $fileIds = array_unique(array_map('intval', $matches[1]));
 
         if ($fileIds === []) {
             return;

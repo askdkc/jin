@@ -67,15 +67,15 @@ class TodoActivityNotification extends Notification
     {
         $line = match ($this->type) {
             self::Assigned => __(':actorName assigned you to :todoTitle.', [
-                'actorName' => $this->actor?->name ?? __('Someone'),
+                'actorName' => $this->actor->name ?? __('Someone'),
                 'todoTitle' => $this->todo->title,
             ]),
             self::Commented => __(':actorName commented on :todoTitle.', [
-                'actorName' => $this->actor?->name ?? __('Someone'),
+                'actorName' => $this->actor->name ?? __('Someone'),
                 'todoTitle' => $this->todo->title,
             ]),
             self::Completed => __(':actorName completed :todoTitle.', [
-                'actorName' => $this->actor?->name ?? __('Someone'),
+                'actorName' => $this->actor->name ?? __('Someone'),
                 'todoTitle' => $this->todo->title,
             ]),
             default => __(':todoTitle is due soon.', ['todoTitle' => $this->todo->title]),

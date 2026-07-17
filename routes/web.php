@@ -100,7 +100,6 @@ Route::prefix('{current_team}')
             Route::get('projects/{project}/todos', [ProjectTodoController::class, 'index'])->name('projects.todos.index');
             Route::post('projects/{project}/todo-lists', [ProjectTodoController::class, 'storeList'])->name('projects.todo-lists.store');
             Route::delete('projects/{project}/todo-lists/{todo_list}', [ProjectTodoController::class, 'destroyList'])->name('projects.todo-lists.destroy');
-            Route::patch('projects/{project}/todo-lists/{todo_list}/progress', [ProjectTodoController::class, 'updateListProgress'])->name('projects.todo-lists.progress');
             Route::post('projects/{project}/todo-lists/{todo_list}/todos', [ProjectTodoController::class, 'storeTodo'])->name('projects.todos.store');
             Route::post('projects/{project}/todo-lists/{todo_list}/todos/{todo}/subtasks', [ProjectTodoController::class, 'storeSubtask'])->name('projects.todos.subtasks.store');
             Route::post('projects/{project}/todo-lists/{todo_list}/todos/{todo}/attachments', [AttachmentController::class, 'storeTodo'])->name('projects.todos.attachments.store');
@@ -125,6 +124,7 @@ Route::prefix('{current_team}')
 
             Route::get('projects/{project}/files', [ProjectFileController::class, 'index'])->name('projects.files.index');
             Route::post('projects/{project}/files', [ProjectFileController::class, 'store'])->name('projects.files.store');
+            Route::patch('projects/{project}/files/{stored_file}', [ProjectFileController::class, 'update'])->name('projects.files.update');
             Route::get('projects/{project}/files/{stored_file}/preview', [ProjectFileController::class, 'preview'])->name('projects.files.preview');
             Route::get('projects/{project}/files/{stored_file}', [ProjectFileController::class, 'download'])->name('projects.files.download');
             Route::delete('projects/{project}/files/{stored_file}', [ProjectFileController::class, 'destroy'])->name('projects.files.destroy');
@@ -145,7 +145,10 @@ Route::prefix('{current_team}')
 
             Route::get('projects/{project}/check-ins', [CheckInController::class, 'index'])->name('projects.check-ins.index');
             Route::post('projects/{project}/check-ins', [CheckInController::class, 'store'])->name('projects.check-ins.store');
+            Route::get('projects/{project}/check-ins/{check_in}', [CheckInController::class, 'show'])->name('projects.check-ins.show');
+            Route::patch('projects/{project}/check-ins/{check_in}', [CheckInController::class, 'update'])->name('projects.check-ins.update');
             Route::patch('projects/{project}/check-ins/{check_in}/pause', [CheckInController::class, 'togglePause'])->name('projects.check-ins.pause');
+            Route::patch('projects/{project}/check-ins/{check_in}/bookmark', [CheckInController::class, 'toggleBookmark'])->name('projects.check-ins.bookmark');
             Route::delete('projects/{project}/check-ins/{check_in}', [CheckInController::class, 'destroy'])->name('projects.check-ins.destroy');
             Route::post('projects/{project}/check-ins/{check_in}/prompts/{prompt}/answer', [CheckInController::class, 'answer'])->name('projects.check-ins.answer');
 

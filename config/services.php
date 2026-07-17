@@ -18,6 +18,10 @@ return [
         'key' => env('POSTMARK_API_KEY'),
     ],
 
+    'libreoffice' => [
+        'path' => env('LIBREOFFICE_PATH', 'soffice'),
+    ],
+
     'resend' => [
         'key' => env('RESEND_API_KEY'),
     ],

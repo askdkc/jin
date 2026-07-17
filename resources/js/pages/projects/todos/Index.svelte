@@ -66,11 +66,8 @@
         string,
         number,
     ]);
-    const confirmDelete = (event: SubmitEvent): void => {
-        if (!window.confirm(t('Are you sure you want to delete this?'))) {
-            event.preventDefault();
-        }
-    };
+    const confirmDelete = (): boolean =>
+        window.confirm(t('Are you sure you want to delete this?'));
     const formatDate = (value: string | null): string =>
         value
             ? new Intl.DateTimeFormat('ja-JP', {
@@ -97,8 +94,12 @@
             : list.todos.filter((todo) => !todo.completed);
     const todoPosition = (list: ProjectTodoList, todo: ProjectTodo): number =>
         list.todos.findIndex((candidate) => candidate.id === todo.id);
-    const hillY = (position: number | null): number =>
-        96 - 70 * Math.sin((Math.PI * (position ?? 0)) / 100);
+    let addFormListId = $state<number | null>(null);
+    let newSubtasks = $state<string[]>([]);
+    const openAddForm = (listId: number): void => {
+        addFormListId = listId;
+        newSubtasks = [];
+    };
     const startDragging = (
         event: DragEvent,
         listId: number,
@@ -229,7 +230,7 @@
                                     project.id,
                                     list.id,
                                 ])}
-                                onsubmit={confirmDelete}
+                                onBefore={confirmDelete}
                             >
                                 {#snippet children({ processing })}
                                     <Button
@@ -244,79 +245,6 @@
                         {/if}
                     </CardHeader>
                     <CardContent class="space-y-5">
-                        <Form
-                            {...ProjectTodoController.updateListProgress.form([
-                                currentTeam.slug,
-                                project.id,
-                                list.id,
-                            ])}
-                            class="rounded-xl border bg-muted/20 p-3"
-                        >
-                            {#snippet children({ processing })}
-                                <div
-                                    class="flex items-center justify-between gap-3 text-xs font-semibold"
-                                >
-                                    <span>{t('Hill chart')}</span>
-                                    <span>{list.hillPosition ?? 0}%</span>
-                                </div>
-                                <svg
-                                    viewBox="0 0 400 110"
-                                    class="mt-2 h-20 w-full"
-                                    role="img"
-                                    aria-label={t('Project progress hill')}
-                                >
-                                    <path
-                                        d="M20 96 C110 96 115 26 200 26 C285 26 290 96 380 96"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="4"
-                                        class="text-muted-foreground/35"
-                                    />
-                                    <line
-                                        x1="200"
-                                        y1="18"
-                                        x2="200"
-                                        y2="102"
-                                        stroke="currentColor"
-                                        stroke-dasharray="5 5"
-                                        class="text-muted-foreground/30"
-                                    />
-                                    <circle
-                                        cx={20 + (list.hillPosition ?? 0) * 3.6}
-                                        cy={hillY(list.hillPosition)}
-                                        r="8"
-                                        class="fill-primary"
-                                    />
-                                </svg>
-                                <div
-                                    class="grid grid-cols-[1fr_auto] items-center gap-3"
-                                >
-                                    <input
-                                        type="range"
-                                        name="hill_position"
-                                        min="0"
-                                        max="100"
-                                        value={list.hillPosition ?? 0}
-                                        aria-label={t('Hill chart position')}
-                                        class="w-full accent-primary"
-                                    />
-                                    <Button
-                                        type="submit"
-                                        size="sm"
-                                        variant="outline"
-                                        disabled={processing}
-                                        >{t('Update')}</Button
-                                    >
-                                </div>
-                                <div
-                                    class="mt-1 flex justify-between text-[10px] text-muted-foreground"
-                                >
-                                    <span>{t('Figuring things out')}</span><span
-                                        >{t('Making it happen')}</span
-                                    >
-                                </div>
-                            {/snippet}
-                        </Form>
                         <div class="space-y-3">
                             {#each visibleTodos(list) as todo (todo.id)}
                                 <article
@@ -481,7 +409,7 @@
                                                                             attachment.id,
                                                                         ],
                                                                     )}
-                                                                    onsubmit={confirmDelete}
+                                                                    onBefore={confirmDelete}
                                                                 >
                                                                     {#snippet children({
                                                                         processing,
@@ -618,7 +546,7 @@
                                                                         subtask.id,
                                                                     ],
                                                                 )}
-                                                                onsubmit={confirmDelete}
+                                                                onBefore={confirmDelete}
                                                             >
                                                                 {#snippet children({
                                                                     processing,
@@ -894,9 +822,36 @@
                                                             )}
                                                         />
                                                     </div>
+                                                    <div
+                                                        class="flex flex-wrap gap-x-4 gap-y-1"
+                                                    >
+                                                        <span
+                                                            class="w-full text-xs font-medium"
+                                                            >{t(
+                                                                'When done, notify',
+                                                            )}</span
+                                                        >
+                                                        {#each members as member (member.id)}
+                                                            <label
+                                                                class="flex items-center gap-1.5 text-sm"
+                                                            >
+                                                                <input
+                                                                    type="checkbox"
+                                                                    name="completion_notify_ids[]"
+                                                                    value={member.id}
+                                                                    checked={todo.completionNotifyIds.includes(
+                                                                        member.id,
+                                                                    )}
+                                                                    class="accent-primary"
+                                                                />
+                                                                {member.name}
+                                                            </label>
+                                                        {/each}
+                                                    </div>
                                                     <InputError
                                                         message={errors.assignee_id ||
-                                                            errors.due_on}
+                                                            errors.due_on ||
+                                                            errors.completion_notify_ids}
                                                     />
                                                     <Button
                                                         type="submit"
@@ -915,7 +870,7 @@
                                                         todo.id,
                                                     ],
                                                 )}
-                                                onsubmit={confirmDelete}
+                                                onBefore={confirmDelete}
                                                 class="mt-2"
                                             >
                                                 {#snippet children({
@@ -1036,7 +991,7 @@
                                                                                 comment.id,
                                                                             ],
                                                                         )}
-                                                                        onsubmit={confirmDelete}
+                                                                        onBefore={confirmDelete}
                                                                     >
                                                                         {#snippet children({
                                                                             processing,
@@ -1116,10 +1071,7 @@
                             ></button>
                         </div>
 
-                        <details class="rounded-lg bg-muted/40 p-3">
-                            <summary class="cursor-pointer text-sm font-medium"
-                                >{t('Add to-do')}</summary
-                            >
+                        {#if addFormListId === list.id}
                             <Form
                                 {...ProjectTodoController.storeTodo.form([
                                     currentTeam.slug,
@@ -1127,28 +1079,38 @@
                                     list.id,
                                 ])}
                                 resetOnSuccess
-                                class="mt-4 space-y-3"
+                                onSuccess={() => (newSubtasks = [])}
+                                transform={(data) => ({
+                                    ...data,
+                                    subtasks: (
+                                        (data.subtasks as
+                                            string[] | undefined) ?? []
+                                    ).filter((title) => title.trim() !== ''),
+                                })}
+                                class="space-y-3 rounded-lg border bg-muted/40 p-4"
                             >
                                 {#snippet children({ errors, processing })}
                                     <Input
                                         name="title"
                                         maxlength={255}
                                         required
-                                        placeholder={t('To-do title')}
+                                        placeholder={t(
+                                            'Describe this to-do...',
+                                        )}
                                     />
                                     <InputError message={errors.title} />
-                                    <RichTextEditor
-                                        id={`new-todo-details-${list.id}`}
-                                        name="details"
-                                        placeholder={t('Details')}
-                                        ariaLabel={t('Details')}
-                                        mentionables={members}
-                                    />
-                                    <div class="grid gap-3 sm:grid-cols-2">
+                                    <div
+                                        class="grid gap-x-4 gap-y-3 sm:grid-cols-[7rem_1fr] sm:items-start"
+                                    >
+                                        <Label
+                                            for={`new-todo-assignee-${list.id}`}
+                                            class="pt-2 text-right max-sm:text-left"
+                                            >{t('Assignee')}</Label
+                                        >
                                         <select
+                                            id={`new-todo-assignee-${list.id}`}
                                             name="assignee_id"
                                             class="border-input h-9 rounded-md border bg-background px-3 text-sm"
-                                            aria-label={t('Assignee')}
                                         >
                                             <option value=""
                                                 >{t('Unassigned')}</option
@@ -1159,24 +1121,131 @@
                                                 >
                                             {/each}
                                         </select>
+
+                                        <span
+                                            class="pt-1 text-right text-sm font-medium max-sm:text-left"
+                                            >{t('When done, notify')}</span
+                                        >
+                                        <div
+                                            class="flex flex-wrap gap-x-4 gap-y-1 pt-1.5"
+                                        >
+                                            {#each members as member (member.id)}
+                                                <label
+                                                    class="flex items-center gap-1.5 text-sm"
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        name="completion_notify_ids[]"
+                                                        value={member.id}
+                                                        class="accent-primary"
+                                                    />
+                                                    {member.name}
+                                                </label>
+                                            {/each}
+                                        </div>
+
+                                        <Label
+                                            for={`new-todo-due-${list.id}`}
+                                            class="pt-2 text-right max-sm:text-left"
+                                            >{t('Due date')}</Label
+                                        >
                                         <Input
+                                            id={`new-todo-due-${list.id}`}
                                             type="date"
                                             name="due_on"
-                                            aria-label={t('Due date')}
                                         />
+
+                                        <span
+                                            class="pt-1 text-right text-sm font-medium max-sm:text-left"
+                                            >{t('Notes')}</span
+                                        >
+                                        <RichTextEditor
+                                            id={`new-todo-details-${list.id}`}
+                                            name="details"
+                                            placeholder={t(
+                                                'Add extra details...',
+                                            )}
+                                            ariaLabel={t('Notes')}
+                                            mentionables={members}
+                                        />
+
+                                        <span
+                                            class="pt-1 text-right text-sm font-medium max-sm:text-left"
+                                            >{t('Subtasks')}</span
+                                        >
+                                        <div class="space-y-2">
+                                            {#each newSubtasks as _, index (index)}
+                                                <div class="flex gap-2">
+                                                    <Input
+                                                        name="subtasks[]"
+                                                        maxlength={255}
+                                                        bind:value={
+                                                            newSubtasks[index]
+                                                        }
+                                                        placeholder={t(
+                                                            'Subtask title',
+                                                        )}
+                                                    />
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onclick={() =>
+                                                            (newSubtasks =
+                                                                newSubtasks.toSpliced(
+                                                                    index,
+                                                                    1,
+                                                                ))}
+                                                        >{t('Delete')}</Button
+                                                    >
+                                                </div>
+                                            {/each}
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                onclick={() =>
+                                                    (newSubtasks = [
+                                                        ...newSubtasks,
+                                                        '',
+                                                    ])}
+                                                >{t('Add subtask')}</Button
+                                            >
+                                        </div>
                                     </div>
                                     <InputError
                                         message={errors.assignee_id ||
-                                            errors.due_on}
+                                            errors.due_on ||
+                                            errors.completion_notify_ids ||
+                                            errors.subtasks}
                                     />
-                                    <Button
-                                        type="submit"
-                                        size="sm"
-                                        disabled={processing}>{t('Add')}</Button
-                                    >
+                                    <div class="flex gap-2">
+                                        <Button
+                                            type="submit"
+                                            size="sm"
+                                            disabled={processing}
+                                            >{t('Add this to-do')}</Button
+                                        >
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onclick={() =>
+                                                (addFormListId = null)}
+                                            >{t('Cancel')}</Button
+                                        >
+                                    </div>
                                 {/snippet}
                             </Form>
-                        </details>
+                        {:else}
+                            <button
+                                type="button"
+                                class="text-sm font-medium text-primary hover:underline"
+                                onclick={() => openAddForm(list.id)}
+                            >
+                                + {t('Add a to-do')}
+                            </button>
+                        {/if}
                     </CardContent>
                 </Card>
             {/each}

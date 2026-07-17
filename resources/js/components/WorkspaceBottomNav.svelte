@@ -95,7 +95,7 @@
     ];
 
     const itemClasses = (isActive: boolean): string =>
-        `flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl px-2 py-1 text-[10px] font-medium whitespace-nowrap transition sm:flex-none sm:flex-row sm:gap-2 sm:px-4 sm:text-sm ${
+        `flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-0.5 text-[9px] font-medium whitespace-nowrap transition sm:flex-none sm:flex-row sm:px-2 sm:text-xs ${
             isActive
                 ? 'bg-slate-800 text-white dark:bg-slate-100 dark:text-slate-900'
                 : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white'
@@ -153,7 +153,7 @@
 
 {#if workspace.reminder && reminderMinutes !== null}
     <aside
-        class={`fixed right-3 bottom-[4.75rem] z-50 flex max-w-[calc(100vw-1.5rem)] items-center gap-3 rounded-2xl border px-4 py-3 shadow-xl transition-colors ${reminderClass}`}
+        class={`fixed right-3 bottom-16 z-50 flex max-w-[calc(100vw-1.5rem)] items-center gap-3 rounded-2xl border px-4 py-3 shadow-xl transition-colors ${reminderClass}`}
         aria-live="polite"
     >
         <Clock3 class="size-5 shrink-0" />
@@ -183,7 +183,7 @@
 {#if activePanel}
     <button
         type="button"
-        class="fixed inset-0 bottom-16 z-40 bg-slate-950/20 backdrop-blur-[1px]"
+        class="fixed inset-0 bottom-12 z-40 bg-slate-950/20 backdrop-blur-[1px]"
         aria-label={t('Close personal menu')}
         onclick={closePanel}
     ></button>
@@ -195,7 +195,7 @@
         aria-label={activePanel === 'notifications'
             ? t('Pings + Notifications')
             : dockItems.find((item) => item.panel === activePanel)?.label}
-        class="fixed inset-x-2 bottom-[4.5rem] z-50 mx-auto max-h-[min(72dvh,42rem)] max-w-3xl overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-[#14242c]"
+        class="fixed inset-x-2 bottom-14 z-50 mx-auto max-h-[min(72dvh,42rem)] max-w-3xl overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-[#14242c]"
     >
         <header
             class="sticky top-0 z-10 flex items-center justify-between gap-3 border-b bg-white/95 px-4 py-3 backdrop-blur dark:bg-[#14242c]/95 sm:px-5"
@@ -618,16 +618,16 @@
 {/if}
 
 <nav
-    class="fixed inset-x-0 bottom-0 z-50 border-t border-slate-200/80 bg-white/95 shadow-[0_-8px_30px_rgba(15,23,42,0.08)] backdrop-blur dark:border-slate-700 dark:bg-[#14242c]/95"
+    class="fixed inset-x-0 bottom-0 z-50 border-t border-slate-200/80 bg-white/95 shadow-[0_-8px_30px_rgba(15,23,42,0.08)] backdrop-blur dark:border-[#495257] dark:bg-[#1e292f]"
     aria-label={t('Personal menu')}
 >
     <div
-        class="mx-auto grid h-16 max-w-[96rem] grid-cols-[1fr_auto] items-stretch px-2 sm:grid-cols-[5rem_1fr_auto] sm:px-4"
+        class="mx-auto grid h-12 max-w-[96rem] grid-cols-[1fr_auto] items-stretch px-2 sm:grid-cols-[3.5rem_1fr_3.5rem] sm:px-0"
     >
         <Link
             href={dashboard.url(currentTeam.slug)}
             class="hidden items-center sm:flex"
-            aria-label={t('Dashboard')}><AppLogoIcon class="size-10" /></Link
+            aria-label={t('Dashboard')}><AppLogoIcon class="size-8" /></Link
         >
         <div class="flex min-w-0 items-stretch justify-center">
             {#each dockItems as item (item.panel)}
@@ -638,21 +638,21 @@
                     aria-controls="workspace-personal-panel"
                     onclick={() => togglePanel(item.panel)}
                 >
-                    <item.icon class="size-4 shrink-0" /><span class="truncate"
-                        >{item.label}</span
+                    <item.icon class="size-3.5 shrink-0 sm:hidden" /><span
+                        class="truncate">{item.label}</span
                     >
                 </button>
             {/each}
         </div>
         <button
             type="button"
-            class={itemClasses(activePanel === 'notifications')}
+            class={`${itemClasses(activePanel === 'notifications')} sm:justify-self-end`}
             aria-expanded={activePanel === 'notifications'}
             aria-controls="workspace-personal-panel"
             onclick={openNewForYou}
         >
-            <span class="relative"
-                ><MessageCircle class="size-4" />{#if newForYouCount > 0}<span
+            <span class="relative md:hidden"
+                ><MessageCircle class="size-3.5" />{#if newForYouCount > 0}<span
                         class="absolute -right-2 -top-2 min-w-4 rounded-full bg-red-500 px-0.5 text-[9px] font-bold leading-4 text-white"
                         >{newForYouCount > 9 ? '9+' : newForYouCount}</span
                     >{/if}</span

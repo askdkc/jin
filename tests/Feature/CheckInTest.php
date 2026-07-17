@@ -54,6 +54,40 @@ test('project participants can create recurring check-ins for project members', 
             ->where('checkIns.0.targetNames', fn (Collection $names): bool => $names->sort()->values()->all() === collect([$owner->name, '回答者'])->sort()->values()->all()));
 });
 
+test('daily check-ins require weekdays and a matching first question date', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($owner);
+    $payload = [
+        'question' => '今日の進捗は？',
+        'frequency' => CheckInFrequency::Daily->value,
+        'timezone' => 'Asia/Tokyo',
+        'next_run_at' => '2026-08-03T09:00',
+        'target_user_ids' => [$owner->id],
+    ];
+
+    $this->actingAs($owner)
+        ->post(route('projects.check-ins.store', [$team, $project]), $payload)
+        ->assertSessionHasErrors('weekdays');
+
+    $this->post(route('projects.check-ins.store', [$team, $project]), [
+        ...$payload,
+        'next_run_at' => '2026-08-02T09:00',
+        'weekdays' => [1, 2, 3, 4, 5],
+    ])->assertSessionHasErrors([
+        'next_run_at' => '初回の質問日は、選択した曜日のいずれかにしてください。',
+    ]);
+
+    $this->post(route('projects.check-ins.store', [$team, $project]), [
+        ...$payload,
+        'weekdays' => [1, 2, 3, 4, 5],
+    ])->assertRedirect();
+
+    expect(CheckIn::query()->firstOrFail()->weekdays)->toBe([1, 2, 3, 4, 5]);
+});
+
 test('check-in targets must participate in the project', function () {
     $owner = User::factory()->create();
     $outsider = User::factory()->create();
@@ -69,6 +103,17 @@ test('check-in targets must participate in the project', function () {
             'frequency' => 'daily',
             'timezone' => 'Asia/Tokyo',
             'next_run_at' => '2026-08-03T09:00',
+        ])
+        ->assertSessionHasErrors([
+            'target_user_ids' => '回答を依頼する人は必ず指定してください。',
+        ]);
+
+    $this->actingAs($owner)
+        ->post(route('projects.check-ins.store', [$team, $project]), [
+            'question' => '回答してください',
+            'frequency' => 'daily',
+            'timezone' => 'Asia/Tokyo',
+            'next_run_at' => '2026-08-03T09:00',
             'target_user_ids' => [$outsider->id],
         ])
         ->assertSessionHasErrors('target_user_ids.0');
@@ -76,9 +121,9 @@ test('check-in targets must participate in the project', function () {
     expect(CheckIn::query()->exists())->toBeFalse();
 });
 
-test('dispatcher creates one prompt per target queues notifications and advances in local time', function () {
+test('dispatcher creates prompts and advances to the next selected weekday in local time', function () {
     Notification::fake();
-    $this->travelTo(CarbonImmutable::parse('2026-07-15 09:05', 'Asia/Tokyo'));
+    $this->travelTo(CarbonImmutable::parse('2026-07-17 09:05', 'Asia/Tokyo'));
 
     $owner = User::factory()->create();
     $member = User::factory()->create();
@@ -87,10 +132,11 @@ test('dispatcher creates one prompt per target queues notifications and advances
     $team->members()->attach($member, ['role' => TeamRole::Member->value]);
     $project = Project::factory()->for($team)->for($owner, 'creator')->create();
     $project->members()->attach([$owner->id, $member->id]);
-    $scheduledFor = CarbonImmutable::parse('2026-07-15 09:00', 'Asia/Tokyo')
+    $scheduledFor = CarbonImmutable::parse('2026-07-17 09:00', 'Asia/Tokyo')
         ->setTimezone((string) config('app.timezone'));
     $checkIn = CheckIn::factory()->for($project)->for($owner, 'creator')->create([
         'frequency' => CheckInFrequency::Daily,
+        'weekdays' => [1, 2, 3, 4, 5],
         'timezone' => 'Asia/Tokyo',
         'next_run_at' => $scheduledFor,
     ]);
@@ -105,7 +151,7 @@ test('dispatcher creates one prompt per target queues notifications and advances
 
     expect($checkIn->prompts()->count())->toBe(2)
         ->and($checkIn->fresh()->next_run_at->timezone('Asia/Tokyo')->format('Y-m-d H:i'))
-        ->toBe('2026-07-16 09:00');
+        ->toBe('2026-07-20 09:00');
 
     Notification::assertSentTo(
         [$owner, $member],
@@ -172,9 +218,125 @@ test('only the assigned user can answer a prompt and answers appear in project h
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
             ->has('pendingPrompts', 0)
+            ->where('responses.0.checkInId', $checkIn->id)
             ->where('responses.0.question', '困っていることは？')
             ->where('responses.0.answer', 'レビュー待ちです。')
             ->where('responses.0.userName', '回答者'));
+});
+
+test('project members can open a check-in detail but outsiders cannot', function () {
+    $owner = User::factory()->create();
+    $member = User::factory()->create(['name' => '回答者']);
+    $outsider = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $team->members()->attach($outsider, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([$owner->id, $member->id]);
+    $checkIn = CheckIn::factory()->for($project)->for($owner, 'creator')->create([
+        'question' => '何かに困っている？',
+    ]);
+    $checkIn->targets()->attach($member);
+    $pendingPrompt = CheckInPrompt::factory()->for($checkIn)->for($member)->create();
+    CheckInPrompt::factory()->for($checkIn)->for($owner)->create([
+        'answer' => '確認待ちです。',
+        'answered_at' => now(),
+    ]);
+
+    $this->actingAs($member)
+        ->get(route('projects.check-ins.show', [$team, $project, $checkIn]))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('projects/check-ins/Show')
+            ->where('checkIn.question', '何かに困っている？')
+            ->where('checkIn.targetIds', [$member->id])
+            ->where('checkIn.isBookmarked', false)
+            ->where('pendingPrompt.id', $pendingPrompt->id)
+            ->where('responses.0.answer', '確認待ちです。'));
+
+    $this->actingAs($outsider)
+        ->get(route('projects.check-ins.show', [$team, $project, $checkIn]))
+        ->assertForbidden();
+});
+
+test('check-in creators can update the question schedule and project targets', function () {
+    $owner = User::factory()->create();
+    $creator = User::factory()->create();
+    $target = User::factory()->create();
+    $other = User::factory()->create();
+    $outsider = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($creator, ['role' => TeamRole::Member->value]);
+    $team->members()->attach($target, ['role' => TeamRole::Member->value]);
+    $team->members()->attach($other, ['role' => TeamRole::Member->value]);
+    $team->members()->attach($outsider, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([$creator->id, $target->id, $other->id]);
+    $checkIn = CheckIn::factory()->for($project)->for($creator, 'creator')->create();
+    $checkIn->targets()->attach($creator);
+
+    $payload = [
+        'question' => '来月の課題は？',
+        'frequency' => CheckInFrequency::Daily->value,
+        'weekdays' => [1, 3, 5],
+        'timezone' => 'UTC',
+        'next_run_at' => '2026-09-02T08:30',
+        'target_user_ids' => [$target->id],
+    ];
+
+    $this->actingAs($other)
+        ->patch(route('projects.check-ins.update', [$team, $project, $checkIn]), $payload)
+        ->assertForbidden();
+
+    $this->actingAs($creator)
+        ->patch(route('projects.check-ins.update', [$team, $project, $checkIn]), [
+            ...$payload,
+            'target_user_ids' => [$outsider->id],
+        ])
+        ->assertSessionHasErrors('target_user_ids.0');
+
+    $this->patch(route('projects.check-ins.update', [$team, $project, $checkIn]), $payload)
+        ->assertRedirect();
+
+    expect($checkIn->fresh())
+        ->question->toBe('来月の課題は？')
+        ->frequency->toBe(CheckInFrequency::Daily)
+        ->weekdays->toBe([1, 3, 5])
+        ->timezone->toBe('UTC')
+        ->and($checkIn->targets()->pluck('users.id')->all())
+        ->toBe([$target->id]);
+});
+
+test('project members can bookmark a check-in for themselves', function () {
+    $owner = User::factory()->create();
+    $member = User::factory()->create();
+    $outsider = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $team->members()->attach($outsider, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([$owner->id, $member->id]);
+    $checkIn = CheckIn::factory()->for($project)->for($owner, 'creator')->create();
+
+    $this->actingAs($member)
+        ->patch(route('projects.check-ins.bookmark', [$team, $project, $checkIn]))
+        ->assertRedirect();
+
+    expect($member->bookmarkedCheckIns()->whereKey($checkIn->id)->exists())->toBeTrue();
+
+    $this->get(route('projects.check-ins.show', [$team, $project, $checkIn]))
+        ->assertInertia(fn (Assert $page) => $page->where('checkIn.isBookmarked', true));
+
+    $this->patch(route('projects.check-ins.bookmark', [$team, $project, $checkIn]))
+        ->assertRedirect();
+    expect($member->bookmarkedCheckIns()->whereKey($checkIn->id)->exists())->toBeFalse();
+
+    $this->actingAs($outsider)
+        ->patch(route('projects.check-ins.bookmark', [$team, $project, $checkIn]))
+        ->assertForbidden();
 });
 
 test('check-in routes scope schedules and prompts to their project', function () {
@@ -189,6 +351,12 @@ test('check-in routes scope schedules and prompts to their project', function ()
 
     $this->actingAs($owner)
         ->patch(route('projects.check-ins.pause', [$team, $firstProject, $secondCheckIn]))
+        ->assertNotFound();
+
+    $this->get(route('projects.check-ins.show', [$team, $firstProject, $secondCheckIn]))
+        ->assertNotFound();
+
+    $this->patch(route('projects.check-ins.bookmark', [$team, $firstProject, $secondCheckIn]))
         ->assertNotFound();
 
     $this->post(route('projects.check-ins.answer', [$team, $firstProject, $firstCheckIn, $prompt]), [

@@ -7,7 +7,6 @@ use App\Http\Requests\Phase3\MoveTodoRequest;
 use App\Http\Requests\Phase3\SaveTodoListRequest;
 use App\Http\Requests\Phase3\SaveTodoRequest;
 use App\Http\Requests\Phase3\StoreSubtaskRequest;
-use App\Http\Requests\Phase3\UpdateTodoListProgressRequest;
 use App\Models\Activity;
 use App\Models\Comment;
 use App\Models\Project;
@@ -51,7 +50,6 @@ class ProjectTodoController extends Controller
                 'id' => $list->id,
                 'title' => $list->title,
                 'isLoose' => $list->is_loose,
-                'hillPosition' => $list->hill_position,
                 'canDelete' => $canManageProject,
                 'todos' => $list->todos->map(fn (Todo $todo): array => [
                     'id' => $todo->id,
@@ -59,6 +57,7 @@ class ProjectTodoController extends Controller
                     'details' => $todo->details,
                     'assigneeId' => $todo->assignee_id,
                     'assigneeName' => $todo->assignee?->name,
+                    'completionNotifyIds' => $todo->completion_notify_ids ?? [],
                     'dueOn' => $todo->due_on?->toDateString(),
                     'completed' => $todo->completed_at !== null,
                     'canEdit' => $canManageProject || $todo->created_by === request()->user()->id,
@@ -107,17 +106,6 @@ class ProjectTodoController extends Controller
         return to_route('projects.todos.index', [$currentTeam, $project]);
     }
 
-    public function updateListProgress(
-        UpdateTodoListProgressRequest $request,
-        Team $currentTeam,
-        Project $project,
-        TodoList $todoList,
-    ): RedirectResponse {
-        $todoList->update($request->validated());
-
-        return to_route('projects.todos.index', [$currentTeam, $project]);
-    }
-
     public function destroyList(Team $currentTeam, Project $project, TodoList $todoList): RedirectResponse
     {
         Gate::authorize('update', $project);
@@ -145,10 +133,19 @@ class ProjectTodoController extends Controller
     ): RedirectResponse {
         $todo = DB::transaction(function () use ($request, $project, $todoList): Todo {
             $todo = $todoList->todos()->create([
-                ...$request->validated(),
+                ...$request->safe()->except('subtasks'),
                 'created_by' => $request->user()->id,
                 'position' => ((int) $todoList->todos()->max('position')) + 1,
             ]);
+
+            foreach (array_values($request->validated('subtasks') ?? []) as $index => $subtaskTitle) {
+                $todo->subtasks()->create([
+                    'todo_list_id' => $todoList->id,
+                    'title' => $subtaskTitle,
+                    'created_by' => $request->user()->id,
+                    'position' => $index + 1,
+                ]);
+            }
 
             Activity::record($project, $request->user(), ActivityType::TodoCreated, $todo, $todo->title);
 
@@ -176,7 +173,10 @@ class ProjectTodoController extends Controller
         Todo $todo,
     ): RedirectResponse {
         $previousAssigneeId = $todo->assignee_id;
-        $todo->update($request->validated());
+        $todo->update([
+            ...$request->safe()->except('subtasks'),
+            'completion_notify_ids' => $request->validated('completion_notify_ids') ?? [],
+        ]);
 
         if ($todo->assignee_id !== $previousAssigneeId) {
             TodoActivityNotification::sendToUsers(
@@ -237,7 +237,7 @@ class ProjectTodoController extends Controller
 
         if ($wasIncomplete) {
             TodoActivityNotification::sendToUsers(
-                [$todo->created_by, $todo->assignee_id],
+                [$todo->created_by, $todo->assignee_id, ...($todo->completion_notify_ids ?? [])],
                 $request->user(),
                 $project,
                 $todo,

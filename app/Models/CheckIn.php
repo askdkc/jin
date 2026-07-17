@@ -19,6 +19,7 @@ use Illuminate\Support\Carbon;
  * @property int|null $created_by
  * @property string $question
  * @property CheckInFrequency $frequency
+ * @property list<int>|null $weekdays
  * @property string $timezone
  * @property Carbon $next_run_at
  * @property Carbon|null $paused_at
@@ -27,9 +28,10 @@ use Illuminate\Support\Carbon;
  * @property-read Project $project
  * @property-read User|null $creator
  * @property-read Collection<int, User> $targets
+ * @property-read Collection<int, User> $bookmarkedBy
  * @property-read Collection<int, CheckInPrompt> $prompts
  */
-#[Fillable(['project_id', 'created_by', 'question', 'frequency', 'timezone', 'next_run_at', 'paused_at'])]
+#[Fillable(['project_id', 'created_by', 'question', 'frequency', 'weekdays', 'timezone', 'next_run_at', 'paused_at'])]
 class CheckIn extends Model
 {
     /** @use HasFactory<CheckInFactory> */
@@ -53,10 +55,24 @@ class CheckIn extends Model
         return $this->belongsToMany(User::class, 'check_in_user')->withTimestamps();
     }
 
+    /** @return BelongsToMany<User, $this> */
+    public function bookmarkedBy(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'check_in_bookmarks')->withTimestamps();
+    }
+
     /** @return HasMany<CheckInPrompt, $this> */
     public function prompts(): HasMany
     {
         return $this->hasMany(CheckInPrompt::class);
+    }
+
+    /** @return list<int> */
+    public function scheduledWeekdays(): array
+    {
+        return $this->frequency === CheckInFrequency::Daily
+            ? ($this->weekdays ?? [1, 2, 3, 4, 5])
+            : [];
     }
 
     /** @return array<string, string> */
@@ -64,6 +80,7 @@ class CheckIn extends Model
     {
         return [
             'frequency' => CheckInFrequency::class,
+            'weekdays' => 'array',
             'next_run_at' => 'datetime',
             'paused_at' => 'datetime',
         ];

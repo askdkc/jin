@@ -183,11 +183,8 @@
                 ? { dateStyle: 'long' }
                 : { dateStyle: 'medium', timeStyle: 'short' },
         ).format(new Date(value));
-    const confirmDelete = (event: SubmitEvent): void => {
-        if (!window.confirm(t('Are you sure you want to delete this?'))) {
-            event.preventDefault();
-        }
-    };
+    const confirmDelete = (): boolean =>
+        window.confirm(t('Are you sure you want to delete this?'));
     const recurrenceLabel = (
         recurrence: ProjectScheduleEvent['recurrence'],
     ): string => {
@@ -691,16 +688,23 @@
                                         ></span>
                                     {/each}
                                 </div>
+                                <div
+                                    class="pointer-events-none absolute inset-0 opacity-30"
+                                    style={`background-image: linear-gradient(to right, var(--color-border) 1px, transparent 1px); background-size: calc(100% / ${ganttDayCount}) 100%;`}
+                                    aria-hidden="true"
+                                ></div>
                                 <Link
                                     href={viewHref(
                                         'day',
                                         event.startsAt.slice(0, 10),
                                     )}
-                                    class="relative z-10 m-1 flex min-w-0 items-center overflow-hidden rounded-lg border bg-primary/10 px-3 py-2 text-left text-sm font-bold shadow-sm transition hover:bg-primary/20"
+                                    class="relative z-10 mx-px my-1 flex min-w-0 items-center overflow-visible rounded-lg border bg-primary/10 px-2 py-2 text-left text-sm font-bold shadow-sm transition hover:bg-primary/20"
                                     style={`grid-column: ${ganttGridColumn(event.startsAt, event.endsAt)};`}
                                     title={event.title}
                                 >
-                                    <span class="truncate">{event.title}</span>
+                                    <span class="whitespace-nowrap"
+                                        >{event.title}</span
+                                    >
                                 </Link>
                             </div>
                         {/each}
@@ -909,7 +913,7 @@
                                                 event.id,
                                             ],
                                         )}
-                                        onsubmit={confirmDelete}
+                                        onBefore={confirmDelete}
                                         class="mt-2"
                                     >
                                         {#snippet children({ processing })}

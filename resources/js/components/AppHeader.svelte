@@ -7,6 +7,7 @@
     import ChevronDown from 'lucide-svelte/icons/chevron-down';
     import FolderKanban from 'lucide-svelte/icons/folder-kanban';
     import History from 'lucide-svelte/icons/history';
+    import House from 'lucide-svelte/icons/house';
     import LayoutGrid from 'lucide-svelte/icons/layout-grid';
     import Menu from 'lucide-svelte/icons/menu';
     import NotebookPen from 'lucide-svelte/icons/notebook-pen';
@@ -71,11 +72,16 @@
     const adminlandUrl = $derived(
         currentTeam ? AdminlandController(currentTeam.slug) : '/',
     );
-    const isProjectHome = $derived(page.component === 'projects/Show');
+    const isProjectPage = $derived(
+        page.component === 'projects/Show' ||
+            (page.component.startsWith('projects/') &&
+                page.component !== 'projects/Index' &&
+                page.component !== 'projects/Form'),
+    );
     const hasBottomNavigation = $derived(
         url.isCurrentUrl(dashboardUrl, url.currentUrl) ||
             url.isCurrentUrl(adminlandUrl, url.currentUrl) ||
-            isProjectHome,
+            isProjectPage,
     );
     let jumpOpen = $state(false);
     let jumpQuery = $state('');
@@ -217,8 +223,18 @@
 />
 
 <header
-    class="sticky top-0 z-40 border-b border-slate-200/80 bg-[#f2f7fc]/95 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-950/95"
+    class="sticky top-0 z-40 border-b border-slate-200/80 bg-[#f2f7fc]/95 shadow-sm backdrop-blur dark:border-[#0d151b] dark:bg-[#0d151b]"
 >
+    {#if currentTeam && isProjectPage}
+        <Link
+            href={dashboardUrl}
+            class="absolute top-0 left-2 z-10 hidden h-16 items-center gap-1.5 rounded-md px-2 text-sm font-semibold text-slate-700 transition hover:bg-white/70 hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none md:flex dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white"
+        >
+            <House class="size-3.5" />
+            Home
+        </Link>
+    {/if}
+
     <div
         class="relative mx-auto flex h-16 w-full max-w-[96rem] items-center justify-between px-4 sm:px-6"
     >
@@ -407,16 +423,11 @@
                                 <Form
                                     action={action.action}
                                     method={action.method}
-                                    onsubmit={(event) => {
-                                        if (
-                                            action.confirmMessage &&
-                                            !window.confirm(
-                                                t(action.confirmMessage),
-                                            )
-                                        ) {
-                                            event.preventDefault();
-                                        }
-                                    }}
+                                    onBefore={() =>
+                                        !action.confirmMessage ||
+                                        window.confirm(
+                                            t(action.confirmMessage),
+                                        )}
                                 >
                                     {#snippet children({ processing })}
                                         <button

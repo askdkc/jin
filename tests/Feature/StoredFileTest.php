@@ -59,11 +59,14 @@ test('project participants can upload and download private files', function () {
     $project = Project::factory()->for($team)->for($owner, 'creator')->create();
     $project->members()->attach($member);
 
+    $filesUrl = route('projects.files.index', [$team, $project]);
+
     $this->actingAs($member)
+        ->from($filesUrl)
         ->post(route('projects.files.store', [$team, $project]), [
             'file' => UploadedFile::fake()->create('運用資料.pdf', 100, 'application/pdf'),
         ])
-        ->assertRedirect(route('projects.files.index', [$team, $project]));
+        ->assertRedirect($filesUrl);
 
     $storedFile = StoredFile::query()->firstOrFail();
     Storage::disk('local')->assertExists($storedFile->path);
@@ -76,6 +79,47 @@ test('project participants can upload and download private files', function () {
         ->toContain("filename*=utf-8''".rawurlencode('運用資料.pdf'))
         ->and($storedFile->uploaded_by)->toBe($member->id)
         ->and($storedFile->path)->not->toContain('運用資料.pdf');
+});
+
+test('folder uploads create or reuse a material folder for every uploaded file', function () {
+    Storage::fake('local');
+
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $storeUrl = route('projects.files.store', [$team, $project]);
+
+    $this->actingAs($owner)
+        ->post($storeUrl, [
+            'files' => [
+                UploadedFile::fake()->create('brief.pdf', 10, 'application/pdf'),
+                UploadedFile::fake()->create('photo.jpg', 10, 'image/jpeg'),
+            ],
+            'folder_name' => 'Client Assets',
+        ])
+        ->assertRedirect()
+        ->assertSessionHasNoErrors();
+
+    $folder = MaterialFolder::query()->sole();
+
+    expect($folder->name)->toBe('Client Assets')
+        ->and($folder->created_by)->toBe($owner->id)
+        ->and(StoredFile::query()->pluck('material_folder_id')->all())
+        ->toBe([$folder->id, $folder->id]);
+
+    $this->actingAs($owner)
+        ->post($storeUrl, [
+            'files' => [
+                UploadedFile::fake()->create('notes.txt', 10, 'text/plain'),
+            ],
+            'folder_name' => 'Client Assets',
+        ])
+        ->assertRedirect()
+        ->assertSessionHasNoErrors();
+
+    expect(MaterialFolder::query()->count())->toBe(1)
+        ->and(StoredFile::query()->whereBelongsTo($folder, 'materialFolder')->count())->toBe(3);
 });
 
 test('project participants can preview private office files inline', function () {
@@ -106,6 +150,81 @@ test('project participants can preview private office files inline', function ()
     expect($response->headers->get('content-disposition'))
         ->toStartWith('inline;')
         ->not->toContain('attachment');
+});
+
+test('office previews are served from the cached pdf conversion', function () {
+    Storage::fake('local');
+
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    Storage::disk('local')->put('projects/test/report.docx', 'raw docx content');
+    $storedFile = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'path' => 'projects/test/report.docx',
+        'original_name' => '月次報告.docx',
+        'mime_type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'size' => 15,
+    ]);
+    Storage::disk('local')->put("previews/{$storedFile->id}.pdf", 'converted pdf content');
+
+    $this->actingAs($owner)
+        ->get(route('projects.files.preview', [$team, $project, $storedFile]))
+        ->assertOk()
+        ->assertHeader('content-type', 'application/pdf')
+        ->assertHeader('content-disposition', 'inline')
+        ->assertContent('converted pdf content');
+});
+
+test('office previews fall back to the original file when conversion is unavailable', function () {
+    Storage::fake('local');
+    config(['services.libreoffice.path' => '/nonexistent/soffice']);
+
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    Storage::disk('local')->put('projects/test/report.docx', 'raw docx content');
+    $storedFile = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'path' => 'projects/test/report.docx',
+        'original_name' => '月次報告.docx',
+        'mime_type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'size' => 15,
+    ]);
+
+    $this->actingAs($owner)
+        ->get(route('projects.files.preview', [$team, $project, $storedFile]))
+        ->assertOk()
+        ->assertHeader(
+            'content-type',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        )
+        ->assertStreamedContent('raw docx content');
+});
+
+test('deleting a stored file removes its cached preview pdf', function () {
+    Storage::fake('local');
+
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    Storage::disk('local')->put('projects/test/report.docx', 'raw docx content');
+    $storedFile = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'path' => 'projects/test/report.docx',
+        'original_name' => '月次報告.docx',
+        'mime_type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'size' => 15,
+    ]);
+    Storage::disk('local')->put("previews/{$storedFile->id}.pdf", 'converted pdf content');
+
+    $this->actingAs($owner)
+        ->delete(route('projects.files.destroy', [$team, $project, $storedFile]))
+        ->assertRedirect();
+
+    Storage::disk('local')->assertMissing('projects/test/report.docx');
+    Storage::disk('local')->assertMissing("previews/{$storedFile->id}.pdf");
+    expect(StoredFile::query()->count())->toBe(0);
 });
 
 test('csv previews are served inline as utf 8 without mojibake', function () {
@@ -163,6 +282,15 @@ test('file uploads validate mime type extension and size', function () {
         ])
         ->assertSessionHasErrors('file');
 
+    $this->actingAs($owner)
+        ->post(route('projects.files.store', [$team, $project]), [
+            'files' => [
+                UploadedFile::fake()->create('valid.pdf', 10, 'application/pdf'),
+                UploadedFile::fake()->create('payload.exe', 10, 'application/x-msdownload'),
+            ],
+        ])
+        ->assertSessionHasErrors('files.1');
+
     expect(StoredFile::query()->exists())->toBeFalse();
 });
 
@@ -215,6 +343,49 @@ test('uploaders and team managers can delete files while other members cannot', 
     expect($storedFile->fresh())->toBeNull();
 });
 
+test('uploaders and team managers can rename files while other members cannot', function () {
+    $owner = User::factory()->create();
+    $uploader = User::factory()->create();
+    $otherMember = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($uploader, ['role' => TeamRole::Member->value]);
+    $team->members()->attach($otherMember, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([$uploader->id, $otherMember->id]);
+    $storedFile = StoredFile::factory()->for($project)->for($uploader, 'uploader')->create([
+        'original_name' => 'old-name.pdf',
+    ]);
+
+    $this->actingAs($otherMember)
+        ->patch(route('projects.files.update', [$team, $project, $storedFile]), [
+            'original_name' => 'forbidden.pdf',
+        ])
+        ->assertForbidden();
+
+    $this->actingAs($uploader)
+        ->patch(route('projects.files.update', [$team, $project, $storedFile]), [
+            'original_name' => '',
+        ])
+        ->assertSessionHasErrors('original_name');
+
+    $this->actingAs($uploader)
+        ->patch(route('projects.files.update', [$team, $project, $storedFile]), [
+            'original_name' => 'renamed.pdf',
+        ])
+        ->assertRedirect();
+
+    expect($storedFile->fresh()->original_name)->toBe('renamed.pdf');
+
+    $this->actingAs($owner)
+        ->patch(route('projects.files.update', [$team, $project, $storedFile]), [
+            'original_name' => 'managed.pdf',
+        ])
+        ->assertRedirect();
+
+    expect($storedFile->fresh()->original_name)->toBe('managed.pdf');
+});
+
 test('file routes reject non participants and cross project bindings', function () {
     $owner = User::factory()->create();
     $member = User::factory()->create();
@@ -236,5 +407,15 @@ test('file routes reject non participants and cross project bindings', function 
 
     $this->actingAs($member)
         ->get(route('projects.files.preview', [$team, $visibleProject, $storedFile]))
+        ->assertNotFound();
+
+    $this->actingAs($member)
+        ->patch(route('projects.files.update', [$team, $visibleProject, $storedFile]), [
+            'original_name' => 'renamed.pdf',
+        ])
+        ->assertNotFound();
+
+    $this->actingAs($member)
+        ->delete(route('projects.files.destroy', [$team, $visibleProject, $storedFile]))
         ->assertNotFound();
 });

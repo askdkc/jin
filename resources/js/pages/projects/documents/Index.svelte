@@ -75,11 +75,8 @@
                   timeStyle: 'short',
               }).format(new Date(value))
             : '';
-    const confirmDelete = (event: SubmitEvent): void => {
-        if (!window.confirm(t('Are you sure you want to delete this?'))) {
-            event.preventDefault();
-        }
-    };
+    const confirmDelete = (): boolean =>
+        window.confirm(t('Are you sure you want to delete this?'));
 </script>
 
 <AppHead title={t('Documents')} />
@@ -286,7 +283,7 @@
                                         project.id,
                                         document.id,
                                     ])}
-                                    onsubmit={confirmDelete}
+                                    onBefore={confirmDelete}
                                     class="mt-2"
                                 >
                                     {#snippet children({ processing })}

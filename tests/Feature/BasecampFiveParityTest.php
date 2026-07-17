@@ -131,7 +131,7 @@ test('new for you lets a recipient reply to a notification without leaving the p
         ->assertNotFound();
 });
 
-test('loose todos hill progress and card column collapse are persisted', function () {
+test('loose todo list protection and card column collapse are persisted', function () {
     [$owner, , $team, $project] = basecampFiveWorkspace();
     $looseList = TodoList::factory()->for($project)->create([
         'title' => '未分類の任務',
@@ -141,13 +141,7 @@ test('loose todos hill progress and card column collapse are persisted', functio
     $column = CardColumn::factory()->for($table)->create(['is_collapsed' => false]);
 
     $this->actingAs($owner)
-        ->patch(route('projects.todo-lists.progress', [$team, $project, $looseList]), [
-            'hill_position' => 67,
-        ])
-        ->assertRedirect();
-    expect($looseList->fresh()->hill_position)->toBe(67);
-
-    $this->delete(route('projects.todo-lists.destroy', [$team, $project, $looseList]))
+        ->delete(route('projects.todo-lists.destroy', [$team, $project, $looseList]))
         ->assertUnprocessable();
     expect($looseList->fresh())->not->toBeNull();
 

@@ -56,6 +56,7 @@ class DispatchCheckIns extends Command
                             'next_run_at' => $checkIn->frequency->advance(
                                 $scheduledFor,
                                 $checkIn->timezone,
+                                $checkIn->scheduledWeekdays(),
                             ),
                         ]);
 

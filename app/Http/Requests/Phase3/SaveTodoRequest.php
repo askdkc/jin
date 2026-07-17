@@ -47,6 +47,13 @@ class SaveTodoRequest extends FormRequest
                 Rule::exists('project_user', 'user_id')->where('project_id', $project instanceof Project ? $project->id : 0),
             ],
             'due_on' => ['nullable', 'date_format:Y-m-d'],
+            'completion_notify_ids' => ['nullable', 'array', 'max:50'],
+            'completion_notify_ids.*' => [
+                'integer',
+                Rule::exists('project_user', 'user_id')->where('project_id', $project instanceof Project ? $project->id : 0),
+            ],
+            'subtasks' => ['nullable', 'array', 'max:50'],
+            'subtasks.*' => ['required', 'string', 'max:255'],
         ];
     }
 

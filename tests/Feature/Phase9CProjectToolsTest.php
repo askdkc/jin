@@ -207,7 +207,9 @@ test('material library combines documents files and links and applies its filter
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
             ->component('projects/materials/Index')
-            ->has('items', 3)
+            ->has('items', 1)
+            ->where('items.0.type', 'link')
+            ->where('items.0.title', '共有リンク')
             ->where('folders.0.itemCount', 2)
             ->has('members', 2));
 
@@ -227,7 +229,7 @@ test('material library combines documents files and links and applies its filter
             ->where('filters.updater', $member->id));
 });
 
-test('documents and files can be created in a project material folder', function () {
+test('files dropped in materials return to the current root or folder', function () {
     Storage::fake('local');
 
     $owner = User::factory()->create();
@@ -247,15 +249,38 @@ test('documents and files can be created in a project material folder', function
         ])
         ->assertRedirect();
 
+    $folderUrl = route('projects.materials.index', [
+        $team,
+        $project,
+        'folder' => $folder->id,
+    ]);
+
     $this->actingAs($member)
+        ->from($folderUrl)
         ->post(route('projects.files.store', [$team, $project]), [
-            'file' => UploadedFile::fake()->create('folder.pdf', 10, 'application/pdf'),
+            'files' => [
+                UploadedFile::fake()->create('folder-a.pdf', 10, 'application/pdf'),
+                UploadedFile::fake()->create('folder-b.pdf', 10, 'application/pdf'),
+            ],
             'material_folder_id' => $folder->id,
         ])
-        ->assertRedirect();
+        ->assertRedirect($folderUrl);
+
+    $rootUrl = route('projects.materials.index', [$team, $project]);
+
+    $this->actingAs($member)
+        ->from($rootUrl)
+        ->post(route('projects.files.store', [$team, $project]), [
+            'files' => [
+                UploadedFile::fake()->create('root-a.pdf', 10, 'application/pdf'),
+                UploadedFile::fake()->create('root-b.pdf', 10, 'application/pdf'),
+            ],
+        ])
+        ->assertRedirect($rootUrl);
 
     expect(Document::query()->firstOrFail()->material_folder_id)->toBe($folder->id)
-        ->and(StoredFile::query()->firstOrFail()->material_folder_id)->toBe($folder->id);
+        ->and(StoredFile::query()->whereIn('original_name', ['folder-a.pdf', 'folder-b.pdf'])->where('material_folder_id', $folder->id)->count())->toBe(2)
+        ->and(StoredFile::query()->whereIn('original_name', ['root-a.pdf', 'root-b.pdf'])->whereNull('material_folder_id')->count())->toBe(2);
 });
 
 test('material routes reject cross project folders and scoped bindings', function () {

@@ -38,6 +38,7 @@ use Laravel\Fortify\TwoFactorAuthenticatable;
  * @property-read Collection<int, Team> $teams
  * @property-read Collection<int, CalendarSubscription> $calendarSubscriptions
  * @property-read Collection<int, Project> $favoriteProjects
+ * @property-read Collection<int, CheckIn> $bookmarkedCheckIns
  * @property-read Collection<int, TimeEntry> $timeEntries
  * @property-read Collection<int, PersonalNote> $personalNotes
  * @property-read Collection<int, BubbleUp> $bubbleUps
@@ -66,6 +67,12 @@ class User extends Authenticatable implements PasskeyUser
     public function favoriteProjects(): BelongsToMany
     {
         return $this->belongsToMany(Project::class, 'project_favorites')->withTimestamps();
+    }
+
+    /** @return BelongsToMany<CheckIn, $this> */
+    public function bookmarkedCheckIns(): BelongsToMany
+    {
+        return $this->belongsToMany(CheckIn::class, 'check_in_bookmarks')->withTimestamps();
     }
 
     /** @return HasMany<TimeEntry, $this> */

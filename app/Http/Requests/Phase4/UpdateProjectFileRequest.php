@@ -1,14 +1,14 @@
 <?php
 
-namespace App\Http\Requests\Phase3;
+namespace App\Http\Requests\Phase4;
 
 use App\Models\Project;
-use App\Models\TodoList;
+use App\Models\StoredFile;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Gate;
 
-class UpdateTodoListProgressRequest extends FormRequest
+class UpdateProjectFileRequest extends FormRequest
 {
     /**
      * Determine if the user is authorized to make this request.
@@ -16,12 +16,12 @@ class UpdateTodoListProgressRequest extends FormRequest
     public function authorize(): bool
     {
         $project = $this->route('project');
-        $todoList = $this->route('todo_list');
+        $storedFile = $this->route('stored_file');
 
         return $project instanceof Project
-            && $todoList instanceof TodoList
-            && $todoList->project_id === $project->id
-            && Gate::allows('view', $project);
+            && $storedFile instanceof StoredFile
+            && Gate::allows('view', $project)
+            && ($storedFile->uploaded_by === $this->user()->id || Gate::allows('update', $project));
     }
 
     /**
@@ -32,7 +32,7 @@ class UpdateTodoListProgressRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'hill_position' => ['nullable', 'integer', 'between:0,100'],
+            'original_name' => ['required', 'string', 'max:255'],
         ];
     }
 }

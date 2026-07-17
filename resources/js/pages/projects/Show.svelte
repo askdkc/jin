@@ -126,13 +126,6 @@
         'border-t-pink-400 bg-pink-50 dark:bg-pink-950/30',
         'border-t-emerald-400 bg-emerald-50 dark:bg-emerald-950/30',
     ];
-    const statusLabels = {
-        on_track: t('On track'),
-        at_risk: t('At risk'),
-        off_track: t('Off track'),
-        complete: t('Complete'),
-    };
-
     const formatDate = (value: string | null, includeTime = false): string => {
         if (!value) {
             return '';
@@ -146,41 +139,36 @@
     const memberInitial = (name: string): string =>
         name.trim().slice(0, 1).toLocaleUpperCase('ja-JP') || '?';
 
-    const archiveProject = (event: SubmitEvent): void => {
-        if (
-            !window.confirm(t('Are you sure you want to archive this project?'))
-        ) {
-            event.preventDefault();
-        }
-    };
+    const archiveProject = (): boolean =>
+        window.confirm(t('Are you sure you want to archive this project?'));
 </script>
 
 <AppHead title={`${currentTeam.menuNames.projectHome} — ${project.name}`} />
 
 <div
-    class="min-h-full bg-[#f5f7f3] px-0 pb-24 dark:bg-[#07151d] sm:px-5 sm:pt-5 lg:px-6 lg:pt-6"
+    class="min-h-full bg-[#f5f7f3] px-0 pb-8 dark:bg-[#0d151b] sm:px-5 sm:pt-2 lg:px-6"
 >
     <main
-        class="mx-auto min-h-full w-full max-w-[1120px] overflow-hidden bg-white shadow-[0_18px_55px_rgba(30,55,80,0.08)] dark:bg-card sm:rounded-sm"
+        class="mx-auto min-h-full w-full max-w-[1088px] overflow-hidden bg-white text-base [--text-2xl:1.25rem] [--text-3xl:1.5rem] [--text-4xl:2.5rem] [--text-base:0.875rem] [--text-lg:1rem] [--text-sm:0.75rem] [--text-xl:1.125rem] [--text-xs:0.6875rem] shadow-[0_18px_55px_rgba(30,55,80,0.08)] dark:bg-card dark:[--border:#495257] dark:[--card:#1e292f]"
         data-test="project-home-board"
     >
         <div
-            class="flex min-h-16 items-center justify-between gap-4 border-b px-5 py-3 sm:px-8"
+            class="flex min-h-10 items-center justify-between gap-4 border-b px-5 sm:px-8"
         >
             <div
                 class="flex min-w-0 items-center"
                 aria-label={t('Project members')}
             >
                 <span
-                    class="mr-2 flex size-10 shrink-0 items-center justify-center rounded-full border bg-background text-muted-foreground"
+                    class="mr-2 flex size-8 shrink-0 items-center justify-center rounded-full border bg-background text-muted-foreground"
                     title={t('Project members')}
                 >
-                    <Users class="size-5" />
+                    <Users class="size-4" />
                 </span>
                 <div class="flex -space-x-2 overflow-hidden py-1">
                     {#each project.members.slice(0, 8) as member, index (member.id)}
                         <span
-                            class="flex size-9 shrink-0 items-center justify-center rounded-full border-2 border-white bg-primary text-sm font-bold text-primary-foreground shadow-sm dark:border-card"
+                            class="flex size-7 shrink-0 items-center justify-center rounded-full border-2 border-white bg-primary text-xs font-bold text-primary-foreground shadow-sm dark:border-card"
                             class:bg-amber-500={index % 5 === 1}
                             class:bg-emerald-600={index % 5 === 2}
                             class:bg-sky-600={index % 5 === 3}
@@ -192,7 +180,7 @@
                     {/each}
                     {#if project.members.length > 8}
                         <span
-                            class="flex size-9 shrink-0 items-center justify-center rounded-full border-2 border-white bg-muted text-sm font-semibold text-muted-foreground dark:border-card"
+                            class="flex size-7 shrink-0 items-center justify-center rounded-full border-2 border-white bg-muted text-xs font-semibold text-muted-foreground dark:border-card"
                         >
                             +{project.members.length - 8}
                         </span>
@@ -226,7 +214,7 @@
                     {#if permissions.canArchiveProject}
                         <Form
                             {...archive.form([currentTeam.slug, project.id])}
-                            onsubmit={archiveProject}
+                            onBefore={archiveProject}
                         >
                             {#snippet children({ processing })}
                                 <Button
@@ -245,8 +233,8 @@
             {/if}
         </div>
 
-        <div class="px-5 py-9 sm:px-9 sm:py-11 lg:px-10">
-            <header class="mb-10">
+        <div class="px-5 py-4 sm:px-9 lg:px-10">
+            <header class="mb-7 leading-tight">
                 <p
                     class="text-sm font-bold tracking-[0.18em] text-[#ad382a] dark:text-[#ff8c7c]"
                 >
@@ -283,34 +271,20 @@
                 </div>
                 {#if project.description}
                     <p
-                        class="mt-4 max-w-3xl whitespace-pre-wrap text-base leading-6 text-muted-foreground"
+                        class="mt-2 max-w-3xl whitespace-pre-wrap text-lg leading-5 text-muted-foreground"
                     >
                         {project.description}
                     </p>
                 {/if}
                 {#if project.startsOn || project.endsOn}
-                    <p class="mt-3 text-sm font-medium text-muted-foreground">
+                    <p class="mt-2 text-sm font-medium text-muted-foreground">
                         {project.startsOn || t('Not set')} – {project.endsOn ||
                             t('Not set')}
                     </p>
                 {/if}
-                <div
-                    class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm font-medium text-muted-foreground"
-                >
-                    <span>{statusLabels[project.status]}</span>
-                    {#if project.phase}<span>{t('Phase')}: {project.phase}</span
-                        >{/if}
-                    {#if project.lead}<span
-                            >{t('Lead')}: {project.lead.name}</span
-                        >{/if}
-                    {#if project.folder}<span
-                            >{t('Folder')}: {project.folder.name}</span
-                        >{/if}
-                </div>
-
                 {#if home.activity.latest.length > 0}
                     <ol
-                        class="mt-5 max-w-2xl space-y-2"
+                        class="mt-3 max-w-2xl space-y-1"
                         data-test="project-recent-activity"
                     >
                         {#each home.activity.latest.slice(0, 3) as activity (activity.id)}
@@ -318,7 +292,7 @@
                                 class="flex min-w-0 items-center gap-2 text-base"
                             >
                                 <span
-                                    class="flex size-5 shrink-0 items-center justify-center rounded-full bg-violet-500 text-[9px] font-bold text-white"
+                                    class="flex size-4 shrink-0 items-center justify-center rounded-full bg-violet-500 text-[8px] font-bold text-white"
                                 >
                                     {memberInitial(
                                         activity.actorName || t('Deleted user'),
@@ -352,7 +326,7 @@
                         {/each}
                     </ol>
                     <div
-                        class="mt-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground"
+                        class="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground"
                     >
                         <span class="size-2 rounded-full bg-[#d8c6af]"></span>
                         <span>
@@ -375,7 +349,7 @@
                 {/if}
             </header>
 
-            <div class="grid gap-x-4 gap-y-9 md:grid-cols-2 lg:grid-cols-3">
+            <div class="grid gap-x-4 gap-y-6 md:grid-cols-2 lg:grid-cols-3">
                 {#if project.enabledTools.includes('messages')}
                     <section
                         class="min-w-0 lg:order-1"
@@ -391,7 +365,7 @@
                                 currentTeam.slug,
                                 project.id,
                             ])}
-                            class="group block h-[20rem] overflow-hidden rounded-xl border border-[#dce0e2] bg-white p-5 shadow-[0_1px_2px_rgba(30,45,55,0.04)] transition hover:-translate-y-0.5 hover:border-[#c7ced1] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-card"
+                            class="group block h-[20rem] overflow-hidden rounded-lg border border-border bg-white p-4 shadow-[0_1px_2px_rgba(30,45,55,0.04)] transition hover:-translate-y-0.5 hover:border-muted-foreground/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-card"
                         >
                             {#if home.messages.latest.length > 0}
                                 <div class="flex h-full flex-col">
@@ -402,7 +376,7 @@
                                                     class="flex items-start gap-3"
                                                 >
                                                     <span
-                                                        class="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#26343d] text-base font-bold text-white"
+                                                        class="flex size-8 shrink-0 items-center justify-center rounded-full bg-[#26343d] text-sm font-bold text-white"
                                                     >
                                                         {memberInitial(
                                                             message.authorName ||
@@ -505,7 +479,7 @@
                                 currentTeam.slug,
                                 project.id,
                             ])}
-                            class="group block h-[20rem] overflow-hidden rounded-xl border border-[#dce0e2] bg-white p-5 shadow-[0_1px_2px_rgba(30,45,55,0.04)] transition hover:-translate-y-0.5 hover:border-[#c7ced1] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-card"
+                            class="group block h-[20rem] overflow-hidden rounded-lg border border-border bg-white p-4 shadow-[0_1px_2px_rgba(30,45,55,0.04)] transition hover:-translate-y-0.5 hover:border-muted-foreground/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-card"
                         >
                             {#if home.materials.documents.length > 0 || home.materials.files.length > 0 || home.materials.links.length > 0}
                                 <ul class="space-y-3">
@@ -514,9 +488,9 @@
                                             class="flex min-w-0 items-center gap-3"
                                         >
                                             <span
-                                                class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500 text-white"
+                                                class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-emerald-500 text-white"
                                             >
-                                                <BookOpen class="size-5" />
+                                                <BookOpen class="size-4" />
                                             </span>
                                             <span class="min-w-0 flex-1">
                                                 <span
@@ -537,9 +511,9 @@
                                             class="flex min-w-0 items-center gap-3"
                                         >
                                             <span
-                                                class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-blue-500 text-white"
+                                                class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-blue-500 text-white"
                                             >
-                                                <Paperclip class="size-5" />
+                                                <Paperclip class="size-4" />
                                             </span>
                                             <span class="min-w-0 flex-1">
                                                 <span
@@ -560,9 +534,9 @@
                                             class="flex min-w-0 items-center gap-3"
                                         >
                                             <span
-                                                class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-orange-500 text-white"
+                                                class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-orange-500 text-white"
                                             >
-                                                <Link2 class="size-5" />
+                                                <Link2 class="size-4" />
                                             </span>
                                             <span class="min-w-0 flex-1">
                                                 <span
@@ -608,7 +582,7 @@
                                 currentTeam.slug,
                                 project.id,
                             ])}
-                            class="group block h-[20rem] overflow-hidden rounded-xl border border-[#dce0e2] bg-white p-5 shadow-[0_1px_2px_rgba(30,45,55,0.04)] transition hover:-translate-y-0.5 hover:border-[#c7ced1] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-card"
+                            class="group block h-[20rem] overflow-hidden rounded-lg border border-border bg-white p-4 shadow-[0_1px_2px_rgba(30,45,55,0.04)] transition hover:-translate-y-0.5 hover:border-muted-foreground/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-card"
                         >
                             <div class="flex h-full flex-col">
                                 <div class="mb-5 flex items-center gap-3">
@@ -707,7 +681,7 @@
                                 currentTeam.slug,
                                 project.id,
                             ])}
-                            class="group block h-[20rem] overflow-hidden rounded-xl border border-[#dce0e2] bg-white p-5 shadow-[0_1px_2px_rgba(30,45,55,0.04)] transition hover:-translate-y-0.5 hover:border-[#c7ced1] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-card"
+                            class="group block h-[20rem] overflow-hidden rounded-lg border border-border bg-white p-4 shadow-[0_1px_2px_rgba(30,45,55,0.04)] transition hover:-translate-y-0.5 hover:border-muted-foreground/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-card"
                         >
                             {#if home.chat.recent.length > 0}
                                 <ul class="space-y-3">
@@ -778,7 +752,7 @@
                                 currentTeam.slug,
                                 project.id,
                             ])}
-                            class="group block h-[20rem] overflow-hidden rounded-xl border border-[#dce0e2] bg-white p-4 shadow-[0_1px_2px_rgba(30,45,55,0.04)] transition hover:-translate-y-0.5 hover:border-[#c7ced1] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-card"
+                            class="group block h-[20rem] overflow-hidden rounded-lg border border-border bg-white p-4 shadow-[0_1px_2px_rgba(30,45,55,0.04)] transition hover:-translate-y-0.5 hover:border-muted-foreground/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-card"
                         >
                             <h3 class="mb-3 text-center text-base font-black">
                                 {monthFormatter.format(calendarAnchor)}
@@ -850,7 +824,7 @@
                                 currentTeam.slug,
                                 project.id,
                             ])}
-                            class="group block h-[20rem] overflow-hidden rounded-xl border border-[#dce0e2] bg-white p-5 shadow-[0_1px_2px_rgba(30,45,55,0.04)] transition hover:-translate-y-0.5 hover:border-[#c7ced1] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-card"
+                            class="group block h-[20rem] overflow-hidden rounded-lg border border-border bg-white p-4 shadow-[0_1px_2px_rgba(30,45,55,0.04)] transition hover:-translate-y-0.5 hover:border-muted-foreground/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-card"
                         >
                             {#if home.cardTables.preview && home.cardTables.preview.columns.length > 0}
                                 <div class="flex h-full flex-col">
@@ -917,7 +891,7 @@
                                 currentTeam.slug,
                                 project.id,
                             ])}
-                            class="group flex h-[20rem] flex-col overflow-hidden rounded-xl border border-[#dce0e2] bg-white p-5 shadow-[0_1px_2px_rgba(30,45,55,0.04)] transition hover:-translate-y-0.5 hover:border-[#c7ced1] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-card"
+                            class="group flex h-[20rem] flex-col overflow-hidden rounded-lg border border-border bg-white p-4 shadow-[0_1px_2px_rgba(30,45,55,0.04)] transition hover:-translate-y-0.5 hover:border-muted-foreground/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-card"
                         >
                             <div
                                 class="rounded-lg border bg-[#fbfaf8] px-4 py-3 text-base font-bold dark:bg-muted"
@@ -974,7 +948,7 @@
                                 currentTeam.slug,
                                 project.id,
                             ])}
-                            class="group flex h-[20rem] flex-col overflow-hidden rounded-xl border border-[#dce0e2] bg-white p-5 shadow-[0_1px_2px_rgba(30,45,55,0.04)] transition hover:-translate-y-0.5 hover:border-[#c7ced1] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-card"
+                            class="group flex h-[20rem] flex-col overflow-hidden rounded-lg border border-border bg-white p-4 shadow-[0_1px_2px_rgba(30,45,55,0.04)] transition hover:-translate-y-0.5 hover:border-muted-foreground/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-card"
                         >
                             <div class="flex items-center gap-3">
                                 <span

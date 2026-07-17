@@ -181,7 +181,6 @@ class DashboardController extends Controller
                 ]),
             'permissions' => [
                 'canCreateProject' => Gate::allows('create', [Project::class, $currentTeam]),
-                'canCreateFolder' => Gate::allows('create', [Project::class, $currentTeam]),
                 'canInviteMembers' => Gate::allows('inviteMember', $currentTeam),
                 'canManageTeam' => Gate::allows('update', $currentTeam),
             ],

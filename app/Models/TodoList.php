@@ -16,14 +16,13 @@ use Illuminate\Support\Carbon;
  * @property int $project_id
  * @property string $title
  * @property bool $is_loose
- * @property int|null $hill_position
  * @property int $position
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  * @property-read Project $project
  * @property-read Collection<int, Todo> $todos
  */
-#[Fillable(['project_id', 'title', 'is_loose', 'hill_position', 'position'])]
+#[Fillable(['project_id', 'title', 'is_loose', 'position'])]
 class TodoList extends Model
 {
     /** @use HasFactory<TodoListFactory> */

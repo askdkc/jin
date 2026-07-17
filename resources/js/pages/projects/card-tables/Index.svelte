@@ -67,11 +67,8 @@
             ? page.props.errors.version
             : null,
     );
-    const confirmDelete = (event: SubmitEvent): void => {
-        if (!window.confirm(t('Are you sure you want to delete this?'))) {
-            event.preventDefault();
-        }
-    };
+    const confirmDelete = (): boolean =>
+        window.confirm(t('Are you sure you want to delete this?'));
     let draggedCard = $state<{
         tableId: number;
         columnId: number;
@@ -246,7 +243,7 @@
                                     project.id,
                                     table.id,
                                 ])}
-                                onsubmit={confirmDelete}
+                                onBefore={confirmDelete}
                             >
                                 {#snippet children({ processing })}
                                     <Button
@@ -393,7 +390,7 @@
                                                             column.id,
                                                         ],
                                                     )}
-                                                    onsubmit={confirmDelete}
+                                                    onBefore={confirmDelete}
                                                 >
                                                     {#snippet children({
                                                         processing,
@@ -930,7 +927,7 @@
                                                                         card.id,
                                                                     ],
                                                                 )}
-                                                                onsubmit={confirmDelete}
+                                                                onBefore={confirmDelete}
                                                                 class="mt-2"
                                                             >
                                                                 {#snippet children({

@@ -267,6 +267,7 @@ export type CheckInSchedule = {
     id: number;
     question: string;
     frequency: 'daily' | 'weekly' | 'monthly';
+    weekdays: number[];
     timezone: string;
     nextRunAt: string;
     paused: boolean;
@@ -275,6 +276,12 @@ export type CheckInSchedule = {
     pendingCount: number;
     canManage: boolean;
     canDelete: boolean;
+};
+
+export type CheckInDetail = CheckInSchedule & {
+    nextRunAtLocal: string;
+    targetIds: number[];
+    isBookmarked: boolean;
 };
 
 export type CheckInPrompt = {
@@ -286,6 +293,7 @@ export type CheckInPrompt = {
 
 export type CheckInResponse = {
     id: number;
+    checkInId: number;
     question: string;
     answer: string | null;
     userName: string | null;
@@ -478,6 +486,7 @@ export type ProjectTodo = {
     details: string | null;
     assigneeId: number | null;
     assigneeName: string | null;
+    completionNotifyIds: number[];
     dueOn: string | null;
     completed: boolean;
     canEdit: boolean;
@@ -490,7 +499,6 @@ export type ProjectTodoList = {
     id: number;
     title: string;
     isLoose: boolean;
-    hillPosition: number | null;
     canDelete: boolean;
     todos: ProjectTodo[];
 };

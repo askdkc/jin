@@ -23,7 +23,7 @@
 
 <AppShell variant="header">
     <AppHeader {breadcrumbs} {headerActions} />
-    <AppContent variant="header" class={currentTeam ? 'pb-16' : ''}>
+    <AppContent variant="header" class={currentTeam ? 'pb-12' : ''}>
         {@render children?.()}
     </AppContent>
     {#if currentTeam}

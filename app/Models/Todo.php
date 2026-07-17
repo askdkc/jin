@@ -18,6 +18,7 @@ use Illuminate\Support\Carbon;
  * @property int $todo_list_id
  * @property int|null $parent_id
  * @property int|null $assignee_id
+ * @property array<int, int>|null $completion_notify_ids
  * @property int|null $created_by
  * @property string $title
  * @property string|null $details
@@ -36,7 +37,7 @@ use Illuminate\Support\Carbon;
  * @property-read Collection<int, Comment> $comments
  * @property-read Collection<int, StoredFile> $attachments
  */
-#[Fillable(['todo_list_id', 'parent_id', 'assignee_id', 'created_by', 'title', 'details', 'due_on', 'completed_at', 'completed_by', 'position'])]
+#[Fillable(['todo_list_id', 'parent_id', 'assignee_id', 'completion_notify_ids', 'created_by', 'title', 'details', 'due_on', 'completed_at', 'completed_by', 'position'])]
 class Todo extends Model
 {
     /** @use HasFactory<TodoFactory> */
@@ -97,6 +98,7 @@ class Todo extends Model
             'details' => SanitizedRichText::class,
             'due_on' => 'date',
             'completed_at' => 'datetime',
+            'completion_notify_ids' => 'array',
         ];
     }
 }

@@ -50,7 +50,7 @@ test('the schedule index supports day, week, and gantt views scoped to their own
     ScheduleEvent::factory()->for($project)->for($owner, 'creator')->create([
         'title' => '週内の予定',
         'starts_at' => '2026-08-05 10:00:00',
-        'ends_at' => '2026-08-05 11:00:00',
+        'ends_at' => '2026-08-08 11:00:00',
     ]);
     ScheduleEvent::factory()->for($project)->for($owner, 'creator')->create([
         'title' => '来月の予定',
@@ -66,7 +66,8 @@ test('the schedule index supports day, week, and gantt views scoped to their own
             ->where('rangeEnd', '2026-08-05')
             ->where('weeks', null)
             ->has('events', 1)
-            ->where('events.0.title', '週内の予定'));
+            ->where('events.0.title', '週内の予定')
+            ->where('events.0.endsAt', '2026-08-08T11:00'));
 
     $this->actingAs($owner)
         ->get(route('projects.schedule.index', [$team, $project, 'view' => 'week', 'date' => '2026-08-05']))
@@ -81,7 +82,8 @@ test('the schedule index supports day, week, and gantt views scoped to their own
         ->get(route('projects.schedule.index', [$team, $project, 'view' => 'gantt', 'date' => '2026-08-05']))
         ->assertInertia(fn (Assert $page) => $page
             ->where('view', 'gantt')
-            ->has('events', 2));
+            ->has('events', 2)
+            ->where('events.0.endsAt', '2026-08-08T11:00'));
 });
 
 test('schedule event date ranges are validated', function () {

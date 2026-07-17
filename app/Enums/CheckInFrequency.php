@@ -10,14 +10,34 @@ enum CheckInFrequency: string
     case Weekly = 'weekly';
     case Monthly = 'monthly';
 
-    public function advance(CarbonImmutable $scheduledFor, string $timezone): CarbonImmutable
-    {
+    /**
+     * @param  list<int>  $weekdays
+     */
+    public function advance(
+        CarbonImmutable $scheduledFor,
+        string $timezone,
+        array $weekdays = [1, 2, 3, 4, 5],
+    ): CarbonImmutable {
         $local = $scheduledFor->setTimezone($timezone);
 
         return (match ($this) {
-            self::Daily => $local->addDay(),
+            self::Daily => self::nextSelectedWeekday($local, $weekdays),
             self::Weekly => $local->addWeek(),
             self::Monthly => $local->addMonthNoOverflow(),
         })->setTimezone((string) config('app.timezone'));
+    }
+
+    /**
+     * @param  list<int>  $weekdays
+     */
+    private static function nextSelectedWeekday(
+        CarbonImmutable $scheduledFor,
+        array $weekdays,
+    ): CarbonImmutable {
+        do {
+            $scheduledFor = $scheduledFor->addDay();
+        } while (! in_array($scheduledFor->dayOfWeekIso, $weekdays, true));
+
+        return $scheduledFor;
     }
 }

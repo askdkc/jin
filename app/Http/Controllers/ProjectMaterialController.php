@@ -34,7 +34,11 @@ class ProjectMaterialController extends Controller
         if ($type === null || $type === 'document') {
             $items = $items->concat($project->documents()
                 ->with(['creator:id,name', 'materialFolder:id,name'])
-                ->when($folderId !== null, fn ($query) => $query->where('material_folder_id', $folderId))
+                ->when(
+                    $folderId !== null,
+                    fn ($query) => $query->where('material_folder_id', $folderId),
+                    fn ($query) => $query->whereNull('material_folder_id'),
+                )
                 ->when($updaterId !== null, fn ($query) => $query->where('created_by', $updaterId))
                 ->get()
                 ->map(fn (Document $document): array => [
@@ -54,7 +58,11 @@ class ProjectMaterialController extends Controller
         if ($type === null || $type === 'file') {
             $items = $items->concat($project->storedFiles()
                 ->with(['uploader:id,name', 'materialFolder:id,name'])
-                ->when($folderId !== null, fn ($query) => $query->where('material_folder_id', $folderId))
+                ->when(
+                    $folderId !== null,
+                    fn ($query) => $query->where('material_folder_id', $folderId),
+                    fn ($query) => $query->whereNull('material_folder_id'),
+                )
                 ->when($updaterId !== null, fn ($query) => $query->where('uploaded_by', $updaterId))
                 ->get()
                 ->map(fn (StoredFile $file): array => [
@@ -74,7 +82,11 @@ class ProjectMaterialController extends Controller
         if ($type === null || $type === 'link') {
             $items = $items->concat($project->externalLinks()
                 ->with(['creator:id,name', 'materialFolder:id,name'])
-                ->when($folderId !== null, fn ($query) => $query->where('material_folder_id', $folderId))
+                ->when(
+                    $folderId !== null,
+                    fn ($query) => $query->where('material_folder_id', $folderId),
+                    fn ($query) => $query->whereNull('material_folder_id'),
+                )
                 ->when($updaterId !== null, fn ($query) => $query->where('created_by', $updaterId))
                 ->get()
                 ->map(fn (ExternalLink $link): array => [

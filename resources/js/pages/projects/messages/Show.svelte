@@ -111,11 +111,8 @@
 
         return `${(size / (1024 * 1024)).toFixed(1)} MB`;
     };
-    const confirmDelete = (event: SubmitEvent): void => {
-        if (!window.confirm(t('Are you sure you want to delete this?'))) {
-            event.preventDefault();
-        }
-    };
+    const confirmDelete = (): boolean =>
+        window.confirm(t('Are you sure you want to delete this?'));
 </script>
 
 <AppHead title={post.title} />
@@ -194,7 +191,7 @@
                                     post.id,
                                     comment.id,
                                 ])}
-                                onsubmit={confirmDelete}
+                                onBefore={confirmDelete}
                             >
                                 {#snippet children({ processing })}
                                     <button
@@ -292,7 +289,7 @@
                                         project.id,
                                         attachment.id,
                                     ])}
-                                    onsubmit={confirmDelete}
+                                    onBefore={confirmDelete}
                                 >
                                     {#snippet children({ processing })}
                                         <Button

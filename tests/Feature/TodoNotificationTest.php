@@ -70,6 +70,32 @@ test('todo assignment comments and completion notify related users except the ac
     Notification::assertNotSentTo($commenter, TodoActivityNotification::class);
 });
 
+test('completion watchers chosen on the todo are notified when it is done', function () {
+    Notification::fake();
+
+    $owner = User::factory()->create();
+    $watcher = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($watcher, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([$owner->id, $watcher->id]);
+    $list = TodoList::factory()->for($project)->create();
+    $todo = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->create([
+        'completion_notify_ids' => [$watcher->id],
+    ]);
+
+    $this->actingAs($owner)
+        ->patch(route('projects.todos.toggle', [$team, $project, $list, $todo]))
+        ->assertRedirect();
+
+    Notification::assertSentTo(
+        $watcher,
+        TodoActivityNotification::class,
+        fn (TodoActivityNotification $notification): bool => $notification->type === TodoActivityNotification::Completed,
+    );
+});
+
 test('due todo reminders are sent once per day', function () {
     $owner = User::factory()->create();
     $assignee = User::factory()->create();

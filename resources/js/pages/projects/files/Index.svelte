@@ -201,11 +201,8 @@
             file: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
         })[kind];
 
-    const confirmDelete = (event: SubmitEvent): void => {
-        if (!window.confirm(t('Are you sure you want to delete this?'))) {
-            event.preventDefault();
-        }
-    };
+    const confirmDelete = (): boolean =>
+        window.confirm(t('Are you sure you want to delete this?'));
 
     const openPreview = (file: ProjectStoredFile): void => {
         previewFile = file;
@@ -543,7 +540,7 @@
                                                                 file.id,
                                                             ],
                                                         )}
-                                                        onsubmit={confirmDelete}
+                                                        onBefore={confirmDelete}
                                                     >
                                                         {#snippet children({
                                                             processing,

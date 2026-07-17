@@ -52,6 +52,41 @@ test('project participants can create and complete assigned todos', function () 
     expect($todo->fresh()->completed_by)->toBe($owner->id);
 });
 
+test('todos can be created with subtasks and completion watchers in one request', function () {
+    $owner = User::factory()->create();
+    $member = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([$owner->id, $member->id]);
+    $list = TodoList::factory()->for($project)->create();
+
+    $this->actingAs($owner)
+        ->post(route('projects.todos.store', [$team, $project, $list]), [
+            'title' => 'リリース準備',
+            'completion_notify_ids' => [$member->id],
+            'subtasks' => ['チェックリスト作成', '最終確認'],
+        ])
+        ->assertRedirect()
+        ->assertSessionHasNoErrors();
+
+    $todo = Todo::query()->whereNull('parent_id')->firstOrFail();
+
+    expect($todo->completion_notify_ids)->toBe([$member->id])
+        ->and($todo->subtasks()->orderBy('position')->pluck('title')->all())
+        ->toBe(['チェックリスト作成', '最終確認']);
+
+    $outsider = User::factory()->create();
+
+    $this->actingAs($owner)
+        ->post(route('projects.todos.store', [$team, $project, $list]), [
+            'title' => '通知先が不正',
+            'completion_notify_ids' => [$outsider->id],
+        ])
+        ->assertSessionHasErrors('completion_notify_ids.0');
+});
+
 test('todo assignees must participate in the project', function () {
     $owner = User::factory()->create();
     $outsider = User::factory()->create();

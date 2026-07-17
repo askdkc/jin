@@ -550,6 +550,11 @@
                                                 ></span>
                                             {/each}
                                         </div>
+                                        <div
+                                            class="pointer-events-none absolute inset-0 opacity-30"
+                                            style={`background-image: linear-gradient(to right, var(--color-border) 1px, transparent 1px); background-size: calc(100% / ${ganttDayCount}) 100%;`}
+                                            aria-hidden="true"
+                                        ></div>
                                         <Link
                                             href={showProject([
                                                 currentTeam.slug,
@@ -605,6 +610,11 @@
                                                 ></span>
                                             {/each}
                                         </div>
+                                        <div
+                                            class="pointer-events-none absolute inset-0 opacity-30"
+                                            style={`background-image: linear-gradient(to right, var(--color-border) 1px, transparent 1px); background-size: calc(100% / ${ganttDayCount}) 100%;`}
+                                            aria-hidden="true"
+                                        ></div>
                                         <Link
                                             href={ScheduleEventController.index(
                                                 [
@@ -619,11 +629,11 @@
                                                     },
                                                 },
                                             )}
-                                            class={`relative z-10 m-1 flex min-w-0 items-center overflow-hidden rounded-lg border px-3 py-2 text-sm font-bold shadow-sm transition hover:brightness-95 ${eventColor(event.project.id)}`}
+                                            class={`relative z-10 mx-px my-1 flex min-w-0 items-center overflow-visible rounded-lg border px-2 py-2 text-sm font-bold shadow-sm transition hover:brightness-95 ${eventColor(event.project.id)}`}
                                             style={`grid-column: ${ganttGridColumn(dateKeyInTokyo(event.startsAt), dateKeyInTokyo(event.endsAt, true))};`}
                                             title={`${event.title} · ${event.project.name}`}
                                         >
-                                            <span class="truncate">
+                                            <span class="whitespace-nowrap">
                                                 {event.title} · {event.project
                                                     .name}
                                             </span>

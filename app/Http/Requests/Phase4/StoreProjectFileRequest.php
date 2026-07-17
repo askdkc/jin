@@ -29,13 +29,20 @@ class StoreProjectFileRequest extends FormRequest
     public function rules(): array
     {
         $project = $this->route('project');
+        $fileTypes = ['pdf', 'txt', 'csv', 'jpg', 'jpeg', 'png', 'webp', 'mp4', 'webm', 'mov', 'm4v', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip'];
+        $extensions = 'extensions:'.implode(',', $fileTypes);
 
         return [
             'file' => [
+                'required_without:files',
+                File::types($fileTypes)->max('10mb'),
+                $extensions,
+            ],
+            'files' => ['required_without:file', 'array', 'max:20'],
+            'files.*' => [
                 'required',
-                File::types(['pdf', 'txt', 'csv', 'jpg', 'jpeg', 'png', 'webp', 'mp4', 'webm', 'mov', 'm4v', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip'])
-                    ->max('10mb'),
-                'extensions:pdf,txt,csv,jpg,jpeg,png,webp,mp4,webm,mov,m4v,doc,docx,xls,xlsx,ppt,pptx,zip',
+                File::types($fileTypes)->max('10mb'),
+                $extensions,
             ],
             'material_folder_id' => [
                 'nullable',
@@ -44,6 +51,12 @@ class StoreProjectFileRequest extends FormRequest
                     'project_id',
                     $project instanceof Project ? $project->id : 0,
                 ),
+            ],
+            'folder_name' => [
+                'nullable',
+                'string',
+                'max:255',
+                Rule::prohibitedIf($this->filled('material_folder_id')),
             ],
         ];
     }

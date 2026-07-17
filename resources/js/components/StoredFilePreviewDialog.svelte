@@ -172,12 +172,22 @@
                     exportHtml: false,
                 },
             };
-            viewer.file = new File([blob], previewFile.name, {
-                type:
-                    blob.type ||
-                    previewFile.mimeType ||
-                    'application/octet-stream',
-            });
+            const isConvertedPdf =
+                extension !== 'pdf' &&
+                (response.headers.get('content-type') ?? '').startsWith(
+                    'application/pdf',
+                );
+            viewer.file = new File(
+                [blob],
+                isConvertedPdf ? `${previewFile.name}.pdf` : previewFile.name,
+                {
+                    type: isConvertedPdf
+                        ? 'application/pdf'
+                        : blob.type ||
+                          previewFile.mimeType ||
+                          'application/octet-stream',
+                },
+            );
             viewer.addEventListener('viewer-error', () => {
                 if (previewViewer === viewer) {
                     previewError = t('Could not load this file preview.');

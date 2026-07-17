@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Enums\ActivityType;
 use App\Http\Requests\Phase9\AnswerCheckInRequest;
 use App\Http\Requests\Phase9\StoreCheckInRequest;
+use App\Http\Requests\Phase9\UpdateCheckInRequest;
 use App\Models\Activity;
 use App\Models\CheckIn;
 use App\Models\CheckInPrompt;
@@ -13,6 +14,7 @@ use App\Models\Team;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Inertia\Inertia;
@@ -35,6 +37,7 @@ class CheckInController extends Controller
                 'id' => $checkIn->id,
                 'question' => $checkIn->question,
                 'frequency' => $checkIn->frequency->value,
+                'weekdays' => $checkIn->scheduledWeekdays(),
                 'timezone' => $checkIn->timezone,
                 'nextRunAt' => $checkIn->next_run_at->toISOString(),
                 'paused' => $checkIn->paused_at !== null,
@@ -68,6 +71,7 @@ class CheckInController extends Controller
             ->get()
             ->map(fn (CheckInPrompt $prompt): array => [
                 'id' => $prompt->id,
+                'checkInId' => $prompt->check_in_id,
                 'question' => $prompt->checkIn->question,
                 'answer' => $prompt->answer,
                 'userName' => $prompt->user?->name,
@@ -106,6 +110,7 @@ class CheckInController extends Controller
             $checkIn = $project->checkIns()->create([
                 ...$validated,
                 'created_by' => $request->user()->id,
+                'weekdays' => $request->weekdays(),
                 'next_run_at' => $nextRunAt,
             ]);
             $checkIn->targets()->sync($targetUserIds);
@@ -116,6 +121,118 @@ class CheckInController extends Controller
         });
 
         return to_route('projects.check-ins.index', [$currentTeam, $project]);
+    }
+
+    public function show(
+        Team $currentTeam,
+        Project $project,
+        CheckIn $checkIn,
+    ): Response {
+        Gate::authorize('view', $checkIn);
+
+        $checkIn->load(['creator:id,name', 'targets:id,name']);
+
+        $pendingPrompt = $checkIn->prompts()
+            ->where('user_id', request()->user()->id)
+            ->whereNull('answered_at')
+            ->oldest('scheduled_for')
+            ->first();
+
+        $responses = $checkIn->prompts()
+            ->whereNotNull('answered_at')
+            ->with('user:id,name')
+            ->latest('answered_at')
+            ->limit(100)
+            ->get()
+            ->map(fn (CheckInPrompt $prompt): array => [
+                'id' => $prompt->id,
+                'checkInId' => $checkIn->id,
+                'question' => $checkIn->question,
+                'answer' => $prompt->answer,
+                'userName' => $prompt->user?->name,
+                'answeredAt' => $prompt->answered_at?->toISOString(),
+            ]);
+
+        return Inertia::render('projects/check-ins/Show', [
+            'project' => ['id' => $project->id, 'name' => $project->name],
+            'checkIn' => [
+                'id' => $checkIn->id,
+                'question' => $checkIn->question,
+                'frequency' => $checkIn->frequency->value,
+                'weekdays' => $checkIn->scheduledWeekdays(),
+                'timezone' => $checkIn->timezone,
+                'nextRunAt' => $checkIn->next_run_at->toISOString(),
+                'nextRunAtLocal' => $checkIn->next_run_at
+                    ->timezone($checkIn->timezone)
+                    ->format('Y-m-d\TH:i'),
+                'paused' => $checkIn->paused_at !== null,
+                'creatorName' => $checkIn->creator?->name,
+                'targetIds' => $checkIn->targets
+                    ->pluck('id')
+                    ->map(fn (int $id): int => $id)
+                    ->all(),
+                'targetNames' => $checkIn->targets->pluck('name')->all(),
+                'canManage' => Gate::allows('update', $checkIn),
+                'canDelete' => Gate::allows('delete', $checkIn),
+                'isBookmarked' => request()->user()
+                    ->bookmarkedCheckIns()
+                    ->whereKey($checkIn->id)
+                    ->exists(),
+            ],
+            'pendingPrompt' => $pendingPrompt === null ? null : [
+                'id' => $pendingPrompt->id,
+                'checkInId' => $checkIn->id,
+                'question' => $checkIn->question,
+                'scheduledFor' => $pendingPrompt->scheduled_for->toISOString(),
+            ],
+            'responses' => $responses,
+            'members' => $project->members()
+                ->orderBy('name')
+                ->get(['users.id', 'users.name'])
+                ->map(fn (User $user): array => ['id' => $user->id, 'name' => $user->name]),
+        ]);
+    }
+
+    public function update(
+        UpdateCheckInRequest $request,
+        Team $currentTeam,
+        Project $project,
+        CheckIn $checkIn,
+    ): RedirectResponse {
+        $validated = $request->validated();
+        $targetUserIds = $validated['target_user_ids'];
+        unset($validated['target_user_ids']);
+
+        DB::transaction(function () use ($request, $checkIn, $validated, $targetUserIds): void {
+            $timezone = $validated['timezone'];
+            $nextRunAt = CarbonImmutable::createFromFormat(
+                'Y-m-d\\TH:i',
+                $validated['next_run_at'],
+                $timezone,
+            )->setTimezone((string) config('app.timezone'));
+
+            $checkIn->update([
+                ...$validated,
+                'weekdays' => $request->weekdays(),
+                'next_run_at' => $nextRunAt,
+            ]);
+            $checkIn->targets()->sync($targetUserIds);
+        });
+
+        return back();
+    }
+
+    public function toggleBookmark(
+        Request $request,
+        Team $currentTeam,
+        Project $project,
+        CheckIn $checkIn,
+    ): RedirectResponse {
+        Gate::authorize('view', $checkIn);
+
+        $request->user()->bookmarkedCheckIns()->toggle($checkIn->id);
+
+        return back();
     }
 
     public function togglePause(
@@ -131,7 +248,7 @@ class CheckInController extends Controller
                 : now(),
         ]);
 
-        return to_route('projects.check-ins.index', [$currentTeam, $project]);
+        return back();
     }
 
     public function destroy(
@@ -167,6 +284,6 @@ class CheckInController extends Controller
             );
         });
 
-        return to_route('projects.check-ins.index', [$currentTeam, $project]);
+        return back();
     }
 }

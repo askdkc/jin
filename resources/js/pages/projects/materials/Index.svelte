@@ -24,9 +24,10 @@
 </script>
 
 <script lang="ts">
-    import { Form, Link } from '@inertiajs/svelte';
+    import { Form, Link, useForm } from '@inertiajs/svelte';
+    import ChevronDown from 'lucide-svelte/icons/chevron-down';
     import ChevronLeft from 'lucide-svelte/icons/chevron-left';
-    import Cloud from 'lucide-svelte/icons/cloud';
+    import Ellipsis from 'lucide-svelte/icons/ellipsis';
     import ExternalLinkIcon from 'lucide-svelte/icons/external-link';
     import Eye from 'lucide-svelte/icons/eye';
     import FileIcon from 'lucide-svelte/icons/file';
@@ -34,8 +35,11 @@
     import FileText from 'lucide-svelte/icons/file-text';
     import Folder from 'lucide-svelte/icons/folder';
     import FolderPlus from 'lucide-svelte/icons/folder-plus';
+    import FolderUp from 'lucide-svelte/icons/folder-up';
     import LinkIcon from 'lucide-svelte/icons/link';
+    import Pencil from 'lucide-svelte/icons/pencil';
     import Plus from 'lucide-svelte/icons/plus';
+    import Trash2 from 'lucide-svelte/icons/trash-2';
     import Upload from 'lucide-svelte/icons/upload';
     import ProjectDocumentController from '@/actions/App/Http/Controllers/ProjectDocumentController';
     import ProjectFileController from '@/actions/App/Http/Controllers/ProjectFileController';
@@ -44,20 +48,19 @@
     import StoredFilePreviewDialog, {
         canPreviewStoredFile,
     } from '@/components/StoredFilePreviewDialog.svelte';
-    import { Badge } from '@/components/ui/badge';
     import { Button } from '@/components/ui/button';
     import {
-        Card,
-        CardContent,
-        CardHeader,
-        CardTitle,
-    } from '@/components/ui/card';
+        Dialog,
+        DialogClose,
+        DialogContent,
+        DialogFooter,
+        DialogTitle,
+    } from '@/components/ui/dialog';
     import {
         DropdownMenu,
         DropdownMenuContent,
+        DropdownMenuGroup,
         DropdownMenuItem,
-        DropdownMenuLabel,
-        DropdownMenuSeparator,
         DropdownMenuTrigger,
     } from '@/components/ui/dropdown-menu';
     import { Input } from '@/components/ui/input';
@@ -93,40 +96,47 @@
     const activeFolder = $derived(
         folders.find((folder) => folder.id === filters.folder) ?? null,
     );
+    const uploadForm = useForm(
+        () => ProjectFileController.store(routeArguments),
+        {
+            files: [] as File[],
+            material_folder_id: null as number | null,
+            folder_name: null as string | null,
+        },
+    );
+    const uploadError = $derived(
+        uploadForm.errors.files ??
+            Object.entries(uploadForm.errors).find(([field]) =>
+                field.startsWith('files.'),
+            )?.[1] ??
+            uploadForm.errors.material_folder_id ??
+            uploadForm.errors.folder_name,
+    );
+    const hasFilters = $derived(
+        filters.type !== null || filters.updater !== null,
+    );
+    const isEmpty = $derived(
+        items.length === 0 && (activeFolder !== null || folders.length === 0),
+    );
 
+    let folderDialogOpen = $state(false);
+    let linkDialogOpen = $state(false);
+    let moveDialogOpen = $state(false);
+    let movingItem = $state<MaterialItem | null>(null);
+    let renameDialogOpen = $state(false);
+    let renamingFile = $state<MaterialItem | null>(null);
     let previewOpen = $state(false);
     let previewFile = $state<{ id: number; name: string } | null>(null);
+    let isFileDragging = $state(false);
+    let isReadingFolder = $state(false);
+    let folderInput: HTMLInputElement;
 
-    const cloudProviders = [
-        'Google Drive',
-        'OneDrive',
-        'iCloud Drive',
-    ] as const;
-    type CloudProvider = (typeof cloudProviders)[number];
-    const cloudProviderHints: Record<CloudProvider, string> = {
-        'Google Drive': t('Paste a Google Drive share link'),
-        OneDrive: t('Paste a OneDrive share link'),
-        'iCloud Drive': t('Paste an iCloud Drive share link'),
-    };
-    let externalLinkHint = $state('');
-
-    const focusField = (id: string): void => {
-        requestAnimationFrame(() => {
-            const field = document.getElementById(id);
-            field?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            (field as HTMLInputElement | null)?.focus();
-        });
-    };
-    const linkFromCloud = (provider: CloudProvider): void => {
-        externalLinkHint = cloudProviderHints[provider];
-        focusField('external-link-url');
-    };
+    const MAX_UPLOAD_FILES = 20;
 
     const formatDate = (value: string | null): string =>
         value
             ? new Intl.DateTimeFormat('ja-JP', {
                   dateStyle: 'medium',
-                  timeStyle: 'short',
               }).format(new Date(value))
             : '';
     const typeLabel = (type: MaterialItem['type']): string =>
@@ -135,119 +145,325 @@
             file: t('File'),
             link: t('External link'),
         })[type];
-    const confirmDelete = (event: SubmitEvent): void => {
-        if (!window.confirm(t('Are you sure you want to delete this?'))) {
-            event.preventDefault();
-        }
+    const confirmDelete = (): boolean =>
+        window.confirm(t('Are you sure you want to delete this?'));
+    const openMoveDialog = (item: MaterialItem): void => {
+        movingItem = item;
+        moveDialogOpen = true;
+    };
+    const openRenameDialog = (item: MaterialItem): void => {
+        renamingFile = item;
+        renameDialogOpen = true;
     };
     const openPreview = (item: MaterialItem): void => {
         previewFile = { id: item.id, name: item.title };
         previewOpen = true;
     };
+    const setUploadError = (message: string): void => {
+        uploadForm.clearErrors();
+        uploadForm.setError('files', message);
+    };
+    const submitFiles = (
+        files: File[],
+        folderName: string | null = null,
+    ): void => {
+        if (files.length === 0 || uploadForm.processing) {
+            return;
+        }
+
+        if (files.length > MAX_UPLOAD_FILES) {
+            setUploadError(
+                t('You can upload up to :count files at a time.', {
+                    count: MAX_UPLOAD_FILES.toString(),
+                }),
+            );
+
+            return;
+        }
+
+        uploadForm.clearErrors();
+        uploadForm.files = files;
+        uploadForm.material_folder_id = activeFolder?.id ?? null;
+        uploadForm.folder_name = activeFolder ? null : folderName;
+        uploadForm.submit({
+            preserveScroll: true,
+            onFinish: () => uploadForm.reset('files', 'folder_name'),
+        });
+    };
+    const chooseFolder = (): void => {
+        folderInput.value = '';
+        folderInput.click();
+    };
+    const isHiddenFile = (file: File): boolean =>
+        (file.webkitRelativePath || file.name)
+            .split('/')
+            .some((segment) => segment.startsWith('.'));
+    const handleFolderPick = (event: Event): void => {
+        const input = event.currentTarget as HTMLInputElement;
+        const files = Array.from(input.files ?? []).filter(
+            (file) => !isHiddenFile(file),
+        );
+
+        if (files.length === 0) {
+            setUploadError(t('No files found in the selected folder.'));
+
+            return;
+        }
+
+        const folderName = files[0]?.webkitRelativePath.split('/')[0] ?? null;
+
+        submitFiles(files, folderName);
+        input.value = '';
+    };
+    const readFileEntry = (entry: FileSystemFileEntry): Promise<File> =>
+        new Promise((resolve, reject) => entry.file(resolve, reject));
+    const readDirectoryEntries = (
+        entry: FileSystemDirectoryEntry,
+    ): Promise<FileSystemEntry[]> =>
+        new Promise((resolve, reject) => {
+            const entries: FileSystemEntry[] = [];
+            const reader = entry.createReader();
+            const readNextBatch = (): void => {
+                reader.readEntries((batch) => {
+                    if (batch.length === 0) {
+                        resolve(entries);
+
+                        return;
+                    }
+
+                    entries.push(...batch);
+                    readNextBatch();
+                }, reject);
+            };
+
+            readNextBatch();
+        });
+    const collectEntryFiles = async (
+        entry: FileSystemEntry,
+        files: File[],
+    ): Promise<void> => {
+        if (files.length > MAX_UPLOAD_FILES) {
+            return;
+        }
+
+        if (entry.name.startsWith('.')) {
+            return;
+        }
+
+        if (entry.isFile) {
+            files.push(await readFileEntry(entry as FileSystemFileEntry));
+
+            return;
+        }
+
+        if (!entry.isDirectory) {
+            return;
+        }
+
+        // ponytail: Material folders are flat; add parent_id before preserving nested paths.
+        for (const child of await readDirectoryEntries(
+            entry as FileSystemDirectoryEntry,
+        )) {
+            await collectEntryFiles(child, files);
+
+            if (files.length > MAX_UPLOAD_FILES) {
+                return;
+            }
+        }
+    };
+    const hasDraggedFiles = (event: DragEvent): boolean =>
+        event.dataTransfer?.types.includes('Files') === true;
+    const handleFileDrag = (event: DragEvent): void => {
+        if (!hasDraggedFiles(event)) {
+            return;
+        }
+
+        event.preventDefault();
+
+        if (event.dataTransfer) {
+            event.dataTransfer.dropEffect =
+                uploadForm.processing || isReadingFolder ? 'none' : 'copy';
+        }
+
+        isFileDragging = !uploadForm.processing && !isReadingFolder;
+    };
+    const handleFileDragLeave = (event: DragEvent): void => {
+        const dropTarget = event.currentTarget as HTMLElement;
+
+        if (!dropTarget.contains(event.relatedTarget as Node | null)) {
+            isFileDragging = false;
+        }
+    };
+    const handleFileDrop = async (event: DragEvent): Promise<void> => {
+        if (!hasDraggedFiles(event)) {
+            return;
+        }
+
+        event.preventDefault();
+        isFileDragging = false;
+
+        if (uploadForm.processing || isReadingFolder) {
+            return;
+        }
+
+        const dataTransfer = event.dataTransfer;
+        const entries = Array.from(dataTransfer?.items ?? [])
+            .filter((item) => item.kind === 'file')
+            .map((item) => item.webkitGetAsEntry())
+            .filter((entry): entry is FileSystemEntry => entry !== null);
+
+        if (entries.length === 0) {
+            submitFiles(Array.from(dataTransfer?.files ?? []));
+
+            return;
+        }
+
+        const directories = entries.filter((entry) => entry.isDirectory);
+
+        if (
+            activeFolder === null &&
+            directories.length > 0 &&
+            (directories.length !== 1 || entries.length !== 1)
+        ) {
+            setUploadError(t('Drop one folder at a time.'));
+
+            return;
+        }
+
+        const files: File[] = [];
+        isReadingFolder = true;
+
+        try {
+            for (const entry of entries) {
+                await collectEntryFiles(entry, files);
+
+                if (files.length > MAX_UPLOAD_FILES) {
+                    break;
+                }
+            }
+        } catch {
+            setUploadError(t('Could not read the dropped folder.'));
+
+            return;
+        } finally {
+            isReadingFolder = false;
+        }
+
+        if (files.length === 0) {
+            setUploadError(t('No files found in the selected folder.'));
+
+            return;
+        }
+
+        submitFiles(
+            files,
+            activeFolder === null && directories.length === 1
+                ? directories[0].name
+                : null,
+        );
+    };
 </script>
 
 <AppHead title={t('Materials')} />
 
-<div class="mx-auto w-full max-w-6xl space-y-6 p-4 sm:p-6">
-    <div
-        class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"
+<div
+    class="min-h-full bg-[#f5f7f3] px-0 pb-8 dark:bg-[#0d151b] sm:px-5 sm:pt-2 lg:px-6"
+>
+    <main
+        class="relative mx-auto min-h-[calc(100dvh-7rem)] w-full max-w-[1088px] overflow-hidden bg-card shadow-[0_18px_55px_rgba(30,55,80,0.08)]"
+        ondragenter={handleFileDrag}
+        ondragover={handleFileDrag}
+        ondragleave={handleFileDragLeave}
+        ondrop={handleFileDrop}
     >
-        <div>
+        {#if isFileDragging}
+            <div
+                class="pointer-events-none absolute inset-3 z-30 flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-primary bg-card/95 text-primary shadow-xl"
+                role="status"
+                aria-live="polite"
+            >
+                <Upload class="size-12" aria-hidden="true" />
+                <p class="text-lg font-bold">
+                    {t('Drop files or folders here')}
+                </p>
+            </div>
+        {/if}
+
+        <input
+            bind:this={folderInput}
+            type="file"
+            multiple
+            webkitdirectory
+            class="hidden"
+            onchange={handleFolderPick}
+        />
+
+        <div class="flex min-h-10 items-center border-b px-5 sm:px-8">
+            <Link
+                href={show([currentTeam.slug, project.id])}
+                class="text-sm font-bold hover:underline"
+            >
+                {project.name}
+            </Link>
+        </div>
+
+        <div class="px-5 py-6 sm:px-9 sm:py-8 lg:px-10">
             {#if activeFolder}
                 <Link
                     href={ProjectMaterialController.index(routeArguments)}
                     class="mb-2 inline-flex items-center gap-1 text-sm font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
                 >
-                    <ChevronLeft class="size-4" />
+                    <ChevronLeft class="size-4" aria-hidden="true" />
                     {t('Materials')}
                 </Link>
-                <h1
-                    class="flex items-center gap-2 text-2xl font-semibold tracking-tight"
-                >
-                    <Folder class="size-6 text-muted-foreground" />
-                    {activeFolder.name}
-                </h1>
-                <p class="text-sm text-muted-foreground">
-                    {project.name} · {t(':count items', {
-                        count: activeFolder.itemCount.toString(),
-                    })}
-                </p>
-            {:else}
-                <h1 class="text-2xl font-semibold tracking-tight">
-                    {t('Materials')}
-                </h1>
-                <p class="text-sm text-muted-foreground">
-                    {project.name} · {t(
-                        'Documents, files, and links in one place',
-                    )}
-                </p>
             {/if}
-        </div>
-        <div class="flex flex-wrap gap-2">
-            <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                    {#snippet children(triggerProps)}
-                        <Button
-                            size="sm"
-                            onclick={triggerProps.onclick}
-                            aria-expanded={triggerProps['aria-expanded']}
-                            data-state={triggerProps['data-state']}
-                        >
-                            <Plus class="size-4" />
-                            {t('Add')}
-                        </Button>
-                    {/snippet}
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                    <DropdownMenuItem asChild>
-                        {#snippet children(itemProps)}
-                            <Link
-                                href={ProjectDocumentController.index(
-                                    routeArguments,
-                                )}
-                                class={itemProps.class}
-                                onclick={() => itemProps.onClick?.()}
+
+            <h1
+                class="flex items-center gap-2 text-3xl font-bold tracking-tight"
+            >
+                {#if activeFolder}
+                    <Folder
+                        class="size-8 text-muted-foreground"
+                        aria-hidden="true"
+                    />
+                    {activeFolder.name}
+                {:else}
+                    {t('Materials')}
+                {/if}
+            </h1>
+
+            <div class="mt-4 flex flex-wrap items-center gap-2 border-b pb-5">
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        {#snippet children(triggerProps)}
+                            <Button
+                                size="sm"
+                                onclick={triggerProps.onclick}
+                                aria-expanded={triggerProps['aria-expanded']}
+                                data-state={triggerProps['data-state']}
                             >
-                                <FilePlus class="size-4" />
-                                {t('New document')}
-                            </Link>
+                                <Plus data-icon="inline-start" />
+                                {t('New...')}
+                                <ChevronDown data-icon="inline-end" />
+                            </Button>
                         {/snippet}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem asChild>
-                        {#snippet children(itemProps)}
-                            <Link
-                                href={ProjectFileController.index(
-                                    routeArguments,
-                                )}
-                                class={itemProps.class}
-                                onclick={() => itemProps.onClick?.()}
-                            >
-                                <Upload class="size-4" />
-                                {t('Upload file')}
-                            </Link>
-                        {/snippet}
-                    </DropdownMenuItem>
-                    {#if !activeFolder}
-                        <DropdownMenuItem asChild>
-                            {#snippet children(itemProps)}
-                                <button
-                                    type="button"
-                                    class={itemProps.class}
-                                    onclick={() => {
-                                        itemProps.onClick?.();
-                                        focusField('material-folder-name');
-                                    }}
-                                >
-                                    <FolderPlus class="size-4" />
-                                    {t('Create folder')}
-                                </button>
-                            {/snippet}
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuLabel>
-                            {t('Link files from an external service')}
-                        </DropdownMenuLabel>
-                        {#each cloudProviders as provider (provider)}
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start">
+                        <DropdownMenuGroup>
+                            <DropdownMenuItem asChild>
+                                {#snippet children(itemProps)}
+                                    <Link
+                                        href={ProjectDocumentController.index(
+                                            routeArguments,
+                                        )}
+                                        class={itemProps.class}
+                                        onclick={() => itemProps.onClick?.()}
+                                    >
+                                        <FilePlus aria-hidden="true" />
+                                        {t('New document')}
+                                    </Link>
+                                {/snippet}
+                            </DropdownMenuItem>
                             <DropdownMenuItem asChild>
                                 {#snippet children(itemProps)}
                                     <button
@@ -255,225 +471,86 @@
                                         class={itemProps.class}
                                         onclick={() => {
                                             itemProps.onClick?.();
-                                            linkFromCloud(provider);
+                                            chooseFolder();
                                         }}
                                     >
-                                        <Cloud class="size-4" />
-                                        {provider}
+                                        <FolderUp aria-hidden="true" />
+                                        {t('Upload folder')}
                                     </button>
                                 {/snippet}
                             </DropdownMenuItem>
-                        {/each}
-                    {/if}
-                </DropdownMenuContent>
-            </DropdownMenu>
-            <Button variant="outline" size="sm" asChild>
-                {#snippet children(buttonProps)}
-                    <Link
-                        {...buttonProps}
-                        href={ProjectDocumentController.index(routeArguments)}
-                        class={buttonProps.class}
-                    >
-                        <FileText class="size-4" />
-                        {t('Documents')}
-                    </Link>
-                {/snippet}
-            </Button>
-            <Button variant="outline" size="sm" asChild>
-                {#snippet children(buttonProps)}
-                    <Link
-                        {...buttonProps}
-                        href={ProjectFileController.index(routeArguments)}
-                        class={buttonProps.class}
-                    >
-                        <FileIcon class="size-4" />
-                        {t('Files')}
-                    </Link>
-                {/snippet}
-            </Button>
-        </div>
-    </div>
-
-    {#if !activeFolder}
-        <div class="grid gap-5 lg:grid-cols-2">
-            <Card>
-                <CardHeader><CardTitle>{t('Folders')}</CardTitle></CardHeader>
-                <CardContent class="space-y-4">
-                    <Form
-                        {...ProjectMaterialController.storeFolder.form(
-                            routeArguments,
-                        )}
-                        resetOnSuccess
-                        class="flex items-start gap-2"
-                    >
-                        {#snippet children({ errors, processing })}
-                            <div class="min-w-0 flex-1">
-                                <Label
-                                    for="material-folder-name"
-                                    class="sr-only"
-                                >
-                                    {t('Folder name')}
-                                </Label>
-                                <Input
-                                    id="material-folder-name"
-                                    name="name"
-                                    maxlength={255}
-                                    placeholder={t('Folder name')}
-                                    required
-                                />
-                                <InputError message={errors.name} />
-                            </div>
-                            <Button type="submit" disabled={processing}>
-                                {t('Add')}
-                            </Button>
-                        {/snippet}
-                    </Form>
-
-                    {#if folders.length === 0}
-                        <p class="text-sm text-muted-foreground">
-                            {t('No folders yet')}
-                        </p>
-                    {:else}
-                        <div class="space-y-2">
-                            {#each folders as folder (folder.id)}
-                                <div
-                                    class="flex min-w-0 items-center gap-2 rounded-lg border p-1.5"
-                                >
+                            <DropdownMenuItem asChild>
+                                {#snippet children(itemProps)}
                                     <Link
-                                        href={ProjectMaterialController.index(
+                                        href={ProjectFileController.index(
                                             routeArguments,
-                                            { query: { folder: folder.id } },
                                         )}
-                                        class="flex min-w-0 flex-1 items-center gap-3 rounded-md px-2 py-1.5 text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                        class={itemProps.class}
+                                        onclick={() => itemProps.onClick?.()}
                                     >
-                                        <Folder
-                                            class="size-4 shrink-0 text-muted-foreground"
-                                        />
-                                        <span class="min-w-0 flex-1 truncate">
-                                            {folder.name}
-                                        </span>
-                                        <Badge variant="secondary">
-                                            {folder.itemCount}
-                                        </Badge>
+                                        <Upload aria-hidden="true" />
+                                        {t('Upload file')}
                                     </Link>
-                                    {#if folder.canDelete}
-                                        <Form
-                                            {...ProjectMaterialController.destroyFolder.form(
-                                                [
-                                                    currentTeam.slug,
-                                                    project.id,
-                                                    folder.id,
-                                                ],
-                                            )}
-                                            onsubmit={confirmDelete}
+                                {/snippet}
+                            </DropdownMenuItem>
+                            {#if !activeFolder}
+                                <DropdownMenuItem asChild>
+                                    {#snippet children(itemProps)}
+                                        <button
+                                            type="button"
+                                            class={itemProps.class}
+                                            onclick={() => {
+                                                itemProps.onClick?.();
+                                                folderDialogOpen = true;
+                                            }}
                                         >
-                                            {#snippet children({ processing })}
-                                                <Button
-                                                    type="submit"
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    disabled={processing}
-                                                >
-                                                    {t('Delete')}
-                                                </Button>
-                                            {/snippet}
-                                        </Form>
-                                    {/if}
-                                </div>
-                            {/each}
-                        </div>
-                    {/if}
-                </CardContent>
-            </Card>
+                                            <FolderPlus aria-hidden="true" />
+                                            {t('Create folder')}
+                                        </button>
+                                    {/snippet}
+                                </DropdownMenuItem>
+                            {/if}
+                            <DropdownMenuItem asChild>
+                                {#snippet children(itemProps)}
+                                    <button
+                                        type="button"
+                                        class={itemProps.class}
+                                        onclick={() => {
+                                            itemProps.onClick?.();
+                                            linkDialogOpen = true;
+                                        }}
+                                    >
+                                        <LinkIcon aria-hidden="true" />
+                                        {t('Add external link')}
+                                    </button>
+                                {/snippet}
+                            </DropdownMenuItem>
+                        </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                </DropdownMenu>
 
-            <Card>
-                <CardHeader
-                    ><CardTitle>{t('Add external link')}</CardTitle></CardHeader
+                <Form
+                    {...ProjectMaterialController.index.form(routeArguments)}
+                    class="flex flex-wrap items-center gap-2"
                 >
-                <CardContent>
-                    <Form
-                        {...ProjectMaterialController.storeLink.form(
-                            routeArguments,
-                        )}
-                        resetOnSuccess
-                        class="space-y-3"
-                    >
-                        {#snippet children({ errors, processing })}
-                            <div class="grid gap-2">
-                                <Label for="external-link-title"
-                                    >{t('Title')}</Label
-                                >
-                                <Input
-                                    id="external-link-title"
-                                    name="title"
-                                    maxlength={255}
-                                    required
-                                />
-                                <InputError message={errors.title} />
-                            </div>
-                            <div class="grid gap-2">
-                                <Label for="external-link-url">URL</Label>
-                                <Input
-                                    id="external-link-url"
-                                    name="url"
-                                    type="url"
-                                    maxlength={2048}
-                                    placeholder="https://"
-                                    required
-                                />
-                                {#if externalLinkHint}
-                                    <p class="text-xs text-muted-foreground">
-                                        {externalLinkHint}
-                                    </p>
-                                {/if}
-                                <InputError message={errors.url} />
-                            </div>
-                            <div class="grid gap-2">
-                                <Label for="external-link-folder"
-                                    >{t('Folder')}</Label
-                                >
-                                <select
-                                    id="external-link-folder"
-                                    name="material_folder_id"
-                                    class="border-input h-10 w-full rounded-md border bg-background px-3 text-sm"
-                                >
-                                    <option value="">{t('No folder')}</option>
-                                    {#each folders as folder (folder.id)}
-                                        <option value={folder.id}
-                                            >{folder.name}</option
-                                        >
-                                    {/each}
-                                </select>
-                                <InputError
-                                    message={errors.material_folder_id}
-                                />
-                            </div>
-                            <Button type="submit" disabled={processing}>
-                                {t('Add link')}
-                            </Button>
-                        {/snippet}
-                    </Form>
-                </CardContent>
-            </Card>
-        </div>
-    {/if}
+                    {#snippet children({ processing })}
+                        {#if activeFolder}
+                            <input
+                                type="hidden"
+                                name="folder"
+                                value={activeFolder.id}
+                            />
+                        {/if}
 
-    <Card>
-        <CardHeader><CardTitle>{t('Filter materials')}</CardTitle></CardHeader>
-        <CardContent>
-            <Form
-                {...ProjectMaterialController.index.form(routeArguments)}
-                class="grid gap-3 sm:grid-cols-4"
-            >
-                {#snippet children({ processing })}
-                    <div class="grid gap-2">
-                        <Label for="material-type">{t('Type')}</Label>
+                        <Label for="material-type" class="sr-only">
+                            {t('Type')}
+                        </Label>
                         <select
                             id="material-type"
                             name="type"
-                            class="border-input h-10 rounded-md border bg-background px-3 text-sm"
+                            class="border-input h-8 rounded-md border bg-background px-3 text-sm"
                         >
-                            <option value="">{t('All types')}</option>
+                            <option value="">{t('All files')}</option>
                             <option
                                 value="document"
                                 selected={filters.type === 'document'}
@@ -493,32 +570,14 @@
                                 {t('External links')}
                             </option>
                         </select>
-                    </div>
-                    <div class="grid gap-2">
-                        <Label for="material-folder-filter">{t('Folder')}</Label
-                        >
-                        <select
-                            id="material-folder-filter"
-                            name="folder"
-                            class="border-input h-10 rounded-md border bg-background px-3 text-sm"
-                        >
-                            <option value="">{t('All folders')}</option>
-                            {#each folders as folder (folder.id)}
-                                <option
-                                    value={folder.id}
-                                    selected={filters.folder === folder.id}
-                                >
-                                    {folder.name}
-                                </option>
-                            {/each}
-                        </select>
-                    </div>
-                    <div class="grid gap-2">
-                        <Label for="material-updater">{t('Added by')}</Label>
+
+                        <Label for="material-updater" class="sr-only">
+                            {t('Added by')}
+                        </Label>
                         <select
                             id="material-updater"
                             name="updater"
-                            class="border-input h-10 rounded-md border bg-background px-3 text-sm"
+                            class="border-input h-8 rounded-md border bg-background px-3 text-sm"
                         >
                             <option value="">{t('Everyone')}</option>
                             {#each members as member (member.id)}
@@ -530,79 +589,230 @@
                                 </option>
                             {/each}
                         </select>
-                    </div>
-                    <div class="flex items-end gap-2">
-                        <Button type="submit" disabled={processing}>
+
+                        <Button
+                            type="submit"
+                            variant="outline"
+                            size="sm"
+                            disabled={processing}
+                        >
                             {t('Filter')}
                         </Button>
-                        <Button variant="outline" asChild>
-                            {#snippet children(buttonProps)}
+                        {#if hasFilters}
+                            <Button variant="ghost" size="sm" asChild>
+                                {#snippet children(buttonProps)}
+                                    <Link
+                                        {...buttonProps}
+                                        href={activeFolder
+                                            ? ProjectMaterialController.index(
+                                                  routeArguments,
+                                                  {
+                                                      query: {
+                                                          folder: activeFolder.id,
+                                                      },
+                                                  },
+                                              )
+                                            : ProjectMaterialController.index(
+                                                  routeArguments,
+                                              )}
+                                        class={buttonProps.class}
+                                    >
+                                        {t('Clear')}
+                                    </Link>
+                                {/snippet}
+                            </Button>
+                        {/if}
+                    {/snippet}
+                </Form>
+            </div>
+
+            {#if uploadForm.processing}
+                <div
+                    class="mt-3 flex items-center gap-3 text-sm text-muted-foreground"
+                    aria-live="polite"
+                >
+                    <span>{t('Uploading')}</span>
+                    {#if uploadForm.progress}
+                        <progress
+                            value={uploadForm.progress.percentage}
+                            max="100"
+                            class="h-2 w-40 overflow-hidden rounded-full"
+                        >
+                            {uploadForm.progress.percentage}%
+                        </progress>
+                    {/if}
+                </div>
+            {:else if uploadError}
+                <p class="mt-3 text-sm text-destructive" role="alert">
+                    {uploadError}
+                </p>
+            {/if}
+
+            {#if isEmpty}
+                <p
+                    class="border-b py-16 text-center text-sm text-muted-foreground"
+                >
+                    {t('No materials match these filters')}
+                </p>
+            {:else}
+                <ul class="divide-y">
+                    {#if !activeFolder}
+                        {#each folders as folder (folder.id)}
+                            <li
+                                class="group flex min-h-24 items-center gap-3 py-4"
+                            >
                                 <Link
-                                    {...buttonProps}
                                     href={ProjectMaterialController.index(
                                         routeArguments,
+                                        { query: { folder: folder.id } },
                                     )}
-                                    class={buttonProps.class}
+                                    class="flex min-w-0 flex-1 items-center gap-4 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                                 >
-                                    {t('Clear')}
+                                    <span
+                                        class="flex size-14 shrink-0 items-center justify-center text-muted-foreground"
+                                    >
+                                        <Folder
+                                            class="size-12 fill-muted"
+                                            aria-hidden="true"
+                                        />
+                                    </span>
+                                    <span class="min-w-0">
+                                        <span
+                                            class="block truncate text-lg font-bold group-hover:underline"
+                                        >
+                                            {folder.name}
+                                        </span>
+                                        <span
+                                            class="block text-sm text-muted-foreground"
+                                        >
+                                            {t(':count items', {
+                                                count: folder.itemCount.toString(),
+                                            })}
+                                        </span>
+                                    </span>
                                 </Link>
-                            {/snippet}
-                        </Button>
-                    </div>
-                {/snippet}
-            </Form>
-        </CardContent>
-    </Card>
 
-    {#if items.length === 0}
-        <Card>
-            <CardContent
-                class="py-12 text-center text-sm text-muted-foreground"
-            >
-                {t('No materials match these filters')}
-            </CardContent>
-        </Card>
-    {:else}
-        <div class="grid gap-4 md:grid-cols-2">
-            {#each items as item (`${item.type}-${item.id}`)}
-                <Card class="min-w-0">
-                    <CardContent class="space-y-4 pt-6">
-                        <div class="flex min-w-0 items-start gap-3">
-                            <div
-                                class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted"
+                                {#if folder.canDelete}
+                                    <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                            {#snippet children(triggerProps)}
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    class="sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
+                                                    aria-label={t(
+                                                        'Folder actions',
+                                                    )}
+                                                    onclick={triggerProps.onclick}
+                                                    aria-expanded={triggerProps[
+                                                        'aria-expanded'
+                                                    ]}
+                                                    data-state={triggerProps[
+                                                        'data-state'
+                                                    ]}
+                                                >
+                                                    <Ellipsis />
+                                                </Button>
+                                            {/snippet}
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="end">
+                                            <DropdownMenuGroup>
+                                                <Form
+                                                    {...ProjectMaterialController.destroyFolder.form(
+                                                        [
+                                                            currentTeam.slug,
+                                                            project.id,
+                                                            folder.id,
+                                                        ],
+                                                    )}
+                                                    onBefore={confirmDelete}
+                                                >
+                                                    {#snippet children({
+                                                        processing,
+                                                    })}
+                                                        <DropdownMenuItem
+                                                            asChild
+                                                        >
+                                                            {#snippet children(
+                                                                itemProps,
+                                                            )}
+                                                                <button
+                                                                    type="submit"
+                                                                    class={itemProps.class}
+                                                                    disabled={processing}
+                                                                >
+                                                                    <Trash2
+                                                                        aria-hidden="true"
+                                                                    />
+                                                                    {t(
+                                                                        'Delete',
+                                                                    )}
+                                                                </button>
+                                                            {/snippet}
+                                                        </DropdownMenuItem>
+                                                    {/snippet}
+                                                </Form>
+                                            </DropdownMenuGroup>
+                                        </DropdownMenuContent>
+                                    </DropdownMenu>
+                                {/if}
+                            </li>
+                        {/each}
+                    {/if}
+
+                    {#each items as item (`${item.type}-${item.id}`)}
+                        <li class="group flex min-h-20 items-center gap-4 py-4">
+                            <span
+                                class="flex size-12 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"
                             >
                                 {#if item.type === 'document'}
-                                    <FileText class="size-5" />
+                                    <FileText
+                                        class="size-7"
+                                        aria-hidden="true"
+                                    />
                                 {:else if item.type === 'file'}
-                                    <FileIcon class="size-5" />
+                                    <FileIcon
+                                        class="size-7"
+                                        aria-hidden="true"
+                                    />
                                 {:else}
-                                    <LinkIcon class="size-5" />
+                                    <LinkIcon
+                                        class="size-7"
+                                        aria-hidden="true"
+                                    />
                                 {/if}
-                            </div>
+                            </span>
+
                             <div class="min-w-0 flex-1">
                                 {#if item.type === 'link' && item.url}
                                     <a
                                         href={item.url}
                                         target="_blank"
                                         rel="noreferrer"
-                                        class="flex min-w-0 items-center gap-1 break-all font-medium hover:underline"
+                                        class="inline-flex max-w-full items-center gap-1 font-bold hover:underline"
                                     >
-                                        {item.title}
+                                        <span class="truncate">
+                                            {item.title}
+                                        </span>
                                         <ExternalLinkIcon
-                                            class="size-3 shrink-0"
+                                            class="size-3.5 shrink-0"
+                                            aria-hidden="true"
                                         />
                                     </a>
                                 {:else if item.type === 'file' && canPreviewStoredFile(item.title)}
                                     <button
                                         type="button"
-                                        class="flex w-full cursor-zoom-in items-start gap-1.5 break-all text-left font-medium underline-offset-4 hover:text-primary hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                        class="flex max-w-full cursor-zoom-in items-center gap-1.5 text-left font-bold underline-offset-4 hover:text-primary hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                                         title={t('Preview')}
                                         onclick={() => openPreview(item)}
                                     >
-                                        <span class="min-w-0 flex-1">
+                                        <span class="truncate">
                                             {item.title}
                                         </span>
-                                        <Eye class="mt-0.5 size-4 shrink-0" />
+                                        <Eye
+                                            class="size-4 shrink-0"
+                                            aria-hidden="true"
+                                        />
                                     </button>
                                 {:else if item.type === 'file'}
                                     <a
@@ -613,7 +823,7 @@
                                                 item.id,
                                             ],
                                         )}
-                                        class="break-all font-medium hover:underline"
+                                        class="block truncate font-bold hover:underline"
                                     >
                                         {item.title}
                                     </a>
@@ -622,114 +832,386 @@
                                         href={ProjectDocumentController.index(
                                             routeArguments,
                                         )}
-                                        class="break-words font-medium hover:underline"
+                                        class="block truncate font-bold hover:underline"
                                     >
                                         {item.title}
                                     </Link>
                                 {/if}
-                                <p class="mt-1 text-xs text-muted-foreground">
-                                    {item.updaterName || t('Deleted user')} · {formatDate(
-                                        item.updatedAt,
-                                    )}
-                                </p>
-                                <div class="mt-2 flex flex-wrap gap-2">
-                                    <Badge variant="secondary">
-                                        {typeLabel(item.type)}
-                                    </Badge>
-                                    {#if item.folderName}
-                                        <Badge variant="outline">
-                                            {item.folderName}
-                                        </Badge>
+
+                                <p
+                                    class="mt-1 truncate text-sm text-muted-foreground"
+                                >
+                                    {typeLabel(item.type)}
+                                    · {item.updaterName || t('Deleted user')}
+                                    {#if item.updatedAt}
+                                        · {formatDate(item.updatedAt)}
                                     {/if}
-                                </div>
+                                    {#if item.folderName}
+                                        · {item.folderName}
+                                    {/if}
+                                </p>
                             </div>
-                        </div>
 
-                        {#if item.type !== 'link' && item.canDelete}
-                            <Form
-                                {...item.type === 'document'
-                                    ? ProjectMaterialController.moveDocument.form(
-                                          [
-                                              currentTeam.slug,
-                                              project.id,
-                                              item.id,
-                                          ],
-                                      )
-                                    : ProjectMaterialController.moveFile.form([
-                                          currentTeam.slug,
-                                          project.id,
-                                          item.id,
-                                      ])}
-                                class="flex items-end gap-2"
-                            >
-                                {#snippet children({ processing, errors })}
-                                    <div class="min-w-0 flex-1">
-                                        <Label
-                                            for={`material-folder-${item.type}-${item.id}`}
-                                        >
-                                            {t('Move to folder')}
-                                        </Label>
-                                        <select
-                                            id={`material-folder-${item.type}-${item.id}`}
-                                            name="material_folder_id"
-                                            class="border-input mt-1 h-9 w-full rounded-md border bg-background px-2 text-sm"
-                                        >
-                                            <option value=""
-                                                >{t('No folder')}</option
+                            {#if item.canDelete}
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        {#snippet children(triggerProps)}
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                class="sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
+                                                aria-label={t('Item actions')}
+                                                onclick={triggerProps.onclick}
+                                                aria-expanded={triggerProps[
+                                                    'aria-expanded'
+                                                ]}
+                                                data-state={triggerProps[
+                                                    'data-state'
+                                                ]}
                                             >
-                                            {#each folders as folder (folder.id)}
-                                                <option
-                                                    value={folder.id}
-                                                    selected={item.folderId ===
-                                                        folder.id}
-                                                >
-                                                    {folder.name}
-                                                </option>
-                                            {/each}
-                                        </select>
-                                        <InputError
-                                            message={errors.material_folder_id}
-                                        />
-                                    </div>
-                                    <Button
-                                        type="submit"
-                                        variant="outline"
-                                        size="sm"
-                                        disabled={processing}
-                                    >
-                                        {t('Move')}
-                                    </Button>
-                                {/snippet}
-                            </Form>
-                        {/if}
+                                                <Ellipsis />
+                                            </Button>
+                                        {/snippet}
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                        <DropdownMenuGroup>
+                                            {#if item.type === 'file'}
+                                                <DropdownMenuItem asChild>
+                                                    {#snippet children(
+                                                        itemProps,
+                                                    )}
+                                                        <button
+                                                            type="button"
+                                                            class={itemProps.class}
+                                                            onclick={() => {
+                                                                itemProps.onClick?.();
+                                                                openRenameDialog(
+                                                                    item,
+                                                                );
+                                                            }}
+                                                        >
+                                                            <Pencil
+                                                                aria-hidden="true"
+                                                            />
+                                                            {t('Rename')}
+                                                        </button>
+                                                    {/snippet}
+                                                </DropdownMenuItem>
+                                            {/if}
 
-                        {#if item.type === 'link' && item.canDelete}
-                            <Form
-                                {...ProjectMaterialController.destroyLink.form([
-                                    currentTeam.slug,
-                                    project.id,
-                                    item.id,
-                                ])}
-                                onsubmit={confirmDelete}
-                            >
-                                {#snippet children({ processing })}
-                                    <Button
-                                        type="submit"
-                                        variant="destructive"
-                                        size="sm"
-                                        disabled={processing}
-                                    >
-                                        {t('Delete')}
-                                    </Button>
-                                {/snippet}
-                            </Form>
-                        {/if}
-                    </CardContent>
-                </Card>
-            {/each}
+                                            {#if item.type !== 'link'}
+                                                <DropdownMenuItem asChild>
+                                                    {#snippet children(
+                                                        itemProps,
+                                                    )}
+                                                        <button
+                                                            type="button"
+                                                            class={itemProps.class}
+                                                            onclick={() => {
+                                                                itemProps.onClick?.();
+                                                                openMoveDialog(
+                                                                    item,
+                                                                );
+                                                            }}
+                                                        >
+                                                            <Folder
+                                                                aria-hidden="true"
+                                                            />
+                                                            {t(
+                                                                'Move to folder',
+                                                            )}
+                                                        </button>
+                                                    {/snippet}
+                                                </DropdownMenuItem>
+                                            {/if}
+
+                                            {#if item.type === 'file'}
+                                                <Form
+                                                    {...ProjectFileController.destroy.form(
+                                                        [
+                                                            currentTeam.slug,
+                                                            project.id,
+                                                            item.id,
+                                                        ],
+                                                    )}
+                                                    onBefore={confirmDelete}
+                                                >
+                                                    {#snippet children({
+                                                        processing,
+                                                    })}
+                                                        <DropdownMenuItem
+                                                            asChild
+                                                        >
+                                                            {#snippet children(
+                                                                itemProps,
+                                                            )}
+                                                                <button
+                                                                    type="submit"
+                                                                    class={itemProps.class}
+                                                                    disabled={processing}
+                                                                >
+                                                                    <Trash2
+                                                                        aria-hidden="true"
+                                                                    />
+                                                                    {t(
+                                                                        'Delete',
+                                                                    )}
+                                                                </button>
+                                                            {/snippet}
+                                                        </DropdownMenuItem>
+                                                    {/snippet}
+                                                </Form>
+                                            {:else if item.type === 'link'}
+                                                <Form
+                                                    {...ProjectMaterialController.destroyLink.form(
+                                                        [
+                                                            currentTeam.slug,
+                                                            project.id,
+                                                            item.id,
+                                                        ],
+                                                    )}
+                                                    onBefore={confirmDelete}
+                                                >
+                                                    {#snippet children({
+                                                        processing,
+                                                    })}
+                                                        <DropdownMenuItem
+                                                            asChild
+                                                        >
+                                                            {#snippet children(
+                                                                itemProps,
+                                                            )}
+                                                                <button
+                                                                    type="submit"
+                                                                    class={itemProps.class}
+                                                                    disabled={processing}
+                                                                >
+                                                                    <Trash2
+                                                                        aria-hidden="true"
+                                                                    />
+                                                                    {t(
+                                                                        'Delete',
+                                                                    )}
+                                                                </button>
+                                                            {/snippet}
+                                                        </DropdownMenuItem>
+                                                    {/snippet}
+                                                </Form>
+                                            {/if}
+                                        </DropdownMenuGroup>
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
+                            {/if}
+                        </li>
+                    {/each}
+                </ul>
+            {/if}
         </div>
-    {/if}
+    </main>
 </div>
+
+<Dialog bind:open={folderDialogOpen}>
+    <DialogContent class="sm:max-w-md">
+        <DialogTitle>{t('Create folder')}</DialogTitle>
+        <Form
+            {...ProjectMaterialController.storeFolder.form(routeArguments)}
+            resetOnSuccess
+            onSuccess={() => (folderDialogOpen = false)}
+            class="flex flex-col gap-4"
+        >
+            {#snippet children({ errors, processing })}
+                <div>
+                    <Label for="material-folder-name">{t('Folder name')}</Label>
+                    <Input
+                        id="material-folder-name"
+                        name="name"
+                        maxlength={255}
+                        required
+                        class="mt-2"
+                    />
+                    <InputError message={errors.name} />
+                </div>
+                <DialogFooter class="gap-2">
+                    <DialogClose>
+                        <Button type="button" variant="outline">
+                            {t('Cancel')}
+                        </Button>
+                    </DialogClose>
+                    <Button type="submit" disabled={processing}>
+                        {t('Add')}
+                    </Button>
+                </DialogFooter>
+            {/snippet}
+        </Form>
+    </DialogContent>
+</Dialog>
+
+<Dialog bind:open={linkDialogOpen}>
+    <DialogContent class="sm:max-w-md">
+        <DialogTitle>{t('Add external link')}</DialogTitle>
+        <Form
+            {...ProjectMaterialController.storeLink.form(routeArguments)}
+            resetOnSuccess
+            onSuccess={() => (linkDialogOpen = false)}
+            class="flex flex-col gap-4"
+        >
+            {#snippet children({ errors, processing })}
+                <div>
+                    <Label for="external-link-title">{t('Title')}</Label>
+                    <Input
+                        id="external-link-title"
+                        name="title"
+                        maxlength={255}
+                        required
+                        class="mt-2"
+                    />
+                    <InputError message={errors.title} />
+                </div>
+                <div>
+                    <Label for="external-link-url">URL</Label>
+                    <Input
+                        id="external-link-url"
+                        name="url"
+                        type="url"
+                        maxlength={2048}
+                        placeholder="https://"
+                        required
+                        class="mt-2"
+                    />
+                    <InputError message={errors.url} />
+                </div>
+                <div>
+                    <Label for="external-link-folder">{t('Folder')}</Label>
+                    <select
+                        id="external-link-folder"
+                        name="material_folder_id"
+                        class="border-input mt-2 h-10 w-full rounded-md border bg-background px-3 text-sm"
+                    >
+                        <option value="">{t('No folder')}</option>
+                        {#each folders as folder (folder.id)}
+                            <option
+                                value={folder.id}
+                                selected={activeFolder?.id === folder.id}
+                            >
+                                {folder.name}
+                            </option>
+                        {/each}
+                    </select>
+                    <InputError message={errors.material_folder_id} />
+                </div>
+                <DialogFooter class="gap-2">
+                    <DialogClose>
+                        <Button type="button" variant="outline">
+                            {t('Cancel')}
+                        </Button>
+                    </DialogClose>
+                    <Button type="submit" disabled={processing}>
+                        {t('Add link')}
+                    </Button>
+                </DialogFooter>
+            {/snippet}
+        </Form>
+    </DialogContent>
+</Dialog>
+
+<Dialog bind:open={moveDialogOpen}>
+    <DialogContent class="sm:max-w-md">
+        <DialogTitle>{t('Move to folder')}</DialogTitle>
+        {#if movingItem && movingItem.type !== 'link'}
+            {@const itemToMove = movingItem}
+            <Form
+                {...itemToMove.type === 'document'
+                    ? ProjectMaterialController.moveDocument.form([
+                          currentTeam.slug,
+                          project.id,
+                          itemToMove.id,
+                      ])
+                    : ProjectMaterialController.moveFile.form([
+                          currentTeam.slug,
+                          project.id,
+                          itemToMove.id,
+                      ])}
+                onSuccess={() => (moveDialogOpen = false)}
+                class="flex flex-col gap-4"
+            >
+                {#snippet children({ processing, errors })}
+                    <div>
+                        <Label for="move-material-folder">{t('Folder')}</Label>
+                        <select
+                            id="move-material-folder"
+                            name="material_folder_id"
+                            class="border-input mt-2 h-10 w-full rounded-md border bg-background px-3 text-sm"
+                        >
+                            <option value="">{t('No folder')}</option>
+                            {#each folders as folder (folder.id)}
+                                <option
+                                    value={folder.id}
+                                    selected={itemToMove.folderId === folder.id}
+                                >
+                                    {folder.name}
+                                </option>
+                            {/each}
+                        </select>
+                        <InputError message={errors.material_folder_id} />
+                    </div>
+                    <DialogFooter class="gap-2">
+                        <DialogClose>
+                            <Button type="button" variant="outline">
+                                {t('Cancel')}
+                            </Button>
+                        </DialogClose>
+                        <Button type="submit" disabled={processing}>
+                            {t('Move')}
+                        </Button>
+                    </DialogFooter>
+                {/snippet}
+            </Form>
+        {/if}
+    </DialogContent>
+</Dialog>
+
+<Dialog bind:open={renameDialogOpen}>
+    <DialogContent class="sm:max-w-md">
+        <DialogTitle>{t('Rename')}</DialogTitle>
+        {#if renamingFile && renamingFile.type === 'file'}
+            {@const fileToRename = renamingFile}
+            <Form
+                {...ProjectFileController.update.form([
+                    currentTeam.slug,
+                    project.id,
+                    fileToRename.id,
+                ])}
+                onSuccess={() => (renameDialogOpen = false)}
+                class="flex flex-col gap-4"
+            >
+                {#snippet children({ errors, processing })}
+                    <div>
+                        <Label for="material-file-name">{t('Name')}</Label>
+                        <Input
+                            id="material-file-name"
+                            name="original_name"
+                            value={fileToRename.title}
+                            maxlength={255}
+                            required
+                            class="mt-2"
+                        />
+                        <InputError message={errors.original_name} />
+                    </div>
+                    <DialogFooter class="gap-2">
+                        <DialogClose>
+                            <Button type="button" variant="outline">
+                                {t('Cancel')}
+                            </Button>
+                        </DialogClose>
+                        <Button type="submit" disabled={processing}>
+                            {t('Save')}
+                        </Button>
+                    </DialogFooter>
+                {/snippet}
+            </Form>
+        {/if}
+    </DialogContent>
+</Dialog>
 
 <StoredFilePreviewDialog
     {currentTeam}

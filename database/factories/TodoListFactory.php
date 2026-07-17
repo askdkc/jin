@@ -22,7 +22,6 @@ class TodoListFactory extends Factory
             'project_id' => Project::factory(),
             'title' => fake()->sentence(3),
             'is_loose' => false,
-            'hill_position' => null,
             'position' => 0,
         ];
     }

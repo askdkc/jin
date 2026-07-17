@@ -44,8 +44,47 @@ Basecampの情報設計を参考にしていますが、名称、画面、配色
 - Composer 2
 - Node.js 22.12以上とnpm
 - PHPのSQLite拡張
+- LibreOffice（Officeファイルのプレビュー用。後述）
 
 MySQLやPostgreSQLを使う場合は、対応するPHP拡張と `.env` のDB設定も必要です。
+
+## Officeファイルのプレビュー（LibreOffice）
+
+資料庫のWord / Excel / PowerPointファイル（doc, docx, xls, xlsx, ppt, pptx）は、サーバー側でLibreOffice headlessを使ってPDFへ変換し、PDFビューワーで表示します。変換結果はストレージにキャッシュされ、2回目以降は即座に表示されます。
+
+LibreOfficeが見つからない場合もプレビュー自体は動作しますが、ブラウザ内の簡易レンダリングになるため再現度が下がります。
+
+`.env` の `LIBREOFFICE_PATH` に `soffice` コマンドのパスを設定してください（PATHが通っていれば既定値 `soffice` のままで動きます）。
+
+### macOS
+
+```bash
+brew install --cask libreoffice
+```
+
+```dotenv
+LIBREOFFICE_PATH=/Applications/LibreOffice.app/Contents/MacOS/soffice
+```
+
+### Ubuntu / Debian
+
+```bash
+sudo apt install libreoffice fonts-noto-cjk
+```
+
+### AlmaLinux / RHEL系
+
+```bash
+sudo dnf install libreoffice-headless libreoffice-writer libreoffice-calc libreoffice-impress google-noto-sans-cjk-ttc-fonts
+```
+
+### Arch Linux
+
+```bash
+sudo pacman -S libreoffice-fresh noto-fonts-cjk
+```
+
+Linuxサーバーでは日本語フォント（各ディストリのNoto CJKパッケージ）を必ず入れてください。フォントがないと日本語が豆腐（□）になります。
 
 ## ローカルセットアップ
 

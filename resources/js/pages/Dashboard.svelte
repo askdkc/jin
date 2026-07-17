@@ -20,7 +20,6 @@
     import CalendarDays from 'lucide-svelte/icons/calendar-days';
     import ClipboardCheck from 'lucide-svelte/icons/clipboard-check';
     import FolderKanban from 'lucide-svelte/icons/folder-kanban';
-    import FolderPlus from 'lucide-svelte/icons/folder-plus';
     import Grid2X2 from 'lucide-svelte/icons/grid-2x2';
     import History from 'lucide-svelte/icons/history';
     import KeyRound from 'lucide-svelte/icons/key-round';
@@ -33,7 +32,6 @@
     import AdminlandController from '@/actions/App/Http/Controllers/AdminlandController';
     import EverythingController from '@/actions/App/Http/Controllers/EverythingController';
     import ProjectFavoriteController from '@/actions/App/Http/Controllers/ProjectFavoriteController';
-    import { store as storeProjectFolder } from '@/actions/App/Http/Controllers/ProjectFolderController';
     import ProjectTodoController from '@/actions/App/Http/Controllers/ProjectTodoController';
     import AppHead from '@/components/AppHead.svelte';
     import PendingInvitationsModal from '@/components/PendingInvitationsModal.svelte';
@@ -75,7 +73,6 @@
         recentActivities = [],
         permissions = {
             canCreateProject: false,
-            canCreateFolder: false,
             canInviteMembers: false,
             canManageTeam: false,
         },
@@ -88,7 +85,6 @@
         recentActivities?: ActivityItem[];
         permissions?: {
             canCreateProject: boolean;
-            canCreateFolder: boolean;
             canInviteMembers: boolean;
             canManageTeam: boolean;
         };
@@ -216,47 +212,6 @@
                                 </Link>
                             {/snippet}
                         </Button>
-                    {/if}
-
-                    {#if permissions.canCreateFolder}
-                        <Form
-                            {...storeProjectFolder.form(currentTeam.slug)}
-                            resetOnSuccess
-                            class="rounded-xl border bg-card p-3"
-                        >
-                            {#snippet children({ errors, processing })}
-                                <label
-                                    for="dashboard-folder-name"
-                                    class="mb-2 flex items-center gap-2 text-sm font-semibold"
-                                >
-                                    <FolderPlus class="size-4 text-blue-500" />
-                                    {t('New folder')}
-                                </label>
-                                <div class="flex gap-2">
-                                    <input
-                                        id="dashboard-folder-name"
-                                        name="name"
-                                        maxlength="100"
-                                        required
-                                        placeholder={t('Folder name')}
-                                        class="border-input min-w-0 flex-1 rounded-md border bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                    />
-                                    <Button
-                                        type="submit"
-                                        size="icon"
-                                        disabled={processing}
-                                        aria-label={t('Create folder')}
-                                    >
-                                        <Plus class="size-4" />
-                                    </Button>
-                                </div>
-                                {#if errors.name}
-                                    <p class="mt-1 text-xs text-destructive">
-                                        {errors.name}
-                                    </p>
-                                {/if}
-                            {/snippet}
-                        </Form>
                     {/if}
 
                     <Button

@@ -9,6 +9,7 @@ use App\Models\StoredFile;
 use App\Models\Team;
 use App\Models\Todo;
 use App\Models\User;
+use App\Support\RichText;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\Support\Str;
 use Laravel\Mcp\Request;
@@ -85,19 +86,19 @@ class SearchWorkspaceTool extends Tool
             'todos' => $todos->map(fn (Todo $todo): array => [
                 'id' => $todo->id,
                 'title' => $todo->title,
-                'summary' => Str::limit(strip_tags((string) $todo->details), 240),
+                'summary' => Str::limit(RichText::plainText($todo->details), 240),
                 'project' => $todo->todoList->project->name,
             ]),
             'messages' => $messages->map(fn (MessageBoardPost $message): array => [
                 'id' => $message->id,
                 'title' => $message->title,
-                'summary' => Str::limit(strip_tags($message->body), 240),
+                'summary' => Str::limit(RichText::plainText($message->body), 240),
                 'project' => $message->project->name,
             ]),
             'documents' => $documents->map(fn (Document $document): array => [
                 'id' => $document->id,
                 'title' => $document->title,
-                'summary' => Str::limit(strip_tags($document->body), 240),
+                'summary' => Str::limit(RichText::plainText($document->body), 240),
                 'project' => $document->project->name,
             ]),
             'files' => $files->map(fn (StoredFile $file): array => [

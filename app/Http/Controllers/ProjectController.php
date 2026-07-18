@@ -21,6 +21,7 @@ use App\Models\Team;
 use App\Models\TeamAuditLog;
 use App\Models\Todo;
 use App\Models\User;
+use App\Support\RichText;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Http\RedirectResponse;
@@ -296,7 +297,7 @@ class ProjectController extends Controller
                     ->map(fn (MessageBoardPost $post): array => [
                         'id' => $post->id,
                         'title' => $post->title,
-                        'body' => Str::limit($post->body, 180),
+                        'body' => Str::limit(RichText::plainText($post->body), 180),
                         'authorName' => $post->user?->name,
                         'publishedAt' => $post->published_at->toISOString(),
                     ]),

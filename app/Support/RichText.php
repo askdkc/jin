@@ -14,6 +14,27 @@ class RichText
         return is_string($value) ? self::sanitize($value) : $value;
     }
 
+    /**
+     * Plain-text rendering for excerpts/snippets: strips tags, drops the internal
+     * code-fence "lang:xxx" marker (see RichTextEditor.svelte), and decodes entities
+     * so escaped code like &lt;body&gt; reads as <body> instead of leaking markup.
+     */
+    public static function plainText(?string $html): string
+    {
+        if ($html === null || $html === '') {
+            return '';
+        }
+
+        // The marker is always the first text inside <pre>/<code>, so it follows a ">".
+        $withoutMarker = preg_replace('/>lang:\S+\n/', '>', $html) ?? $html;
+
+        return trim(html_entity_decode(
+            strip_tags($withoutMarker),
+            ENT_QUOTES | ENT_HTML5,
+            'UTF-8',
+        ));
+    }
+
     public static function sanitize(?string $value): ?string
     {
         if ($value === null) {

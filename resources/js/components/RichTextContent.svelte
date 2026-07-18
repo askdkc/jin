@@ -54,11 +54,29 @@
     // along as a literal "lang:xxx" first line instead (see RichTextEditor.svelte).
     const languageMarker = /^lang:(\S+)\n/;
 
+    // Grammars missing from shiki/bundle/web, loaded on demand into the shared
+    // singleton highlighter (the codeToHtml shorthand rejects non-bundle names).
+    const extraLanguages: Record<string, () => Promise<{ default: unknown }>> =
+        {
+            'common-lisp': () => import('@shikijs/langs/common-lisp'),
+            lisp: () => import('@shikijs/langs/common-lisp'),
+            'emacs-lisp': () => import('@shikijs/langs/emacs-lisp'),
+            elisp: () => import('@shikijs/langs/emacs-lisp'),
+        };
+
     const highlightCodeBlocks = async (
         blocks: HTMLPreElement[],
     ): Promise<void> => {
-        const { codeToHtml, bundledLanguages, bundledLanguagesAlias } =
-            await import('shiki/bundle/web');
+        const {
+            codeToHtml,
+            bundledLanguages,
+            bundledLanguagesAlias,
+            getSingletonHighlighter,
+        } = await import('shiki/bundle/web');
+        const themes = {
+            light: 'github-light',
+            dark: 'github-dark',
+        } as const;
 
         for (const block of blocks) {
             const text = block.textContent ?? '';
@@ -66,17 +84,37 @@
             const requested = match?.[1].toLowerCase() ?? '';
             const lang =
                 requested in bundledLanguages ||
-                requested in bundledLanguagesAlias
+                requested in bundledLanguagesAlias ||
+                requested in extraLanguages
                     ? requested
                     : 'text';
             const code = match ? text.slice(match[0].length) : text;
 
             try {
-                const html = await codeToHtml(code, {
-                    lang,
-                    themes: { light: 'github-light', dark: 'github-dark' },
-                    defaultColor: false,
-                });
+                let html: string;
+
+                if (lang in extraLanguages) {
+                    const highlighter = await getSingletonHighlighter({
+                        themes: Object.values(themes),
+                    });
+                    await highlighter.loadLanguage(
+                        (await extraLanguages[lang]()).default as Parameters<
+                            typeof highlighter.loadLanguage
+                        >[0],
+                    );
+                    html = highlighter.codeToHtml(code, {
+                        lang,
+                        themes,
+                        defaultColor: false,
+                    });
+                } else {
+                    html = await codeToHtml(code, {
+                        lang,
+                        themes,
+                        defaultColor: false,
+                    });
+                }
+
                 const template = document.createElement('template');
                 template.innerHTML = html;
                 const highlighted = template.content.firstElementChild;

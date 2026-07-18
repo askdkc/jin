@@ -7,6 +7,13 @@
 
     type TrixAttachment = object;
     type TrixRect = { left: number; top: number; bottom: number };
+    type TrixLocation = { index: number; offset: number };
+    type TrixDocumentApi = {
+        toString: () => string;
+        locationFromPosition: (position: number) => TrixLocation;
+        positionFromLocation: (location: TrixLocation) => number;
+        getBlockAtIndex: (index: number) => { toString: () => string };
+    };
     type TrixEditorApi = {
         insertHTML: (html: string) => void;
         insertAttachment: (attachment: TrixAttachment) => void;
@@ -14,7 +21,8 @@
         getSelectedRange: () => [number, number];
         setSelectedRange: (range: [number, number] | number) => void;
         getClientRectAtPosition: (position: number) => TrixRect;
-        getDocument: () => { toString: () => string };
+        getDocument: () => TrixDocumentApi;
+        attributeIsActive: (attribute: string) => boolean;
     };
     type TrixEditorElement = HTMLElement & { editor?: TrixEditorApi };
     type TrixConstructor = {
@@ -44,6 +52,77 @@
     let editor: TrixEditorElement;
     const inputId = $derived(`${id}-input`);
     let uploadingAttachment = $state(false);
+
+    // ponytail: curated to shiki/bundle/web — anything outside it would render unhighlighted anyway.
+    const codeLanguages = [
+        'bash',
+        'c',
+        'common-lisp',
+        'cpp',
+        'css',
+        'emacs-lisp',
+        'graphql',
+        'html',
+        'java',
+        'javascript',
+        'json',
+        'markdown',
+        'php',
+        'python',
+        'sql',
+        'svelte',
+        'tsx',
+        'typescript',
+        'vue',
+        'xml',
+        'yaml',
+    ];
+    const languageMarker = /^lang:(\S+)\n/;
+    let inCodeBlock = $state(false);
+    let codeLanguage = $state('');
+
+    const currentCodeBlock = (): { start: number; marker: string } | null => {
+        const api = editor?.editor;
+
+        if (!api) {
+            return null;
+        }
+
+        const [position] = api.getSelectedRange();
+        const trixDocument = api.getDocument();
+        const { index } = trixDocument.locationFromPosition(position);
+
+        return {
+            start: trixDocument.positionFromLocation({ index, offset: 0 }),
+            marker:
+                trixDocument
+                    .getBlockAtIndex(index)
+                    .toString()
+                    .match(languageMarker)?.[0] ?? '',
+        };
+    };
+
+    const updateCodeBlockState = (): void => {
+        inCodeBlock = editor?.editor?.attributeIsActive('code') ?? false;
+        codeLanguage = inCodeBlock
+            ? (currentCodeBlock()?.marker.match(languageMarker)?.[1] ?? '')
+            : '';
+    };
+
+    const setCodeLanguage = (language: string): void => {
+        const api = editor.editor;
+        const block = currentCodeBlock();
+
+        if (!api || !block) {
+            return;
+        }
+
+        const marker = language ? `lang:${language}\n` : '';
+        api.setSelectedRange([block.start, block.start + block.marker.length]);
+        api.insertString(marker);
+        api.setSelectedRange(block.start + marker.length);
+        editor.focus();
+    };
 
     let mentionQuery = $state<string | null>(null);
     let mentionMatchStart = $state(0);
@@ -372,6 +451,8 @@
         editor.addEventListener('trix-file-accept', handleFileAccept);
         editor.addEventListener('paste', formatMarkdownPaste);
         editor.addEventListener('trix-change', updateMentionState);
+        editor.addEventListener('trix-change', updateCodeBlockState);
+        editor.addEventListener('trix-selection-change', updateCodeBlockState);
         editor.addEventListener('keydown', onMentionKeydown);
         editor.addEventListener('blur', closeMentions);
 
@@ -379,6 +460,11 @@
             editor.removeEventListener('trix-file-accept', handleFileAccept);
             editor.removeEventListener('paste', formatMarkdownPaste);
             editor.removeEventListener('trix-change', updateMentionState);
+            editor.removeEventListener('trix-change', updateCodeBlockState);
+            editor.removeEventListener(
+                'trix-selection-change',
+                updateCodeBlockState,
+            );
             editor.removeEventListener('keydown', onMentionKeydown);
             editor.removeEventListener('blur', closeMentions);
         };
@@ -396,6 +482,22 @@
         {/if}
     </span>
     <div class="flex flex-wrap justify-end gap-2">
+        {#if inCodeBlock}
+            <select
+                class="min-h-9 rounded-md border bg-background px-2 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label={t('Code block language')}
+                value={codeLanguage}
+                onchange={(event) => setCodeLanguage(event.currentTarget.value)}
+            >
+                <option value="">{t('Plain text')}</option>
+                {#if codeLanguage && !codeLanguages.includes(codeLanguage)}
+                    <option value={codeLanguage}>{codeLanguage}</option>
+                {/if}
+                {#each codeLanguages as language (language)}
+                    <option value={language}>{language}</option>
+                {/each}
+            </select>
+        {/if}
         <VoiceNoteButton onUploaded={insertVoiceNote} />
         <button
             type="button"

@@ -1,5 +1,6 @@
 <script lang="ts">
     import { Form, Link, page, router } from '@inertiajs/svelte';
+    import ArrowLeft from 'lucide-svelte/icons/arrow-left';
     import Bell from 'lucide-svelte/icons/bell';
     import CalendarDays from 'lucide-svelte/icons/calendar-days';
     import ChartColumn from 'lucide-svelte/icons/chart-column';
@@ -77,6 +78,14 @@
             (page.component.startsWith('projects/') &&
                 page.component !== 'projects/Index' &&
                 page.component !== 'projects/Form'),
+    );
+    // On a project feature sub-page every layout puts the project top at breadcrumbs[0].
+    const projectTop = $derived(
+        isProjectPage &&
+            page.component !== 'projects/Show' &&
+            breadcrumbs.length > 0
+            ? breadcrumbs[0]
+            : null,
     );
     const hasBottomNavigation = $derived(
         url.isCurrentUrl(dashboardUrl, url.currentUrl) ||
@@ -225,7 +234,16 @@
 <header
     class="sticky top-0 z-40 border-b border-slate-200/80 bg-[#f2f7fc]/95 shadow-sm backdrop-blur dark:border-[#0d151b] dark:bg-[#0d151b]"
 >
-    {#if currentTeam && isProjectPage}
+    {#if currentTeam && projectTop}
+        <Link
+            href={projectTop.href}
+            title={projectTop.title}
+            class="absolute top-0 left-2 z-10 hidden h-12 max-w-[16rem] items-center gap-1.5 rounded-md px-2 text-sm font-semibold text-slate-700 transition hover:bg-white/70 hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none md:flex dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white"
+        >
+            <ArrowLeft class="size-3.5 shrink-0" />
+            <span class="truncate">{projectTop.title}</span>
+        </Link>
+    {:else if currentTeam && isProjectPage}
         <Link
             href={dashboardUrl}
             class="absolute top-0 left-2 z-10 hidden h-12 items-center gap-1.5 rounded-md px-2 text-sm font-semibold text-slate-700 transition hover:bg-white/70 hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none md:flex dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white"

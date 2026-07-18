@@ -207,7 +207,7 @@ test('project home summarizes the latest work', function () {
     MessageBoardPost::factory()->for($project)->create([
         'user_id' => $owner->id,
         'title' => '最新のお知らせ',
-        'body' => '公開準備の最終確認をお願いします。',
+        'body' => '<div><strong>公開準備の最終確認をお願いします。</strong></div>',
         'published_at' => now(),
     ]);
 

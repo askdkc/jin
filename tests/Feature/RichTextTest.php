@@ -45,6 +45,17 @@ it('does not convert non-string input before validation', function () {
     expect(RichText::sanitizeInput(['unexpected']))->toBe(['unexpected']);
 });
 
+it('renders excerpts without the code-fence marker or escaped entities', function () {
+    $html = "<p>本文です。</p><pre><code>lang:html\n&lt;body&gt;\n&lt;h1&gt;hello&lt;/h1&gt;</code></pre>";
+
+    expect(RichText::plainText($html))
+        ->toBe("本文です。<body>\n<h1>hello</h1>")
+        ->not->toContain('lang:html')
+        ->not->toContain('&lt;');
+
+    expect(RichText::plainText(null))->toBe('');
+});
+
 it('sanitizes message HTML before validation and storage', function () {
     $user = User::factory()->create();
     $team = Team::factory()->create();

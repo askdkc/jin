@@ -13,6 +13,7 @@ use App\Models\User;
 use App\Notifications\MentionNotification;
 use App\Support\InlineAttachments;
 use App\Support\Mentions;
+use App\Support\RichText;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -38,7 +39,7 @@ class MessageBoardController extends Controller
                 'authorName' => $post->user?->name,
                 'publishedAt' => $post->published_at->toISOString(),
                 'pinned' => $post->pinned_at !== null,
-                'snippet' => Str::limit(trim(strip_tags((string) $post->body)), 140),
+                'snippet' => Str::limit(RichText::plainText($post->body), 140),
                 'commentsCount' => $post->comments_count,
             ]);
 

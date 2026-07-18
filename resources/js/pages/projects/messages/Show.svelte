@@ -63,6 +63,7 @@
 
 <script lang="ts">
     import { Form, Link } from '@inertiajs/svelte';
+    import ChevronLeft from 'lucide-svelte/icons/chevron-left';
     import Pencil from 'lucide-svelte/icons/pencil';
     import Trash2 from 'lucide-svelte/icons/trash-2';
     import AttachmentController from '@/actions/App/Http/Controllers/AttachmentController';
@@ -118,6 +119,22 @@
 <AppHead title={post.title} />
 
 <div class="mx-auto w-full max-w-3xl space-y-6 p-4 sm:p-6">
+    <Button variant="ghost" size="sm" asChild>
+        {#snippet children(buttonProps)}
+            <Link
+                {...buttonProps}
+                href={MessageBoardController.index([
+                    currentTeam.slug,
+                    project.id,
+                ])}
+                class={buttonProps.class}
+            >
+                <ChevronLeft class="size-4" aria-hidden="true" />
+                {t('Message board')}
+            </Link>
+        {/snippet}
+    </Button>
+
     <div>
         <h1 class="text-2xl font-bold break-words">{post.title}</h1>
         <p class="mt-1 text-sm text-muted-foreground">

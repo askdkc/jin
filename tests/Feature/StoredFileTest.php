@@ -1,6 +1,8 @@
 <?php
 
+use App\Enums\ActivityType;
 use App\Enums\TeamRole;
+use App\Models\Activity;
 use App\Models\MaterialFolder;
 use App\Models\Project;
 use App\Models\StoredFile;
@@ -9,6 +11,7 @@ use App\Models\Todo;
 use App\Models\TodoList;
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia as Assert;
 
@@ -212,7 +215,7 @@ test('office previews fall back to the original file when conversion is unavaila
         ->assertStreamedContent('raw docx content');
 });
 
-test('deleting a stored file removes its cached preview pdf', function () {
+test('deleting a stored file removes its blobs and comments without breaking activity history', function () {
     Storage::fake('local');
 
     $owner = User::factory()->create();
@@ -226,6 +229,18 @@ test('deleting a stored file removes its cached preview pdf', function () {
         'mime_type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'size' => 15,
     ]);
+    $comment = $storedFile->comments()->create([
+        'project_id' => $project->id,
+        'user_id' => $owner->id,
+        'body' => 'ファイルと一緒に削除',
+    ]);
+    $activity = Activity::record(
+        $project,
+        $owner,
+        ActivityType::FileUploaded,
+        $storedFile,
+        $storedFile->original_name,
+    );
     Storage::disk('local')->put("previews/{$storedFile->id}.pdf", 'converted pdf content');
 
     $this->actingAs($owner)
@@ -234,7 +249,16 @@ test('deleting a stored file removes its cached preview pdf', function () {
 
     Storage::disk('local')->assertMissing('projects/test/report.docx');
     Storage::disk('local')->assertMissing("previews/{$storedFile->id}.pdf");
-    expect(StoredFile::query()->count())->toBe(0);
+    expect(StoredFile::query()->count())->toBe(0)
+        ->and($comment->fresh())->toBeNull()
+        ->and($activity->fresh())->not->toBeNull()
+        ->and($activity->fresh()?->metadata['subjectDeleted'])->toBeTrue();
+
+    $this->get(route('activity.index', $team))
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('activities.0.id', $activity->id)
+            ->where('activities.0.target', 'files')
+            ->where('activities.0.subjectId', null));
 });
 
 test('deleting an inline file removes its rich text reference', function () {
@@ -573,4 +597,64 @@ test('the uploader can replace a file with a new version keeping its name', func
         ->and($file->original_name)->toBe('資料.pdf');
     Storage::disk('local')->assertExists($file->path);
     Storage::disk('local')->assertMissing($oldPath);
+});
+
+test('a replacement must keep the current filename extension', function () {
+    Storage::fake('local');
+
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'path' => 'projects/test/report.pdf',
+        'original_name' => 'report.pdf',
+        'mime_type' => 'application/pdf',
+    ]);
+    Storage::disk('local')->put($file->path, 'old pdf');
+
+    $this->actingAs($owner)
+        ->post(route('projects.files.replace', [$team, $project, $file]), [
+            'file' => UploadedFile::fake()->create('archive.zip', 10, 'application/zip'),
+        ])
+        ->assertSessionHasErrors('file');
+
+    expect($file->fresh()->path)->toBe('projects/test/report.pdf');
+    Storage::disk('local')->assertExists('projects/test/report.pdf');
+});
+
+test('a failed replacement update removes the newly stored blob', function () {
+    Storage::fake('local');
+
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'path' => 'projects/test/report.pdf',
+        'original_name' => 'report.pdf',
+        'mime_type' => 'application/pdf',
+    ]);
+    Storage::disk('local')->put($file->path, 'old pdf');
+    $shouldFail = true;
+    Event::listen(
+        'eloquent.updating: '.StoredFile::class,
+        function (StoredFile $updating) use ($file, &$shouldFail): void {
+            if ($shouldFail && $updating->is($file)) {
+                $shouldFail = false;
+
+                throw new RuntimeException('Forced replacement failure.');
+            }
+        },
+    );
+
+    $this->withoutExceptionHandling();
+
+    expect(fn () => $this->actingAs($owner)
+        ->post(route('projects.files.replace', [$team, $project, $file]), [
+            'file' => UploadedFile::fake()->create('new-report.pdf', 10, 'application/pdf'),
+        ]))->toThrow(RuntimeException::class, 'Forced replacement failure.');
+
+    expect($file->fresh()->path)->toBe('projects/test/report.pdf')
+        ->and(Storage::disk('local')->allFiles())->toBe(['projects/test/report.pdf']);
 });

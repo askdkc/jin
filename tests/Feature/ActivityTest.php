@@ -119,6 +119,7 @@ test('activity page only exposes active projects visible in the current team', f
             ->where('activities.0.actorId', $owner->id)
             ->where('activities.0.actorName', 'オーナー')
             ->where('activities.0.subjectLabel', '表示するTo-do')
+            ->where('activities.0.subjectId', $visibleActivity->subject_id)
             ->where('activities.0.project.id', $visibleProject->id)
             ->where('activities.0.project.name', '参加中')
             ->missing('activities.0.metadata')

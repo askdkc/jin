@@ -353,7 +353,7 @@ export type ActivityItem = {
     actorId: number | null;
     actorName: string | null;
     subjectLabel: string;
-    subjectId: number;
+    subjectId: number | null;
     createdAt: string | null;
     project: ProjectTool;
 };
@@ -474,11 +474,15 @@ export type ProjectNotification = {
         | 'todo_due'
         | 'check_in_due'
         | 'mention_message'
-        | 'mention_todo';
+        | 'mention_todo'
+        | 'mention_file'
+        | 'todo_list_comment';
     projectId: number;
     projectName: string;
     messageTitle: string | null;
     messageBoardPostId: number | null;
+    storedFileId: number | null;
+    todoListId: number | null;
     todoTitle: string | null;
     checkInQuestion: string | null;
     actorName: string | null;

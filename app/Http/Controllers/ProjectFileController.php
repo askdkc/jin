@@ -157,19 +157,25 @@ class ProjectFileController extends Controller
     ): RedirectResponse {
         /** @var UploadedFile $file */
         $file = $request->file('file');
-        $newPath = $file->store("projects/{$project->id}", 'local');
+        $newPath = $file->store("projects/{$project->id}", $storedFile->disk);
         abort_if($newPath === false, 500);
 
         $disk = Storage::disk($storedFile->disk);
         $oldPath = $storedFile->path;
 
-        // ponytail: straight overwrite — no version history (Basecamp keeps versions;
-        // add a stored_file_versions table if that's ever needed).
-        $storedFile->update([
-            'path' => $newPath,
-            'mime_type' => $file->getMimeType(),
-            'size' => $file->getSize(),
-        ]);
+        try {
+            // ponytail: straight overwrite — no version history (Basecamp keeps versions;
+            // add a stored_file_versions table if that's ever needed).
+            throw_unless($storedFile->update([
+                'path' => $newPath,
+                'mime_type' => $file->getMimeType(),
+                'size' => $file->getSize(),
+            ]), RuntimeException::class, 'File replacement failed.');
+        } catch (Throwable $exception) {
+            $disk->delete($newPath);
+
+            throw $exception;
+        }
 
         $disk->delete($oldPath);
         $disk->delete("previews/{$storedFile->id}.pdf");
@@ -262,6 +268,14 @@ class ProjectFileController extends Controller
         $disk->delete("previews/{$storedFile->id}.pdf");
         DB::transaction(function () use ($storedFile): void {
             InlineAttachments::removeFromBody($storedFile);
+            $storedFile->comments()->delete();
+            Activity::query()
+                ->where('subject_type', $storedFile->getMorphClass())
+                ->where('subject_id', $storedFile->id)
+                ->get()
+                ->each(fn (Activity $activity) => $activity->update([
+                    'metadata' => [...$activity->metadata, 'subjectDeleted' => true],
+                ]));
             $storedFile->delete();
         });
 

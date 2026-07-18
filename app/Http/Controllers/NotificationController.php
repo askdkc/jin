@@ -34,6 +34,8 @@ class NotificationController extends Controller
                     'projectName' => $data['projectName'],
                     'messageTitle' => $data['messageTitle'] ?? null,
                     'messageBoardPostId' => $data['messageBoardPostId'] ?? null,
+                    'storedFileId' => $data['storedFileId'] ?? null,
+                    'todoListId' => $data['todoListId'] ?? null,
                     'todoTitle' => $data['todoTitle'] ?? null,
                     'checkInQuestion' => $data['checkInQuestion'] ?? null,
                     'actorName' => $data['actorName'] ?? null,

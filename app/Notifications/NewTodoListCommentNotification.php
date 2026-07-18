@@ -49,8 +49,6 @@ class NewTodoListCommentNotification extends Notification
             'projectId' => $this->project->id,
             'projectName' => $this->project->name,
             'todoListId' => $this->todoList->id,
-            // Reuses the existing "todoTitle" display slot so the notification renders
-            // without touching the notification mappers (see HandleInertiaRequests).
             'todoTitle' => $this->todoList->title,
             'actorName' => $this->actor->name,
         ];

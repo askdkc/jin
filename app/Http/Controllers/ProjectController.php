@@ -441,7 +441,9 @@ class ProjectController extends Controller
                         'actorId' => $activity->actor_id,
                         'actorName' => $activity->actor?->name,
                         'subjectLabel' => $activity->metadata['label'],
-                        'subjectId' => $activity->subject_id,
+                        'subjectId' => ($activity->metadata['subjectDeleted'] ?? false)
+                            ? null
+                            : $activity->subject_id,
                         'createdAt' => $activity->created_at?->toISOString(),
                         'project' => [
                             'id' => $project->id,

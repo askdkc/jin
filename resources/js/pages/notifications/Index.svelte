@@ -16,6 +16,8 @@
     import { Form, Link } from '@inertiajs/svelte';
     import CheckInController from '@/actions/App/Http/Controllers/CheckInController';
     import MessageBoardController from '@/actions/App/Http/Controllers/MessageBoardController';
+    import ProjectFileController from '@/actions/App/Http/Controllers/ProjectFileController';
+    import ProjectMaterialController from '@/actions/App/Http/Controllers/ProjectMaterialController';
     import ProjectTodoController from '@/actions/App/Http/Controllers/ProjectTodoController';
     import AppHead from '@/components/AppHead.svelte';
     import { Button } from '@/components/ui/button';
@@ -57,8 +59,47 @@
                 return `${notification.actorName ?? t('Deleted user')}${t(' mentioned you in a message')}`;
             case 'mention_todo':
                 return `${notification.actorName ?? t('Deleted user')}${t(' mentioned you in a to-do')}`;
+            case 'mention_file':
+                return `${notification.actorName ?? t('Deleted user')}${t(' mentioned you in a file')}`;
+            case 'todo_list_comment':
+                return `${notification.actorName ?? t('Deleted user')}${t(' commented on a to-do list you follow')}`;
             default:
                 return `${notification.actorName ?? t('Deleted user')}${t(' commented on a subscribed message')}`;
+        }
+    };
+    const notificationHref = (notification: ProjectNotification) => {
+        const projectArguments = [currentTeam.slug, notification.projectId] as [
+            string,
+            number,
+        ];
+
+        switch (notification.type) {
+            case 'message_comment':
+            case 'mention_message':
+                return notification.messageBoardPostId !== null
+                    ? MessageBoardController.show([
+                          ...projectArguments,
+                          notification.messageBoardPostId,
+                      ])
+                    : MessageBoardController.index(projectArguments);
+            case 'mention_file':
+                return notification.storedFileId !== null
+                    ? ProjectFileController.show([
+                          ...projectArguments,
+                          notification.storedFileId,
+                      ])
+                    : ProjectMaterialController.index(projectArguments);
+            case 'todo_list_comment':
+                return notification.todoListId !== null
+                    ? ProjectTodoController.showList([
+                          ...projectArguments,
+                          notification.todoListId,
+                      ])
+                    : ProjectTodoController.index(projectArguments);
+            case 'check_in_due':
+                return CheckInController.index(projectArguments);
+            default:
+                return ProjectTodoController.index(projectArguments);
         }
     };
 </script>
@@ -107,27 +148,7 @@
                 <Card class={!notification.read ? 'bg-primary/5' : ''}>
                     <CardContent class="pt-6">
                         <Link
-                            href={notification.type === 'message_comment' ||
-                            notification.type === 'mention_message'
-                                ? notification.messageBoardPostId !== null
-                                    ? MessageBoardController.show([
-                                          currentTeam.slug,
-                                          notification.projectId,
-                                          notification.messageBoardPostId,
-                                      ])
-                                    : MessageBoardController.index([
-                                          currentTeam.slug,
-                                          notification.projectId,
-                                      ])
-                                : notification.type === 'check_in_due'
-                                  ? CheckInController.index([
-                                        currentTeam.slug,
-                                        notification.projectId,
-                                    ])
-                                  : ProjectTodoController.index([
-                                        currentTeam.slug,
-                                        notification.projectId,
-                                    ])}
+                            href={notificationHref(notification)}
                             class="block rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         >
                             <p class="break-words text-sm">

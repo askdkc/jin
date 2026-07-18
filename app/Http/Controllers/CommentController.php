@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Enums\ActivityType;
+use App\Enums\TeamRole;
 use App\Http\Requests\Phase3\SaveCommentRequest;
 use App\Models\Activity;
 use App\Models\Comment;
@@ -18,6 +19,7 @@ use App\Notifications\NewTodoListCommentNotification;
 use App\Notifications\TodoActivityNotification;
 use App\Support\InlineAttachments;
 use App\Support\Mentions;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -222,8 +224,26 @@ class CommentController extends Controller
         // Whoever comments starts following the list, Basecamp-style, so they get replies.
         $todoList->subscribers()->syncWithoutDetaching([$request->user()->id]);
 
+        $visibleSubscriberIds = $currentTeam->members()
+            ->where(function (Builder $query) use ($project): void {
+                $query
+                    ->whereIn('team_members.role', [
+                        TeamRole::Owner->value,
+                        TeamRole::Admin->value,
+                    ])
+                    ->orWhereIn('users.id', $project->members()->select('users.id'))
+                    ->when(
+                        $project->allows_all_clients,
+                        fn (Builder $query) => $query->orWhere(
+                            'team_members.role',
+                            TeamRole::Client->value,
+                        ),
+                    );
+            })
+            ->select('users.id');
         $recipients = $todoList->subscribers()
             ->where('users.id', '<>', $request->user()->id)
+            ->whereIn('users.id', $visibleSubscriberIds)
             ->get();
         Notification::send(
             $recipients,
@@ -290,6 +310,8 @@ class CommentController extends Controller
             'user_id' => $request->user()->id,
         ]);
 
+        InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
+
         MentionNotification::sendToUsers(
             Mentions::extract($comment->body, $project->members),
             $request->user(),
@@ -310,6 +332,8 @@ class CommentController extends Controller
         Comment $comment,
     ): RedirectResponse {
         $comment->update($request->validated());
+
+        InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
 
         MentionNotification::sendToUsers(
             Mentions::extract($comment->body, $project->members),

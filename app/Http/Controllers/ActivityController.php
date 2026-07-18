@@ -26,7 +26,7 @@ class ActivityController extends Controller
             ->whereNull('archived_at');
 
         $activities = Activity::query()
-            ->select(['id', 'project_id', 'actor_id', 'type', 'metadata', 'created_at'])
+            ->select(['id', 'project_id', 'actor_id', 'type', 'subject_id', 'metadata', 'created_at'])
             ->with(['actor:id,name', 'project:id,team_id,name'])
             ->whereIn('project_id', (clone $visibleProjects)->select('projects.id'))
             ->when($projectId !== null, fn (Builder $query) => $query->where('project_id', $projectId))
@@ -47,7 +47,9 @@ class ActivityController extends Controller
                 'actorId' => $activity->actor_id,
                 'actorName' => $activity->actor?->name,
                 'subjectLabel' => $activity->metadata['label'],
-                'subjectId' => $activity->subject_id,
+                'subjectId' => ($activity->metadata['subjectDeleted'] ?? false)
+                    ? null
+                    : $activity->subject_id,
                 'createdAt' => $activity->created_at?->toISOString(),
                 'project' => [
                     'id' => $activity->project->id,

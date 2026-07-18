@@ -42,6 +42,10 @@ export const activityHref = (teamSlug: string, activity: ActivityItem) => {
         case 'documents':
             return ProjectDocumentController.index(projectArguments);
         case 'files':
+            if (activity.subjectId === null) {
+                return ProjectMaterialController.index(projectArguments);
+            }
+
             return ProjectFileController.show([
                 teamSlug,
                 activity.project.id,

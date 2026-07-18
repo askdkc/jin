@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\Phase10\EverythingIndexRequest;
 use App\Models\MessageBoardPost;
 use App\Models\Project;
+use App\Models\StoredFile;
 use App\Models\Team;
 use App\Models\User;
 use Illuminate\Database\Query\Builder;
@@ -171,8 +172,12 @@ class EverythingController extends Controller
             ])
             ->selectRaw('? as type', ['comment'])
             ->selectRaw(
-                'CASE WHEN comments.commentable_type = ? THEN ? ELSE ? END as target',
-                [MessageBoardPost::class, 'messages', 'todos'],
+                'CASE
+                    WHEN comments.commentable_type = ? THEN ?
+                    WHEN comments.commentable_type = ? THEN ?
+                    ELSE ?
+                END as target',
+                [MessageBoardPost::class, 'messages', StoredFile::class, 'files', 'todos'],
             );
 
         $this->applySearch($query, $search, ['comments.body']);

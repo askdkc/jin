@@ -364,6 +364,146 @@
                                             {/if}
                                         </p>
                                     {/if}
+
+                                    <details class="mt-2">
+                                        <summary
+                                            class="cursor-pointer text-xs font-medium text-muted-foreground"
+                                        >
+                                            {t('Move or reorder')}
+                                        </summary>
+                                        <div
+                                            class="mt-2 flex flex-wrap items-center gap-2"
+                                        >
+                                            <Form
+                                                {...ProjectTodoController.moveTodo.form(
+                                                    [
+                                                        currentTeam.slug,
+                                                        project.id,
+                                                        list.id,
+                                                        todo.id,
+                                                    ],
+                                                )}
+                                            >
+                                                {#snippet children({
+                                                    processing,
+                                                })}
+                                                    <input
+                                                        type="hidden"
+                                                        name="target_list_id"
+                                                        value={list.id}
+                                                    />
+                                                    <input
+                                                        type="hidden"
+                                                        name="target_position"
+                                                        value={Math.max(
+                                                            todoPosition(
+                                                                list,
+                                                                todo,
+                                                            ) - 1,
+                                                            0,
+                                                        )}
+                                                    />
+                                                    <Button
+                                                        type="submit"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        disabled={processing ||
+                                                            todoPosition(
+                                                                list,
+                                                                todo,
+                                                            ) === 0}
+                                                    >
+                                                        {t('Move up')}
+                                                    </Button>
+                                                {/snippet}
+                                            </Form>
+                                            <Form
+                                                {...ProjectTodoController.moveTodo.form(
+                                                    [
+                                                        currentTeam.slug,
+                                                        project.id,
+                                                        list.id,
+                                                        todo.id,
+                                                    ],
+                                                )}
+                                            >
+                                                {#snippet children({
+                                                    processing,
+                                                })}
+                                                    <input
+                                                        type="hidden"
+                                                        name="target_list_id"
+                                                        value={list.id}
+                                                    />
+                                                    <input
+                                                        type="hidden"
+                                                        name="target_position"
+                                                        value={todoPosition(
+                                                            list,
+                                                            todo,
+                                                        ) + 1}
+                                                    />
+                                                    <Button
+                                                        type="submit"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        disabled={processing ||
+                                                            todoPosition(
+                                                                list,
+                                                                todo,
+                                                            ) ===
+                                                                list.todos
+                                                                    .length -
+                                                                    1}
+                                                    >
+                                                        {t('Move down')}
+                                                    </Button>
+                                                {/snippet}
+                                            </Form>
+                                        </div>
+
+                                        {#if lists.length > 1}
+                                            <Form
+                                                {...ProjectTodoController.moveTodo.form(
+                                                    [
+                                                        currentTeam.slug,
+                                                        project.id,
+                                                        list.id,
+                                                        todo.id,
+                                                    ],
+                                                )}
+                                                class="mt-2 flex flex-col gap-2 sm:flex-row"
+                                            >
+                                                {#snippet children({
+                                                    processing,
+                                                })}
+                                                    <select
+                                                        name="target_list_id"
+                                                        required
+                                                        aria-label={t(
+                                                            'Move to list',
+                                                        )}
+                                                        class="border-input h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm"
+                                                    >
+                                                        {#each lists.filter((targetList) => targetList.id !== list.id) as targetList (targetList.id)}
+                                                            <option
+                                                                value={targetList.id}
+                                                            >
+                                                                {targetList.title}
+                                                            </option>
+                                                        {/each}
+                                                    </select>
+                                                    <Button
+                                                        type="submit"
+                                                        size="sm"
+                                                        disabled={processing}
+                                                    >
+                                                        {t('Move')}
+                                                    </Button>
+                                                {/snippet}
+                                            </Form>
+                                        {/if}
+                                    </details>
                                 </div>
                             </div>
                         {/each}

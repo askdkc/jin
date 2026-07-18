@@ -18,7 +18,7 @@ use Illuminate\Support\Str;
  * @property ActivityType $type
  * @property string $subject_type
  * @property int $subject_id
- * @property array{label: string} $metadata
+ * @property array{label: string, subjectDeleted?: bool} $metadata
  * @property Carbon|null $created_at
  * @property-read Project $project
  * @property-read User|null $actor

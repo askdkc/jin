@@ -89,9 +89,9 @@ class MentionNotification extends Notification
             'projectId' => $this->project->id,
             'projectName' => $this->project->name,
             'messageTitle' => $this->type === self::Message ? $this->title : null,
-            // File mentions reuse the todoTitle display slot so they render without new mappers.
             'todoTitle' => in_array($this->type, [self::Todo, self::File], true) ? $this->title : null,
             'messageBoardPostId' => $this->type === self::Message ? $this->targetId : null,
+            'storedFileId' => $this->type === self::File ? $this->targetId : null,
             'actorName' => $this->actor->name,
         ];
     }

@@ -228,6 +228,7 @@ test('dashboard groups incomplete assigned todos by deadline and lists active pr
             ->where('recentActivities.0.id', $activity->id)
             ->where('recentActivities.0.type', ActivityType::TodoCompleted->value)
             ->where('recentActivities.0.subjectLabel', '公開準備')
+            ->where('recentActivities.0.subjectId', $activity->subject_id)
             ->where('recentActivities.0.project.id', $project->id)
             ->where('permissions.canCreateProject', true)
             ->where('permissions.canInviteMembers', true)

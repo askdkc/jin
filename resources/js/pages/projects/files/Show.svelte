@@ -40,6 +40,7 @@
     import Pencil from 'lucide-svelte/icons/pencil';
     import RefreshCw from 'lucide-svelte/icons/refresh-cw';
     import Trash2 from 'lucide-svelte/icons/trash-2';
+    import AttachmentController from '@/actions/App/Http/Controllers/AttachmentController';
     import CommentController from '@/actions/App/Http/Controllers/CommentController';
     import AppHead from '@/components/AppHead.svelte';
     import FileDropzone from '@/components/FileDropzone.svelte';
@@ -435,6 +436,12 @@
                                                         required
                                                         ariaLabel={t('Comment')}
                                                         mentionables={members}
+                                                        attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                                            [
+                                                                currentTeam.slug,
+                                                                project.id,
+                                                            ],
+                                                        )}
                                                     />
                                                     <InputError
                                                         message={errors.body}
@@ -491,6 +498,9 @@
                         required
                         ariaLabel={t('Comment')}
                         mentionables={members}
+                        attachmentUploadUrl={AttachmentController.uploadInline.url(
+                            [currentTeam.slug, project.id],
+                        )}
                     />
                     <InputError message={errors.body} />
                     <Button type="submit" disabled={processing}

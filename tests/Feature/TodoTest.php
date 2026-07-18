@@ -318,16 +318,22 @@ test('deleting todos or lists removes their comments', function () {
     expect($todoComment->fresh())->toBeNull();
 
     $secondTodo = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->create();
-    $listComment = $secondTodo->comments()->create([
+    $todoCommentDeletedWithList = $secondTodo->comments()->create([
         'project_id' => $project->id,
         'user_id' => $owner->id,
-        'body' => 'Listと一緒に削除',
+        'body' => 'List内のTo-doと一緒に削除',
+    ]);
+    $listComment = $list->comments()->create([
+        'project_id' => $project->id,
+        'user_id' => $owner->id,
+        'body' => 'Listと一緒に直接削除',
     ]);
 
     $this->delete(route('projects.todo-lists.destroy', [$team, $project, $list]))
         ->assertRedirect();
 
-    expect($listComment->fresh())->toBeNull();
+    expect($todoCommentDeletedWithList->fresh())->toBeNull()
+        ->and($listComment->fresh())->toBeNull();
 });
 
 test('project participants can create complete and view subtasks', function () {
@@ -536,6 +542,44 @@ test('commenting on a to-do list follows the commenter and notifies subscribers'
 
     Notification::assertSentTo($member, NewTodoListCommentNotification::class);
     Notification::assertNotSentTo($owner, NewTodoListCommentNotification::class);
+});
+
+test('to-do list comments notify only subscribers who still have project access', function () {
+    $owner = User::factory()->create();
+    $subscriber = User::factory()->create();
+    $removedFromProject = User::factory()->create();
+    $removedFromTeam = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach(
+        [$subscriber->id, $removedFromProject->id, $removedFromTeam->id],
+        ['role' => TeamRole::Member->value],
+    );
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([
+        $subscriber->id,
+        $removedFromProject->id,
+        $removedFromTeam->id,
+    ]);
+    $list = TodoList::factory()->for($project)->create();
+    $list->subscribers()->attach([
+        $subscriber->id,
+        $removedFromProject->id,
+        $removedFromTeam->id,
+    ]);
+    $project->members()->detach($removedFromProject);
+    $team->members()->detach($removedFromTeam);
+    Notification::fake();
+
+    $this->actingAs($owner)
+        ->post(route('projects.todo-lists.comments.store', [$team, $project, $list]), [
+            'body' => '<p>進捗を共有します。</p>',
+        ])
+        ->assertRedirect();
+
+    Notification::assertSentTo($subscriber, NewTodoListCommentNotification::class);
+    Notification::assertNotSentTo($removedFromProject, NewTodoListCommentNotification::class);
+    Notification::assertNotSentTo($removedFromTeam, NewTodoListCommentNotification::class);
 });
 
 test('a member can toggle their subscription to a to-do list', function () {

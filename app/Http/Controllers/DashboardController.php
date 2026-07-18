@@ -155,7 +155,7 @@ class DashboardController extends Controller
                 ->get(['id', 'name'])
                 ->map(fn ($folder): array => ['id' => $folder->id, 'name' => $folder->name]),
             'recentActivities' => Activity::query()
-                ->select(['id', 'project_id', 'actor_id', 'type', 'metadata', 'created_at'])
+                ->select(['id', 'project_id', 'actor_id', 'type', 'subject_id', 'metadata', 'created_at'])
                 ->with(['actor:id,name', 'project:id,team_id,name'])
                 ->whereHas('project', fn (Builder $query) => $query
                     ->whereIn(
@@ -173,7 +173,9 @@ class DashboardController extends Controller
                     'actorId' => $activity->actor_id,
                     'actorName' => $activity->actor?->name,
                     'subjectLabel' => $activity->metadata['label'],
-                    'subjectId' => $activity->subject_id,
+                    'subjectId' => ($activity->metadata['subjectDeleted'] ?? false)
+                        ? null
+                        : $activity->subject_id,
                     'createdAt' => $activity->created_at?->toISOString(),
                     'project' => [
                         'id' => $activity->project->id,

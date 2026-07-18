@@ -191,6 +191,7 @@ class ProjectTodoController extends Controller
                 ->where('commentable_type', Todo::class)
                 ->whereIn('commentable_id', $todoList->todos()->select('id'))
                 ->delete();
+            $todoList->comments()->delete();
             $todoList->delete();
         });
 

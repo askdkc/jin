@@ -294,6 +294,7 @@ test('project home summarizes the latest work', function () {
             })
             ->where('home.activity.latest.0.type', ActivityType::TodoCompleted->value)
             ->where('home.activity.latest.0.subjectLabel', '公開前チェック')
+            ->where('home.activity.latest.0.subjectId', fn (int $id): bool => $id > 0)
             ->where('home.activity.activeLastSevenDays', 1)
             ->where('home.chat.latest.body', '確認をお願いします')
             ->where('home.chat.recent.0.body', '確認をお願いします'),

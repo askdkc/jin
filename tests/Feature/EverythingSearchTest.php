@@ -166,17 +166,19 @@ test('comments link back to their message or todo tool', function () {
     $message = MessageBoardPost::factory()->for($project)->for($owner, 'user')->create();
     $todoList = TodoList::factory()->for($project)->create();
     $todo = Todo::factory()->for($todoList)->for($owner, 'creator')->create();
+    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create();
     Comment::factory()->for($project)->for($owner, 'user')->for($message, 'commentable')->create(['body' => 'メッセージ側コメント']);
     Comment::factory()->for($project)->for($owner, 'user')->for($todo, 'commentable')->create(['body' => 'To-do側コメント']);
+    Comment::factory()->for($project)->for($owner, 'user')->for($file, 'commentable')->create(['body' => 'ファイル側コメント']);
 
     $this->actingAs($owner)
         ->get(route('everything.index', [$team, 'type' => 'comment']))
         ->assertInertia(fn (Assert $page) => $page
-            ->has('results.data', 2)
+            ->has('results.data', 3)
             ->where('results.data', function (Collection $items): bool {
                 $targets = $items->pluck('target')->sort()->values()->all();
 
-                return $targets === ['messages', 'todos']
+                return $targets === ['files', 'messages', 'todos']
                     && $items->every(fn (array $item): bool => $item['project']['id'] > 0
                         && preg_match('/^\d{4}-\d{2}-\d{2}/', $item['updatedAt']) === 1);
             }));

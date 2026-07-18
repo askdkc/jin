@@ -110,7 +110,7 @@ class MessageBoardController extends Controller
             return $post;
         });
 
-        InlineAttachments::syncFromBody($post, $project, $post->body);
+        InlineAttachments::syncFromBody($post, $project, $request->user()->id, $post->body);
         $this->notifyMentions($project, $request->user(), $post);
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Message posted.')]);
@@ -126,7 +126,12 @@ class MessageBoardController extends Controller
     ): RedirectResponse {
         $messageBoardPost->update($request->validated());
 
-        InlineAttachments::syncFromBody($messageBoardPost, $project, $messageBoardPost->body);
+        InlineAttachments::syncFromBody(
+            $messageBoardPost,
+            $project,
+            $request->user()->id,
+            $messageBoardPost->body,
+        );
         $this->notifyMentions($project, $request->user(), $messageBoardPost);
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Message updated.')]);

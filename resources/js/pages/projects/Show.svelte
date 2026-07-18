@@ -24,6 +24,7 @@
     import CheckCircle2 from 'lucide-svelte/icons/circle-check-big';
     import Clock3 from 'lucide-svelte/icons/clock-3';
     import FileText from 'lucide-svelte/icons/file-text';
+    import Folder from 'lucide-svelte/icons/folder';
     import Link2 from 'lucide-svelte/icons/link-2';
     import MessageCircleQuestion from 'lucide-svelte/icons/message-circle-question';
     import Paperclip from 'lucide-svelte/icons/paperclip';
@@ -37,6 +38,7 @@
     import CheckInController from '@/actions/App/Http/Controllers/CheckInController';
     import MessageBoardController from '@/actions/App/Http/Controllers/MessageBoardController';
     import ProjectFavoriteController from '@/actions/App/Http/Controllers/ProjectFavoriteController';
+    import ProjectFileController from '@/actions/App/Http/Controllers/ProjectFileController';
     import ProjectMaterialController from '@/actions/App/Http/Controllers/ProjectMaterialController';
     import ProjectTimeEntryController from '@/actions/App/Http/Controllers/ProjectTimeEntryController';
     import ProjectTodoController from '@/actions/App/Http/Controllers/ProjectTodoController';
@@ -134,6 +136,17 @@
         return (includeTime ? dateTimeFormatter : dateFormatter).format(
             new Date(value),
         );
+    };
+    const formatSize = (size: number): string => {
+        if (size < 1024) {
+            return `${size} B`;
+        }
+
+        if (size < 1024 * 1024) {
+            return `${(size / 1024).toFixed(1)} KB`;
+        }
+
+        return `${(size / (1024 * 1024)).toFixed(1)} MB`;
     };
 
     const memberInitial = (name: string): string =>
@@ -481,74 +494,83 @@
                             ])}
                             class="group block h-[20rem] overflow-hidden rounded-lg border border-border bg-white p-4 shadow-[0_1px_2px_rgba(30,45,55,0.04)] transition hover:-translate-y-0.5 hover:border-muted-foreground/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-card"
                         >
-                            {#if home.materials.documents.length > 0 || home.materials.files.length > 0 || home.materials.links.length > 0}
-                                <ul class="space-y-3">
-                                    {#each home.materials.documents.slice(0, 3) as document (document.id)}
+                            {#if home.materials.entries.length > 0}
+                                <ul class="divide-y divide-border/70">
+                                    {#each home.materials.entries as entry (`${entry.type}-${entry.id}`)}
                                         <li
-                                            class="flex min-w-0 items-center gap-3"
+                                            class="flex min-w-0 items-center gap-3 py-2 first:pt-0 last:pb-0"
                                         >
-                                            <span
-                                                class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-emerald-500 text-white"
-                                            >
-                                                <BookOpen class="size-4" />
-                                            </span>
+                                            {#if entry.type === 'folder'}
+                                                <span
+                                                    class="flex size-10 shrink-0 items-center justify-center text-muted-foreground"
+                                                >
+                                                    <Folder
+                                                        class="size-9 fill-muted"
+                                                        aria-hidden="true"
+                                                    />
+                                                </span>
+                                            {:else if entry.type === 'file' && entry.mimeType?.startsWith('image/')}
+                                                <img
+                                                    src={ProjectFileController.preview.url(
+                                                        [
+                                                            currentTeam.slug,
+                                                            project.id,
+                                                            entry.id,
+                                                        ],
+                                                    )}
+                                                    alt=""
+                                                    loading="lazy"
+                                                    class="size-10 shrink-0 rounded border object-cover"
+                                                />
+                                            {:else}
+                                                <span
+                                                    class="flex size-10 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"
+                                                >
+                                                    {#if entry.type === 'document'}
+                                                        <BookOpen
+                                                            class="size-5"
+                                                            aria-hidden="true"
+                                                        />
+                                                    {:else if entry.type === 'file'}
+                                                        <Paperclip
+                                                            class="size-5"
+                                                            aria-hidden="true"
+                                                        />
+                                                    {:else}
+                                                        <Link2
+                                                            class="size-5"
+                                                            aria-hidden="true"
+                                                        />
+                                                    {/if}
+                                                </span>
+                                            {/if}
                                             <span class="min-w-0 flex-1">
                                                 <span
                                                     class="block truncate text-base font-bold"
-                                                    >{document.title}</span
+                                                    >{entry.title}</span
                                                 >
                                                 <span
-                                                    class="block text-sm text-muted-foreground"
-                                                    >{formatDate(
-                                                        document.updatedAt,
-                                                    )}</span
+                                                    class="block truncate text-sm text-muted-foreground"
                                                 >
-                                            </span>
-                                        </li>
-                                    {/each}
-                                    {#each home.materials.files.slice(0, 3) as file (file.id)}
-                                        <li
-                                            class="flex min-w-0 items-center gap-3"
-                                        >
-                                            <span
-                                                class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-blue-500 text-white"
-                                            >
-                                                <Paperclip class="size-4" />
-                                            </span>
-                                            <span class="min-w-0 flex-1">
-                                                <span
-                                                    class="block truncate text-base font-bold"
-                                                    >{file.name}</span
-                                                >
-                                                <span
-                                                    class="block text-sm text-muted-foreground"
-                                                    >{formatDate(
-                                                        file.createdAt,
-                                                    )}</span
-                                                >
-                                            </span>
-                                        </li>
-                                    {/each}
-                                    {#each home.materials.links.slice(0, 2) as link (link.id)}
-                                        <li
-                                            class="flex min-w-0 items-center gap-3"
-                                        >
-                                            <span
-                                                class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-orange-500 text-white"
-                                            >
-                                                <Link2 class="size-4" />
-                                            </span>
-                                            <span class="min-w-0 flex-1">
-                                                <span
-                                                    class="block truncate text-base font-bold"
-                                                    >{link.title}</span
-                                                >
-                                                <span
-                                                    class="block text-sm text-muted-foreground"
-                                                    >{formatDate(
-                                                        link.updatedAt,
-                                                    )}</span
-                                                >
+                                                    {#if entry.type === 'folder'}
+                                                        {t(':count items', {
+                                                            count: entry.itemCount.toString(),
+                                                        })}
+                                                    {:else}
+                                                        {entry.updaterName ||
+                                                            t('Deleted user')}
+                                                        {#if entry.updatedAt}
+                                                            · {formatDate(
+                                                                entry.updatedAt,
+                                                            )}
+                                                        {/if}
+                                                        {#if entry.type === 'file'}
+                                                            · {formatSize(
+                                                                entry.size,
+                                                            )}
+                                                        {/if}
+                                                    {/if}
+                                                </span>
                                             </span>
                                         </li>
                                     {/each}

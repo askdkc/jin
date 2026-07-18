@@ -4,9 +4,12 @@ namespace App\Models;
 
 use Database\Factories\StoredFileFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Support\Carbon;
 
@@ -28,6 +31,8 @@ use Illuminate\Support\Carbon;
  * @property-read User|null $uploader
  * @property-read Model|null $attachable
  * @property-read MaterialFolder|null $materialFolder
+ * @property-read Collection<int, Comment> $comments
+ * @property-read Collection<int, User> $reactors
  */
 #[Fillable(['project_id', 'material_folder_id', 'uploaded_by', 'attachable_type', 'attachable_id', 'disk', 'path', 'original_name', 'mime_type', 'size'])]
 class StoredFile extends Model
@@ -60,5 +65,17 @@ class StoredFile extends Model
     public function attachable(): MorphTo
     {
         return $this->morphTo();
+    }
+
+    /** @return MorphMany<Comment, $this> */
+    public function comments(): MorphMany
+    {
+        return $this->morphMany(Comment::class, 'commentable');
+    }
+
+    /** @return BelongsToMany<User, $this> */
+    public function reactors(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'stored_file_reactions')->withTimestamps();
     }
 }

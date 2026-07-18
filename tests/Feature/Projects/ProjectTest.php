@@ -8,6 +8,7 @@ use App\Models\CardColumn;
 use App\Models\CardTable;
 use App\Models\ChatMessage;
 use App\Models\Document;
+use App\Models\MaterialFolder;
 use App\Models\MessageBoardPost;
 use App\Models\Project;
 use App\Models\ScheduleEvent;
@@ -16,6 +17,7 @@ use App\Models\Team;
 use App\Models\Todo;
 use App\Models\TodoList;
 use App\Models\User;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Inertia\Testing\AssertableInertia as Assert;
 
@@ -236,9 +238,22 @@ test('project home summarizes the latest work', function () {
     Document::factory()->for($project)->create([
         'title' => '進行資料',
     ]);
-    StoredFile::factory()->for($project)->create([
-        'original_name' => '要件.pdf',
+    StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'original_name' => '要件.png',
+        'mime_type' => 'image/png',
+        'size' => 2048,
     ]);
+    $materialFolder = MaterialFolder::factory()
+        ->for($project)
+        ->for($owner, 'creator')
+        ->create(['name' => '納品物', 'position' => 1]);
+    StoredFile::factory()
+        ->for($project)
+        ->for($owner, 'uploader')
+        ->create([
+            'material_folder_id' => $materialFolder->id,
+            'original_name' => 'フォルダー内.pdf',
+        ]);
     ChatMessage::factory()->for($project)->create([
         'user_id' => $owner->id,
         'body' => '確認をお願いします',
@@ -264,8 +279,19 @@ test('project home summarizes the latest work', function () {
             ->where('home.cardTables.preview.columns.0.name', '確認中')
             ->where('home.cardTables.preview.columns.0.cardCount', 1)
             ->where('home.schedule.upcoming.0.title', '次の予定')
-            ->where('home.materials.documents.0.title', '進行資料')
-            ->where('home.materials.files.0.name', '要件.pdf')
+            ->where('home.materials.entries', function (Collection $entries) use ($materialFolder, $owner): bool {
+                $rootFile = $entries->firstWhere('title', '要件.png');
+                $folder = $entries->firstWhere('type', 'folder');
+
+                return $entries->contains('title', '進行資料')
+                    && ! $entries->contains('title', 'フォルダー内.pdf')
+                    && $rootFile['mimeType'] === 'image/png'
+                    && $rootFile['size'] === 2048
+                    && $rootFile['updaterName'] === $owner->name
+                    && $folder['id'] === $materialFolder->id
+                    && $folder['title'] === '納品物'
+                    && $folder['itemCount'] === 1;
+            })
             ->where('home.activity.latest.0.type', ActivityType::TodoCompleted->value)
             ->where('home.activity.latest.0.subjectLabel', '公開前チェック')
             ->where('home.activity.activeLastSevenDays', 1)

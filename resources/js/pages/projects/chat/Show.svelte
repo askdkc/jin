@@ -40,7 +40,6 @@
     import InputError from '@/components/InputError.svelte';
     import { Button } from '@/components/ui/button';
     import { Input } from '@/components/ui/input';
-    import VoiceNoteButton from '@/components/VoiceNoteButton.svelte';
     import { getEcho } from '@/lib/echo';
     import { t } from '@/lib/i18n';
     import type {
@@ -116,9 +115,6 @@
 
     const userInitial = (message: ChatMessage): string =>
         (message.user?.name ?? '?').slice(0, 1).toUpperCase();
-    const isVoiceNote = (body: string): boolean =>
-        /\/voice-notes\/\d+(?:$|\?)/.test(body);
-
     const mergeMessages = (incoming: ChatMessage[]): void => {
         const existingIds = new Set(messages.map((message) => message.id));
         const uniqueMessages = incoming.filter(
@@ -423,7 +419,7 @@
 <AppHead title={`${currentTeam.menuNames.chat} — ${project.name}`} />
 
 <div
-    class="relative grid h-[calc(100dvh-10.75rem)] min-h-0 overflow-hidden bg-background md:h-[calc(100dvh-14.25rem)] lg:grid-cols-[15rem_minmax(0,1fr)]"
+    class="relative grid min-h-0 flex-1 overflow-hidden bg-background lg:grid-cols-[15rem_minmax(0,1fr)]"
 >
     <aside
         class="hidden min-h-0 flex-col border-r bg-sidebar text-sidebar-foreground lg:flex"
@@ -613,22 +609,11 @@
                                     {messageTime(message.createdAt)}
                                 </time>
                             </div>
-                            {#if isVoiceNote(message.body)}
-                                <audio
-                                    controls
-                                    preload="metadata"
-                                    src={message.body}
-                                    class="mt-2 h-10 max-w-full"
-                                >
-                                    <track kind="captions" />
-                                </audio>
-                            {:else}
-                                <p
-                                    class="mt-0.5 whitespace-pre-wrap break-words text-sm leading-6"
-                                >
-                                    {message.body}
-                                </p>
-                            {/if}
+                            <p
+                                class="mt-0.5 whitespace-pre-wrap break-words text-sm leading-6"
+                            >
+                                {message.body}
+                            </p>
                             <button
                                 type="button"
                                 class="mt-1 inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs font-semibold text-primary opacity-80 transition hover:bg-primary/10 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -667,10 +652,6 @@
                         oncompositionstart={() => (isComposing = true)}
                         oncompositionend={() => (isComposing = false)}
                     ></textarea>
-                    <VoiceNoteButton
-                        compact
-                        onUploaded={(url) => (sendHttp.body = url)}
-                    />
                     <Button
                         size="icon"
                         class="size-10 shrink-0 rounded-lg"
@@ -733,22 +714,11 @@
                                 {messageTime(activeThread.createdAt)}
                             </time>
                         </div>
-                        {#if isVoiceNote(activeThread.body)}
-                            <audio
-                                controls
-                                preload="metadata"
-                                src={activeThread.body}
-                                class="mt-2 h-10 max-w-full"
-                            >
-                                <track kind="captions" />
-                            </audio>
-                        {:else}
-                            <p
-                                class="mt-1 whitespace-pre-wrap break-words text-sm leading-6"
-                            >
-                                {activeThread.body}
-                            </p>
-                        {/if}
+                        <p
+                            class="mt-1 whitespace-pre-wrap break-words text-sm leading-6"
+                        >
+                            {activeThread.body}
+                        </p>
                     </div>
                 </article>
 
@@ -789,22 +759,11 @@
                                     {messageTime(reply.createdAt)}
                                 </time>
                             </div>
-                            {#if isVoiceNote(reply.body)}
-                                <audio
-                                    controls
-                                    preload="metadata"
-                                    src={reply.body}
-                                    class="mt-2 h-10 max-w-full"
-                                >
-                                    <track kind="captions" />
-                                </audio>
-                            {:else}
-                                <p
-                                    class="mt-0.5 whitespace-pre-wrap break-words text-sm leading-6"
-                                >
-                                    {reply.body}
-                                </p>
-                            {/if}
+                            <p
+                                class="mt-0.5 whitespace-pre-wrap break-words text-sm leading-6"
+                            >
+                                {reply.body}
+                            </p>
                         </div>
                     </article>
                 {/each}
@@ -827,10 +786,6 @@
                         oncompositionstart={() => (isComposing = true)}
                         oncompositionend={() => (isComposing = false)}
                     ></textarea>
-                    <VoiceNoteButton
-                        compact
-                        onUploaded={(url) => (replyHttp.body = url)}
-                    />
                     <Button
                         size="icon"
                         class="size-10 shrink-0 rounded-lg"

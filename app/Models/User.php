@@ -44,7 +44,6 @@ use Laravel\Fortify\TwoFactorAuthenticatable;
  * @property-read Collection<int, BubbleUp> $bubbleUps
  * @property-read Collection<int, DirectMessage> $sentDirectMessages
  * @property-read Collection<int, DirectMessage> $receivedDirectMessages
- * @property-read Collection<int, VoiceNote> $voiceNotes
  */
 #[Fillable(['name', 'email', 'password', 'current_team_id'])]
 #[Hidden(['password', 'two_factor_secret', 'two_factor_recovery_codes', 'remember_token'])]
@@ -103,12 +102,6 @@ class User extends Authenticatable implements PasskeyUser
     public function receivedDirectMessages(): HasMany
     {
         return $this->hasMany(DirectMessage::class, 'recipient_id');
-    }
-
-    /** @return HasMany<VoiceNote, $this> */
-    public function voiceNotes(): HasMany
-    {
-        return $this->hasMany(VoiceNote::class);
     }
 
     /** @return Attribute<string, string> */

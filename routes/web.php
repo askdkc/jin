@@ -30,7 +30,6 @@ use App\Http\Controllers\PublicDocumentController;
 use App\Http\Controllers\ReportsController;
 use App\Http\Controllers\ScheduleEventController;
 use App\Http\Controllers\Teams\TeamInvitationController;
-use App\Http\Controllers\VoiceNoteController;
 use App\Http\Controllers\WorkspaceCalendarController;
 use App\Http\Middleware\EnsureProjectToolIsEnabled;
 use App\Http\Middleware\EnsureTeamMembership;
@@ -56,9 +55,6 @@ Route::prefix('{current_team}')
         Route::patch('notifications/read-all', [NotificationController::class, 'markAllRead'])->name('notifications.read-all');
         Route::post('notifications/{notification}/reply', [NotificationReplyController::class, 'store'])->name('notifications.reply');
         Route::get('notes', [PersonalNoteController::class, 'index'])->name('notes.index');
-        Route::post('voice-notes', [VoiceNoteController::class, 'store'])->name('voice-notes.store');
-        Route::get('voice-notes/{voice_note}', [VoiceNoteController::class, 'show'])->name('voice-notes.show');
-
         Route::scopeBindings()->middleware(EnsureProjectToolIsEnabled::class)->group(function () {
             Route::post('notes', [PersonalNoteController::class, 'store'])->name('notes.store');
             Route::patch('notes/{personal_note}', [PersonalNoteController::class, 'update'])->name('notes.update');
@@ -99,8 +95,14 @@ Route::prefix('{current_team}')
 
             Route::get('projects/{project}/todos', [ProjectTodoController::class, 'index'])->name('projects.todos.index');
             Route::post('projects/{project}/todo-lists', [ProjectTodoController::class, 'storeList'])->name('projects.todo-lists.store');
+            Route::get('projects/{project}/todo-lists/{todo_list}', [ProjectTodoController::class, 'showList'])->name('projects.todo-lists.show');
             Route::delete('projects/{project}/todo-lists/{todo_list}', [ProjectTodoController::class, 'destroyList'])->name('projects.todo-lists.destroy');
+            Route::patch('projects/{project}/todo-lists/{todo_list}/subscription', [ProjectTodoController::class, 'toggleListSubscription'])->name('projects.todo-lists.subscription.toggle');
+            Route::post('projects/{project}/todo-lists/{todo_list}/comments', [CommentController::class, 'storeList'])->name('projects.todo-lists.comments.store');
+            Route::patch('projects/{project}/todo-lists/{todo_list}/comments/{comment}', [CommentController::class, 'updateList'])->name('projects.todo-lists.comments.update');
+            Route::delete('projects/{project}/todo-lists/{todo_list}/comments/{comment}', [CommentController::class, 'destroyList'])->name('projects.todo-lists.comments.destroy');
             Route::post('projects/{project}/todo-lists/{todo_list}/todos', [ProjectTodoController::class, 'storeTodo'])->name('projects.todos.store');
+            Route::get('projects/{project}/todo-lists/{todo_list}/todos/{todo}', [ProjectTodoController::class, 'show'])->name('projects.todos.show');
             Route::post('projects/{project}/todo-lists/{todo_list}/todos/{todo}/subtasks', [ProjectTodoController::class, 'storeSubtask'])->name('projects.todos.subtasks.store');
             Route::post('projects/{project}/todo-lists/{todo_list}/todos/{todo}/attachments', [AttachmentController::class, 'storeTodo'])->name('projects.todos.attachments.store');
             Route::patch('projects/{project}/todo-lists/{todo_list}/todos/{todo}', [ProjectTodoController::class, 'updateTodo'])->name('projects.todos.update');
@@ -122,12 +124,18 @@ Route::prefix('{current_team}')
             Route::delete('projects/{project}/documents/{document}', [ProjectDocumentController::class, 'destroy'])->name('projects.documents.destroy');
             Route::patch('projects/{project}/documents/{document}/public-link', [ProjectDocumentController::class, 'togglePublicLink'])->name('projects.documents.public-link');
 
-            Route::get('projects/{project}/files', [ProjectFileController::class, 'index'])->name('projects.files.index');
+            Route::get('projects/{project}/files', [ProjectMaterialController::class, 'index'])->name('projects.materials.index');
             Route::post('projects/{project}/files', [ProjectFileController::class, 'store'])->name('projects.files.store');
+            Route::get('projects/{project}/files/{stored_file}', [ProjectFileController::class, 'show'])->name('projects.files.show');
             Route::patch('projects/{project}/files/{stored_file}', [ProjectFileController::class, 'update'])->name('projects.files.update');
+            Route::post('projects/{project}/files/{stored_file}/replace', [ProjectFileController::class, 'replace'])->name('projects.files.replace');
             Route::get('projects/{project}/files/{stored_file}/preview', [ProjectFileController::class, 'preview'])->name('projects.files.preview');
-            Route::get('projects/{project}/files/{stored_file}', [ProjectFileController::class, 'download'])->name('projects.files.download');
+            Route::get('projects/{project}/files/{stored_file}/download', [ProjectFileController::class, 'download'])->name('projects.files.download');
+            Route::post('projects/{project}/files/{stored_file}/reaction', [ProjectFileController::class, 'toggleReaction'])->name('projects.files.reaction.toggle');
             Route::delete('projects/{project}/files/{stored_file}', [ProjectFileController::class, 'destroy'])->name('projects.files.destroy');
+            Route::post('projects/{project}/files/{stored_file}/comments', [CommentController::class, 'storeFile'])->name('projects.files.comments.store');
+            Route::patch('projects/{project}/files/{stored_file}/comments/{comment}', [CommentController::class, 'updateFile'])->name('projects.files.comments.update');
+            Route::delete('projects/{project}/files/{stored_file}/comments/{comment}', [CommentController::class, 'destroyFile'])->name('projects.files.comments.destroy');
 
             Route::get('projects/{project}/card-tables', [CardTableController::class, 'index'])->name('projects.card-tables.index');
             Route::post('projects/{project}/card-tables', [CardTableController::class, 'storeTable'])->name('projects.card-tables.store');
@@ -152,7 +160,6 @@ Route::prefix('{current_team}')
             Route::delete('projects/{project}/check-ins/{check_in}', [CheckInController::class, 'destroy'])->name('projects.check-ins.destroy');
             Route::post('projects/{project}/check-ins/{check_in}/prompts/{prompt}/answer', [CheckInController::class, 'answer'])->name('projects.check-ins.answer');
 
-            Route::get('projects/{project}/materials', [ProjectMaterialController::class, 'index'])->name('projects.materials.index');
             Route::post('projects/{project}/material-folders', [ProjectMaterialController::class, 'storeFolder'])->name('projects.material-folders.store');
             Route::delete('projects/{project}/material-folders/{material_folder}', [ProjectMaterialController::class, 'destroyFolder'])->name('projects.material-folders.destroy');
             Route::post('projects/{project}/external-links', [ProjectMaterialController::class, 'storeLink'])->name('projects.external-links.store');

@@ -20,7 +20,6 @@
     import AppLogoIcon from '@/components/AppLogoIcon.svelte';
     import RichTextEditor from '@/components/RichTextEditor.svelte';
     import { Button } from '@/components/ui/button';
-    import VoiceNoteButton from '@/components/VoiceNoteButton.svelte';
     import { getEcho } from '@/lib/echo';
     import { t } from '@/lib/i18n';
     import { dashboard } from '@/routes';
@@ -100,8 +99,6 @@
                 ? 'bg-slate-800 text-white dark:bg-slate-100 dark:text-slate-900'
                 : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white'
         }`;
-    const isVoiceNote = (body: string): boolean =>
-        /\/voice-notes\/\d+(?:$|\?)/.test(body);
     const closePanel = (): void => {
         activePanel = null;
     };
@@ -484,20 +481,9 @@
                             <p class="text-xs font-bold text-muted-foreground">
                                 {message.sender.name}
                             </p>
-                            {#if isVoiceNote(message.body)}
-                                <audio
-                                    controls
-                                    preload="metadata"
-                                    src={message.body}
-                                    class="mt-2 h-9 max-w-full"
-                                >
-                                    <track kind="captions" />
-                                </audio>
-                            {:else}
-                                <p class="mt-1 whitespace-pre-wrap break-words">
-                                    {message.body}
-                                </p>
-                            {/if}
+                            <p class="mt-1 whitespace-pre-wrap break-words">
+                                {message.body}
+                            </p>
                         </div>
                     {:else}
                         <p
@@ -532,10 +518,6 @@
                             required
                             placeholder={t('Write a ping')}
                             class="h-10 min-w-0 rounded-md border bg-background px-3 text-sm"
-                        />
-                        <VoiceNoteButton
-                            compact
-                            onUploaded={(url) => (pingBody = url)}
                         />
                         <Button
                             type="submit"

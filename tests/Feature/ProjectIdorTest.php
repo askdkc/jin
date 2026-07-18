@@ -30,7 +30,6 @@ test('non participants cannot access project tools', function (string $method, s
     'schedule write' => ['POST', 'projects.schedule.store'],
     'documents read' => ['GET', 'projects.documents.index'],
     'documents write' => ['POST', 'projects.documents.store'],
-    'files read' => ['GET', 'projects.files.index'],
     'files write' => ['POST', 'projects.files.store'],
     'card tables read' => ['GET', 'projects.card-tables.index'],
     'card tables write' => ['POST', 'projects.card-tables.store'],

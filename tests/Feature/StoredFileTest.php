@@ -5,12 +5,14 @@ use App\Models\MaterialFolder;
 use App\Models\Project;
 use App\Models\StoredFile;
 use App\Models\Team;
+use App\Models\Todo;
+use App\Models\TodoList;
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia as Assert;
 
-test('file library exposes ordered folders and clear file metadata', function () {
+test('materials library is served from the files URL with ordered folders and file metadata', function () {
     $owner = User::factory()->create();
     $team = Team::factory()->create();
     $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
@@ -30,19 +32,27 @@ test('file library exposes ordered folders and clear file metadata', function ()
         'size' => 2048,
     ]);
 
+    $libraryUrl = route('projects.materials.index', [
+        $team,
+        $project,
+        'folder' => $laterFolder->id,
+    ]);
+
+    expect(route('projects.materials.index', [$team, $project], absolute: false))
+        ->toBe("/{$team->slug}/projects/{$project->id}/files");
+
     $this->actingAs($owner)
-        ->get(route('projects.files.index', [$team, $project]))
+        ->get($libraryUrl)
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
-            ->component('projects/files/Index')
-            ->has('files', 1)
-            ->where('files.0.name', 'デザイン案.pdf')
-            ->where('files.0.mimeType', 'application/pdf')
-            ->where('files.0.size', 2048)
-            ->where('files.0.uploaderName', $owner->name)
-            ->where('files.0.folderId', $laterFolder->id)
-            ->where('files.0.folderName', '納品物')
-            ->where('files.0.canDelete', true)
+            ->component('projects/materials/Index')
+            ->has('items', 1)
+            ->where('items.0.type', 'file')
+            ->where('items.0.title', 'デザイン案.pdf')
+            ->where('items.0.updaterName', $owner->name)
+            ->where('items.0.folderId', $laterFolder->id)
+            ->where('items.0.folderName', '納品物')
+            ->where('items.0.canDelete', true)
             ->has('folders', 2)
             ->where('folders.0.id', $firstFolder->id)
             ->where('folders.1.id', $laterFolder->id));
@@ -59,7 +69,7 @@ test('project participants can upload and download private files', function () {
     $project = Project::factory()->for($team)->for($owner, 'creator')->create();
     $project->members()->attach($member);
 
-    $filesUrl = route('projects.files.index', [$team, $project]);
+    $filesUrl = route('projects.materials.index', [$team, $project]);
 
     $this->actingAs($member)
         ->from($filesUrl)
@@ -225,6 +235,37 @@ test('deleting a stored file removes its cached preview pdf', function () {
     Storage::disk('local')->assertMissing('projects/test/report.docx');
     Storage::disk('local')->assertMissing("previews/{$storedFile->id}.pdf");
     expect(StoredFile::query()->count())->toBe(0);
+});
+
+test('deleting an inline file removes its rich text reference', function () {
+    Storage::fake('local');
+
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $list = TodoList::factory()->for($project)->create();
+    $todo = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->create();
+    $storedFile = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'attachable_type' => Todo::class,
+        'attachable_id' => $todo->id,
+        'path' => 'projects/test/screenshot.png',
+        'original_name' => 'screenshot.png',
+        'mime_type' => 'image/png',
+    ]);
+    $previewUrl = route('projects.files.preview', [$team, $project, $storedFile], absolute: false);
+    $todo->update([
+        'details' => "<div><figure><a href=\"{$previewUrl}\"><img src=\"{$previewUrl}\" alt=\"screenshot.png\"></a></figure><p>Keep this note.</p></div>",
+    ]);
+    Storage::disk('local')->put($storedFile->path, 'image');
+
+    $this->actingAs($owner)
+        ->delete(route('projects.files.destroy', [$team, $project, $storedFile]))
+        ->assertRedirect();
+
+    expect($todo->refresh()->details)
+        ->not->toContain("/files/{$storedFile->id}/")
+        ->toContain('Keep this note.');
 });
 
 test('csv previews are served inline as utf 8 without mojibake', function () {
@@ -398,7 +439,7 @@ test('file routes reject non participants and cross project bindings', function 
     $storedFile = StoredFile::factory()->for($otherProject)->for($owner, 'uploader')->create();
 
     $this->actingAs($member)
-        ->get(route('projects.files.index', [$team, $otherProject]))
+        ->get(route('projects.materials.index', [$team, $otherProject]))
         ->assertForbidden();
 
     $this->actingAs($member)
@@ -418,4 +459,118 @@ test('file routes reject non participants and cross project bindings', function 
     $this->actingAs($member)
         ->delete(route('projects.files.destroy', [$team, $visibleProject, $storedFile]))
         ->assertNotFound();
+});
+
+test('a project member can open a file detail page with its comments while outsiders cannot', function () {
+    $owner = User::factory()->create();
+    $member = User::factory()->create();
+    $outsider = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $team->members()->attach($outsider, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([$owner->id, $member->id]);
+    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'original_name' => '仕様書.pdf',
+        'mime_type' => 'application/pdf',
+        'size' => 4096,
+    ]);
+    $file->comments()->create([
+        'project_id' => $project->id,
+        'user_id' => $member->id,
+        'body' => '確認しました。',
+    ]);
+    $file->reactors()->attach($member);
+
+    $this->actingAs($member)
+        ->get(route('projects.files.show', [$team, $project, $file]))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('projects/files/Show')
+            ->where('file.name', '仕様書.pdf')
+            ->where('file.size', 4096)
+            ->where('file.uploaderName', $owner->name)
+            ->where('reaction.count', 1)
+            ->where('reaction.reacted', true)
+            ->where('reaction.names.0', $member->name)
+            ->where('comments.0.body', '確認しました。'));
+
+    $this->actingAs($outsider)
+        ->get(route('projects.files.show', [$team, $project, $file]))
+        ->assertForbidden();
+});
+
+test('project members can toggle a rocket reaction on a file', function () {
+    $owner = User::factory()->create();
+    $member = User::factory()->create();
+    $outsider = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $team->members()->attach($outsider, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([$owner->id, $member->id]);
+    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create();
+    $reactionUrl = route('projects.files.reaction.toggle', [$team, $project, $file]);
+
+    $this->actingAs($member)->post($reactionUrl)->assertRedirect();
+    expect($file->reactors()->whereKey($member->id)->exists())->toBeTrue();
+
+    $this->actingAs($member)->post($reactionUrl)->assertRedirect();
+    expect($file->reactors()->whereKey($member->id)->exists())->toBeFalse();
+
+    $this->actingAs($outsider)->post($reactionUrl)->assertForbidden();
+});
+
+test('project members can comment on a file', function () {
+    $owner = User::factory()->create();
+    $member = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([$owner->id, $member->id]);
+    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create();
+
+    $this->actingAs($member)
+        ->post(route('projects.files.comments.store', [$team, $project, $file]), [
+            'body' => '<p>ありがとうございます</p>',
+        ])
+        ->assertRedirect()
+        ->assertSessionHasNoErrors();
+
+    expect($file->comments()->count())->toBe(1);
+});
+
+test('the uploader can replace a file with a new version keeping its name', function () {
+    Storage::fake('local');
+
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+
+    $this->actingAs($owner)
+        ->post(route('projects.files.store', [$team, $project]), [
+            'file' => UploadedFile::fake()->create('資料.pdf', 10, 'application/pdf'),
+        ])
+        ->assertRedirect();
+
+    $file = StoredFile::query()->firstOrFail();
+    $oldPath = $file->path;
+
+    $this->actingAs($owner)
+        ->post(route('projects.files.replace', [$team, $project, $file]), [
+            'file' => UploadedFile::fake()->create('新版.pdf', 25, 'application/pdf'),
+        ])
+        ->assertRedirect()
+        ->assertSessionHasNoErrors();
+
+    $file->refresh();
+
+    expect($file->path)->not->toBe($oldPath)
+        ->and($file->original_name)->toBe('資料.pdf');
+    Storage::disk('local')->assertExists($file->path);
+    Storage::disk('local')->assertMissing($oldPath);
 });

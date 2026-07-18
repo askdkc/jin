@@ -22,7 +22,6 @@
     import Search from 'lucide-svelte/icons/search';
     import MessageBoardController from '@/actions/App/Http/Controllers/MessageBoardController';
     import ProjectDocumentController from '@/actions/App/Http/Controllers/ProjectDocumentController';
-    import ProjectFileController from '@/actions/App/Http/Controllers/ProjectFileController';
     import ProjectMaterialController from '@/actions/App/Http/Controllers/ProjectMaterialController';
     import ProjectTodoController from '@/actions/App/Http/Controllers/ProjectTodoController';
     import AppHead from '@/components/AppHead.svelte';
@@ -72,7 +71,7 @@
             messages: MessageBoardController.index,
             todos: ProjectTodoController.index,
             documents: ProjectDocumentController.index,
-            files: ProjectFileController.index,
+            files: ProjectMaterialController.index,
             materials: ProjectMaterialController.index,
         }[target](args);
     };

@@ -12,6 +12,7 @@ use App\Models\ChatMessage;
 use App\Models\CheckInPrompt;
 use App\Models\Document;
 use App\Models\ExternalLink;
+use App\Models\MaterialFolder;
 use App\Models\Membership;
 use App\Models\MessageBoardPost;
 use App\Models\Project;
@@ -285,6 +286,66 @@ class ProjectController extends Controller
                 ->limit(5)])
             ->orderBy('position')
             ->first();
+        $materialFolders = $project->materialFolders()
+            ->withCount(['documents', 'storedFiles', 'externalLinks'])
+            ->orderBy('position')
+            ->orderBy('id')
+            ->limit(5)
+            ->get()
+            ->map(fn (MaterialFolder $folder): array => [
+                'id' => $folder->id,
+                'type' => 'folder',
+                'title' => $folder->name,
+                'itemCount' => (int) $folder->documents_count
+                    + (int) $folder->stored_files_count
+                    + (int) $folder->external_links_count,
+            ]);
+        $materialItemLimit = max(1, 6 - $materialFolders->count());
+        $materialItems = $project->documents()
+            ->with('creator:id,name')
+            ->whereNull('material_folder_id')
+            ->latest('updated_at')
+            ->limit($materialItemLimit)
+            ->get()
+            ->map(fn (Document $document): array => [
+                'id' => $document->id,
+                'type' => 'document',
+                'title' => $document->title,
+                'updaterName' => $document->creator?->name,
+                'updatedAt' => $document->updated_at?->toISOString(),
+            ])
+            ->concat($project->storedFiles()
+                ->with('uploader:id,name')
+                ->whereNull('material_folder_id')
+                ->latest('updated_at')
+                ->limit($materialItemLimit)
+                ->get()
+                ->map(fn (StoredFile $file): array => [
+                    'id' => $file->id,
+                    'type' => 'file',
+                    'title' => $file->original_name,
+                    'updaterName' => $file->uploader?->name,
+                    'updatedAt' => $file->updated_at?->toISOString(),
+                    'mimeType' => $file->mime_type,
+                    'size' => $file->size,
+                ]))
+            ->concat($project->externalLinks()
+                ->with('creator:id,name')
+                ->whereNull('material_folder_id')
+                ->latest('updated_at')
+                ->limit($materialItemLimit)
+                ->get()
+                ->map(fn (ExternalLink $link): array => [
+                    'id' => $link->id,
+                    'type' => 'link',
+                    'title' => $link->title,
+                    'url' => $link->url,
+                    'updaterName' => $link->creator?->name,
+                    'updatedAt' => $link->updated_at?->toISOString(),
+                ]))
+            ->sortByDesc('updatedAt')
+            ->take($materialItemLimit)
+            ->values();
 
         return [
             'messages' => [
@@ -357,34 +418,10 @@ class ProjectController extends Controller
                     ]),
             ],
             'materials' => [
-                'documents' => $project->documents()
-                    ->latest('updated_at')
-                    ->limit(3)
-                    ->get()
-                    ->map(fn (Document $document): array => [
-                        'id' => $document->id,
-                        'title' => $document->title,
-                        'updatedAt' => $document->updated_at?->toISOString(),
-                    ]),
-                'files' => $project->storedFiles()
-                    ->latest()
-                    ->limit(3)
-                    ->get()
-                    ->map(fn (StoredFile $file): array => [
-                        'id' => $file->id,
-                        'name' => $file->original_name,
-                        'createdAt' => $file->created_at?->toISOString(),
-                    ]),
-                'links' => $project->externalLinks()
-                    ->latest('updated_at')
-                    ->limit(3)
-                    ->get()
-                    ->map(fn (ExternalLink $link): array => [
-                        'id' => $link->id,
-                        'title' => $link->title,
-                        'url' => $link->url,
-                        'updatedAt' => $link->updated_at?->toISOString(),
-                    ]),
+                'entries' => $materialItems
+                    ->concat($materialFolders)
+                    ->take(6)
+                    ->values(),
             ],
             'activity' => [
                 'activeLastSevenDays' => $project->activities()
@@ -404,6 +441,7 @@ class ProjectController extends Controller
                         'actorId' => $activity->actor_id,
                         'actorName' => $activity->actor?->name,
                         'subjectLabel' => $activity->metadata['label'],
+                        'subjectId' => $activity->subject_id,
                         'createdAt' => $activity->created_at?->toISOString(),
                         'project' => [
                             'id' => $project->id,

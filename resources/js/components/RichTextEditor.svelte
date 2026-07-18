@@ -2,7 +2,6 @@
     import Table2 from 'lucide-svelte/icons/table-2';
     import { onMount } from 'svelte';
     import 'trix';
-    import VoiceNoteButton from '@/components/VoiceNoteButton.svelte';
     import { t } from '@/lib/i18n';
 
     type TrixAttachment = object;
@@ -368,13 +367,6 @@
         }
     };
 
-    const insertVoiceNote = (url: string): void => {
-        editor.editor?.insertHTML(
-            `<p><a href="${escapeHtml(url)}">🎙 ${t('Voice note')}</a></p>`,
-        );
-        editor.focus();
-    };
-
     const uploadAttachment = async (file: File): Promise<void> => {
         if (!attachmentUploadUrl) {
             return;
@@ -422,6 +414,19 @@
     };
 
     onMount(() => {
+        const hideBrokenImage = (image: HTMLImageElement): void => {
+            const wrapper =
+                image.closest('figure') ?? image.closest('a') ?? image;
+
+            if (wrapper instanceof HTMLElement) {
+                wrapper.hidden = true;
+            }
+        };
+        const handleImageError = (event: Event): void => {
+            if (event.target instanceof HTMLImageElement) {
+                hideBrokenImage(event.target);
+            }
+        };
         const handleFileAccept = (event: Event): void => {
             event.preventDefault();
             const file = (event as Event & { file?: File }).file;
@@ -449,15 +454,22 @@
         };
 
         editor.addEventListener('trix-file-accept', handleFileAccept);
+        editor.addEventListener('error', handleImageError, true);
         editor.addEventListener('paste', formatMarkdownPaste);
         editor.addEventListener('trix-change', updateMentionState);
         editor.addEventListener('trix-change', updateCodeBlockState);
         editor.addEventListener('trix-selection-change', updateCodeBlockState);
         editor.addEventListener('keydown', onMentionKeydown);
         editor.addEventListener('blur', closeMentions);
+        editor.querySelectorAll<HTMLImageElement>('img').forEach((image) => {
+            if (image.complete && image.naturalWidth === 0) {
+                hideBrokenImage(image);
+            }
+        });
 
         return () => {
             editor.removeEventListener('trix-file-accept', handleFileAccept);
+            editor.removeEventListener('error', handleImageError, true);
             editor.removeEventListener('paste', formatMarkdownPaste);
             editor.removeEventListener('trix-change', updateMentionState);
             editor.removeEventListener('trix-change', updateCodeBlockState);
@@ -498,7 +510,6 @@
                 {/each}
             </select>
         {/if}
-        <VoiceNoteButton onUploaded={insertVoiceNote} />
         <button
             type="button"
             class="inline-flex min-h-9 items-center gap-2 rounded-md border bg-background px-3 text-xs font-semibold hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

@@ -17,6 +17,7 @@ use App\Models\TodoList;
 use App\Models\User;
 use App\Notifications\MentionNotification;
 use App\Notifications\TodoActivityNotification;
+use App\Support\InlineAttachments;
 use App\Support\Mentions;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -37,6 +38,7 @@ class ProjectTodoController extends Controller
             ->with(['todos' => fn ($query) => $query
                 ->with([
                     'assignee:id,name',
+                    'creator:id,name',
                     'comments' => fn ($commentQuery) => $commentQuery->with('user:id,name')->oldest(),
                     'subtasks' => fn ($subtaskQuery) => $subtaskQuery->orderBy('position'),
                     'attachments' => fn ($attachmentQuery) => $attachmentQuery->with('uploader:id,name')->oldest(),
@@ -51,39 +53,13 @@ class ProjectTodoController extends Controller
                 'title' => $list->title,
                 'isLoose' => $list->is_loose,
                 'canDelete' => $canManageProject,
-                'todos' => $list->todos->map(fn (Todo $todo): array => [
-                    'id' => $todo->id,
-                    'title' => $todo->title,
-                    'details' => $todo->details,
-                    'assigneeId' => $todo->assignee_id,
-                    'assigneeName' => $todo->assignee?->name,
-                    'completionNotifyIds' => $todo->completion_notify_ids ?? [],
-                    'dueOn' => $todo->due_on?->toDateString(),
-                    'completed' => $todo->completed_at !== null,
-                    'canEdit' => $canManageProject || $todo->created_by === request()->user()->id,
-                    'attachments' => $todo->attachments->map(fn (StoredFile $file): array => [
-                        'id' => $file->id,
-                        'name' => $file->original_name,
-                        'mimeType' => $file->mime_type,
-                        'size' => $file->size,
-                        'uploaderName' => $file->uploader?->name,
-                        'createdAt' => $file->created_at?->toISOString(),
-                        'canDelete' => $canManageProject || $file->uploaded_by === request()->user()->id,
-                    ])->all(),
-                    'subtasks' => $todo->subtasks->map(fn (Todo $subtask): array => [
-                        'id' => $subtask->id,
-                        'title' => $subtask->title,
-                        'completed' => $subtask->completed_at !== null,
-                        'canEdit' => $canManageProject || $subtask->created_by === request()->user()->id,
-                    ])->all(),
-                    'comments' => $todo->comments->map(fn (Comment $comment): array => [
-                        'id' => $comment->id,
-                        'body' => $comment->body,
-                        'authorName' => $comment->user?->name,
-                        'createdAt' => $comment->created_at?->toISOString(),
-                        'canDelete' => $canManageProject || $comment->user_id === request()->user()->id,
-                    ])->all(),
-                ])->all(),
+                'todos' => $list->todos
+                    ->map(fn (Todo $todo): array => $this->todoData(
+                        $todo,
+                        $canManageProject,
+                        request()->user()->id,
+                    ))
+                    ->all(),
             ]);
 
         return Inertia::render('projects/todos/Index', [
@@ -96,6 +72,102 @@ class ProjectTodoController extends Controller
         ]);
     }
 
+    public function show(
+        Team $currentTeam,
+        Project $project,
+        TodoList $todoList,
+        Todo $todo,
+    ): Response {
+        Gate::authorize('view', $project);
+        abort_if($todo->parent_id !== null, 404);
+
+        $canManageProject = Gate::allows('update', $project);
+        $todo->load([
+            'assignee:id,name',
+            'creator:id,name',
+            'comments' => fn ($query) => $query->with('user:id,name')->oldest(),
+            'subtasks' => fn ($query) => $query->orderBy('position'),
+            'attachments' => fn ($query) => $query->with('uploader:id,name')->oldest(),
+        ]);
+
+        return Inertia::render('projects/todos/Show', [
+            'project' => ['id' => $project->id, 'name' => $project->name],
+            'list' => ['id' => $todoList->id, 'title' => $todoList->title],
+            'todo' => $this->todoData(
+                $todo,
+                $canManageProject,
+                request()->user()->id,
+            ),
+            'members' => $project->members()
+                ->orderBy('name')
+                ->get(['users.id', 'users.name'])
+                ->map(fn (User $user): array => ['id' => $user->id, 'name' => $user->name]),
+        ]);
+    }
+
+    public function showList(Team $currentTeam, Project $project, TodoList $todoList): Response
+    {
+        Gate::authorize('view', $project);
+        abort_unless($todoList->project_id === $project->id, 404);
+
+        $canManageProject = Gate::allows('update', $project);
+        $userId = request()->user()->id;
+        $todoList->load([
+            'todos' => fn ($query) => $query
+                ->with('assignee:id,name')
+                ->whereNull('parent_id')
+                ->orderBy('position'),
+            'comments' => fn ($query) => $query->with('user:id,name')->oldest(),
+            'subscribers:id,name',
+        ]);
+
+        return Inertia::render('projects/todos/ListShow', [
+            'project' => ['id' => $project->id, 'name' => $project->name],
+            'list' => [
+                'id' => $todoList->id,
+                'title' => $todoList->title,
+                'canDelete' => $canManageProject,
+                'subscribed' => $todoList->subscribers->contains('id', $userId),
+                'subscriberCount' => $todoList->subscribers->count(),
+            ],
+            'todos' => $todoList->todos->map(fn (Todo $todo): array => [
+                'id' => $todo->id,
+                'title' => $todo->title,
+                'completed' => $todo->completed_at !== null,
+                'assigneeName' => $todo->assignee?->name,
+                'dueOn' => $todo->due_on?->toDateString(),
+                'hasNotes' => filled($todo->details),
+            ])->all(),
+            'comments' => $todoList->comments->map(fn (Comment $comment): array => [
+                'id' => $comment->id,
+                'body' => $comment->body,
+                'authorName' => $comment->user?->name,
+                'createdAt' => $comment->created_at?->toISOString(),
+                'canDelete' => $canManageProject || $comment->user_id === $userId,
+            ])->all(),
+            'members' => $project->members()
+                ->orderBy('name')
+                ->get(['users.id', 'users.name'])
+                ->map(fn (User $user): array => ['id' => $user->id, 'name' => $user->name]),
+        ]);
+    }
+
+    public function toggleListSubscription(Team $currentTeam, Project $project, TodoList $todoList): RedirectResponse
+    {
+        Gate::authorize('view', $project);
+        abort_unless($todoList->project_id === $project->id, 404);
+
+        $userId = request()->user()->id;
+
+        if ($todoList->subscribers()->whereKey($userId)->exists()) {
+            $todoList->subscribers()->detach($userId);
+        } else {
+            $todoList->subscribers()->attach($userId);
+        }
+
+        return back(fallback: route('projects.todo-lists.show', [$currentTeam, $project, $todoList]));
+    }
+
     public function storeList(SaveTodoListRequest $request, Team $currentTeam, Project $project): RedirectResponse
     {
         $project->todoLists()->create([
@@ -103,7 +175,7 @@ class ProjectTodoController extends Controller
             'position' => ((int) $project->todoLists()->max('position')) + 1,
         ]);
 
-        return to_route('projects.todos.index', [$currentTeam, $project]);
+        return back(fallback: route('projects.todos.index', [$currentTeam, $project]));
     }
 
     public function destroyList(Team $currentTeam, Project $project, TodoList $todoList): RedirectResponse
@@ -122,7 +194,7 @@ class ProjectTodoController extends Controller
             $todoList->delete();
         });
 
-        return to_route('projects.todos.index', [$currentTeam, $project]);
+        return back(fallback: route('projects.todos.index', [$currentTeam, $project]));
     }
 
     public function storeTodo(
@@ -147,6 +219,13 @@ class ProjectTodoController extends Controller
                 ]);
             }
 
+            InlineAttachments::syncFromBody(
+                $todo,
+                $project,
+                $request->user()->id,
+                $todo->details,
+            );
+
             Activity::record($project, $request->user(), ActivityType::TodoCreated, $todo, $todo->title);
 
             return $todo;
@@ -162,7 +241,7 @@ class ProjectTodoController extends Controller
 
         $this->notifyMentions($project, $request->user(), $todo);
 
-        return to_route('projects.todos.index', [$currentTeam, $project]);
+        return back(fallback: route('projects.todos.index', [$currentTeam, $project]));
     }
 
     public function updateTodo(
@@ -173,6 +252,7 @@ class ProjectTodoController extends Controller
         Todo $todo,
     ): RedirectResponse {
         $previousAssigneeId = $todo->assignee_id;
+        $previousDetails = $todo->details;
         $todo->update([
             ...$request->safe()->except('subtasks'),
             'completion_notify_ids' => $request->validated('completion_notify_ids') ?? [],
@@ -188,9 +268,13 @@ class ProjectTodoController extends Controller
             );
         }
 
-        $this->notifyMentions($project, $request->user(), $todo);
+        // ponytail: only re-notify mentions when the notes actually changed, so inline
+        // per-field edits (due date, assignee…) don't re-ping everyone mentioned in the notes.
+        if ($todo->details !== $previousDetails) {
+            $this->notifyMentions($project, $request->user(), $todo);
+        }
 
-        return to_route('projects.todos.index', [$currentTeam, $project]);
+        return back(fallback: route('projects.todos.index', [$currentTeam, $project]));
     }
 
     public function storeSubtask(
@@ -211,7 +295,7 @@ class ProjectTodoController extends Controller
             Activity::record($project, $request->user(), ActivityType::TodoCreated, $subtask, $subtask->title);
         });
 
-        return to_route('projects.todos.index', [$currentTeam, $project]);
+        return back(fallback: route('projects.todos.index', [$currentTeam, $project]));
     }
 
     public function toggleTodo(
@@ -245,7 +329,7 @@ class ProjectTodoController extends Controller
             );
         }
 
-        return to_route('projects.todos.index', [$currentTeam, $project]);
+        return back(fallback: route('projects.todos.index', [$currentTeam, $project]));
     }
 
     public function moveTodo(
@@ -305,6 +389,7 @@ class ProjectTodoController extends Controller
     ): RedirectResponse {
         Gate::authorize('view', $project);
         abort_unless($todo->created_by === request()->user()->id || Gate::allows('update', $project), 403);
+        $parentId = $todo->parent_id;
 
         DB::transaction(function () use ($todo): void {
             $todoIds = $todo->subtasks()->pluck('id')->push($todo->id);
@@ -320,6 +405,15 @@ class ProjectTodoController extends Controller
             $todo->delete();
         });
 
+        if ($parentId !== null) {
+            return back(fallback: route('projects.todos.show', [
+                $currentTeam,
+                $project,
+                $todoList,
+                $parentId,
+            ]));
+        }
+
         return to_route('projects.todos.index', [$currentTeam, $project]);
     }
 
@@ -329,6 +423,46 @@ class ProjectTodoController extends Controller
         $todoIds->each(function (int $todoId, int $position): void {
             Todo::query()->whereKey($todoId)->update(['position' => $position]);
         });
+    }
+
+    /** @return array<string, mixed> */
+    private function todoData(Todo $todo, bool $canManageProject, int $userId): array
+    {
+        return [
+            'id' => $todo->id,
+            'title' => $todo->title,
+            'details' => $todo->details,
+            'assigneeId' => $todo->assignee_id,
+            'assigneeName' => $todo->assignee?->name,
+            'completionNotifyIds' => $todo->completion_notify_ids ?? [],
+            'dueOn' => $todo->due_on?->toDateString(),
+            'completed' => $todo->completed_at !== null,
+            'creatorName' => $todo->creator?->name,
+            'createdAt' => $todo->created_at?->toISOString(),
+            'canEdit' => $canManageProject || $todo->created_by === $userId,
+            'attachments' => $todo->attachments->map(fn (StoredFile $file): array => [
+                'id' => $file->id,
+                'name' => $file->original_name,
+                'mimeType' => $file->mime_type,
+                'size' => $file->size,
+                'uploaderName' => $file->uploader?->name,
+                'createdAt' => $file->created_at?->toISOString(),
+                'canDelete' => $canManageProject || $file->uploaded_by === $userId,
+            ])->all(),
+            'subtasks' => $todo->subtasks->map(fn (Todo $subtask): array => [
+                'id' => $subtask->id,
+                'title' => $subtask->title,
+                'completed' => $subtask->completed_at !== null,
+                'canEdit' => $canManageProject || $subtask->created_by === $userId,
+            ])->all(),
+            'comments' => $todo->comments->map(fn (Comment $comment): array => [
+                'id' => $comment->id,
+                'body' => $comment->body,
+                'authorName' => $comment->user?->name,
+                'createdAt' => $comment->created_at?->toISOString(),
+                'canDelete' => $canManageProject || $comment->user_id === $userId,
+            ])->all(),
+        ];
     }
 
     private function notifyMentions(Project $project, User $actor, Todo $todo): void

@@ -121,6 +121,6 @@ class AttachmentController extends Controller
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('File attached.')]);
 
-        return to_route($redirectRoute, $routeParameters);
+        return back(fallback: route($redirectRoute, $routeParameters));
     }
 }

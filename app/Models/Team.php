@@ -33,7 +33,6 @@ use Illuminate\Support\Carbon;
  * @property-read Collection<int, PersonalNote> $personalNotes
  * @property-read Collection<int, BubbleUp> $bubbleUps
  * @property-read Collection<int, DirectMessage> $directMessages
- * @property-read Collection<int, VoiceNote> $voiceNotes
  */
 #[Fillable(['name', 'slug', 'is_personal', 'menu_names'])]
 class Team extends Model
@@ -179,12 +178,6 @@ class Team extends Model
     public function directMessages(): HasMany
     {
         return $this->hasMany(DirectMessage::class);
-    }
-
-    /** @return HasMany<VoiceNote, $this> */
-    public function voiceNotes(): HasMany
-    {
-        return $this->hasMany(VoiceNote::class);
     }
 
     /**

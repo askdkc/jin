@@ -29,7 +29,6 @@
     import ChevronLeft from 'lucide-svelte/icons/chevron-left';
     import Ellipsis from 'lucide-svelte/icons/ellipsis';
     import ExternalLinkIcon from 'lucide-svelte/icons/external-link';
-    import Eye from 'lucide-svelte/icons/eye';
     import FileIcon from 'lucide-svelte/icons/file';
     import FilePlus from 'lucide-svelte/icons/file-plus';
     import FileText from 'lucide-svelte/icons/file-text';
@@ -45,9 +44,6 @@
     import ProjectFileController from '@/actions/App/Http/Controllers/ProjectFileController';
     import AppHead from '@/components/AppHead.svelte';
     import InputError from '@/components/InputError.svelte';
-    import StoredFilePreviewDialog, {
-        canPreviewStoredFile,
-    } from '@/components/StoredFilePreviewDialog.svelte';
     import { Button } from '@/components/ui/button';
     import {
         Dialog,
@@ -125,10 +121,9 @@
     let movingItem = $state<MaterialItem | null>(null);
     let renameDialogOpen = $state(false);
     let renamingFile = $state<MaterialItem | null>(null);
-    let previewOpen = $state(false);
-    let previewFile = $state<{ id: number; name: string } | null>(null);
     let isFileDragging = $state(false);
     let isReadingFolder = $state(false);
+    let fileInput: HTMLInputElement;
     let folderInput: HTMLInputElement;
 
     const MAX_UPLOAD_FILES = 20;
@@ -154,10 +149,6 @@
     const openRenameDialog = (item: MaterialItem): void => {
         renamingFile = item;
         renameDialogOpen = true;
-    };
-    const openPreview = (item: MaterialItem): void => {
-        previewFile = { id: item.id, name: item.title };
-        previewOpen = true;
     };
     const setUploadError = (message: string): void => {
         uploadForm.clearErrors();
@@ -194,6 +185,10 @@
         folderInput.value = '';
         folderInput.click();
     };
+    const chooseFiles = (): void => {
+        fileInput.value = '';
+        fileInput.click();
+    };
     const isHiddenFile = (file: File): boolean =>
         (file.webkitRelativePath || file.name)
             .split('/')
@@ -213,6 +208,12 @@
         const folderName = files[0]?.webkitRelativePath.split('/')[0] ?? null;
 
         submitFiles(files, folderName);
+        input.value = '';
+    };
+    const handleFilePick = (event: Event): void => {
+        const input = event.currentTarget as HTMLInputElement;
+
+        submitFiles(Array.from(input.files ?? []));
         input.value = '';
     };
     const readFileEntry = (entry: FileSystemFileEntry): Promise<File> =>
@@ -390,6 +391,14 @@
         {/if}
 
         <input
+            bind:this={fileInput}
+            type="file"
+            multiple
+            class="hidden"
+            onchange={handleFilePick}
+        />
+
+        <input
             bind:this={folderInput}
             type="file"
             multiple
@@ -481,16 +490,17 @@
                             </DropdownMenuItem>
                             <DropdownMenuItem asChild>
                                 {#snippet children(itemProps)}
-                                    <Link
-                                        href={ProjectFileController.index(
-                                            routeArguments,
-                                        )}
+                                    <button
+                                        type="button"
                                         class={itemProps.class}
-                                        onclick={() => itemProps.onClick?.()}
+                                        onclick={() => {
+                                            itemProps.onClick?.();
+                                            chooseFiles();
+                                        }}
                                     >
                                         <Upload aria-hidden="true" />
                                         {t('Upload file')}
-                                    </Link>
+                                    </button>
                                 {/snippet}
                             </DropdownMenuItem>
                             {#if !activeFolder}
@@ -799,34 +809,17 @@
                                             aria-hidden="true"
                                         />
                                     </a>
-                                {:else if item.type === 'file' && canPreviewStoredFile(item.title)}
-                                    <button
-                                        type="button"
-                                        class="flex max-w-full cursor-zoom-in items-center gap-1.5 text-left font-bold underline-offset-4 hover:text-primary hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                        title={t('Preview')}
-                                        onclick={() => openPreview(item)}
-                                    >
-                                        <span class="truncate">
-                                            {item.title}
-                                        </span>
-                                        <Eye
-                                            class="size-4 shrink-0"
-                                            aria-hidden="true"
-                                        />
-                                    </button>
                                 {:else if item.type === 'file'}
-                                    <a
-                                        href={ProjectFileController.download.url(
-                                            [
-                                                currentTeam.slug,
-                                                project.id,
-                                                item.id,
-                                            ],
-                                        )}
+                                    <Link
+                                        href={ProjectFileController.show([
+                                            currentTeam.slug,
+                                            project.id,
+                                            item.id,
+                                        ])}
                                         class="block truncate font-bold hover:underline"
                                     >
                                         {item.title}
-                                    </a>
+                                    </Link>
                                 {:else}
                                     <Link
                                         href={ProjectDocumentController.index(
@@ -1212,10 +1205,3 @@
         {/if}
     </DialogContent>
 </Dialog>
-
-<StoredFilePreviewDialog
-    {currentTeam}
-    {project}
-    file={previewFile}
-    bind:open={previewOpen}
-/>

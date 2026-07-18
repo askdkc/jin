@@ -3,14 +3,19 @@
 namespace App\Http\Controllers;
 
 use App\Enums\ActivityType;
+use App\Http\Requests\Phase4\ReplaceProjectFileRequest;
 use App\Http\Requests\Phase4\StoreProjectFileRequest;
 use App\Http\Requests\Phase4\UpdateProjectFileRequest;
 use App\Models\Activity;
+use App\Models\Comment;
 use App\Models\Project;
 use App\Models\StoredFile;
 use App\Models\Team;
+use App\Models\User;
+use App\Support\InlineAttachments;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
@@ -28,34 +33,6 @@ use Throwable;
 
 class ProjectFileController extends Controller
 {
-    public function index(Team $currentTeam, Project $project): InertiaResponse
-    {
-        Gate::authorize('view', $project);
-
-        $canManageProject = Gate::allows('update', $project);
-        $files = $project->storedFiles()
-            ->with(['uploader:id,name', 'materialFolder:id,name'])
-            ->latest()
-            ->get()
-            ->map(fn (StoredFile $file): array => [
-                'id' => $file->id,
-                'name' => $file->original_name,
-                'mimeType' => $file->mime_type,
-                'size' => $file->size,
-                'uploaderName' => $file->uploader?->name,
-                'folderId' => $file->material_folder_id,
-                'folderName' => $file->materialFolder?->name,
-                'createdAt' => $file->created_at?->toISOString(),
-                'canDelete' => $canManageProject || $file->uploaded_by === request()->user()->id,
-            ]);
-
-        return Inertia::render('projects/files/Index', [
-            'project' => ['id' => $project->id, 'name' => $project->name],
-            'files' => $files,
-            'folders' => $project->materialFolders()->orderBy('position')->get(['id', 'name']),
-        ]);
-    }
-
     public function store(StoreProjectFileRequest $request, Team $currentTeam, Project $project): RedirectResponse
     {
         $files = $request->file('files');
@@ -122,11 +99,84 @@ class ProjectFileController extends Controller
         return back();
     }
 
+    public function show(Team $currentTeam, Project $project, StoredFile $storedFile): InertiaResponse
+    {
+        Gate::authorize('view', $project);
+        abort_unless($storedFile->project_id === $project->id, 404);
+
+        $canManageProject = Gate::allows('update', $project);
+        $userId = request()->user()->id;
+        $storedFile->load([
+            'uploader:id,name',
+            'comments' => fn ($query) => $query->with('user:id,name')->oldest(),
+            'reactors:id,name',
+        ]);
+
+        return Inertia::render('projects/files/Show', [
+            'project' => ['id' => $project->id, 'name' => $project->name],
+            'file' => [
+                'id' => $storedFile->id,
+                'name' => $storedFile->original_name,
+                'mimeType' => $storedFile->mime_type,
+                'size' => $storedFile->size,
+                'uploaderName' => $storedFile->uploader?->name,
+                'createdAt' => $storedFile->created_at?->toISOString(),
+                'canManage' => $canManageProject || $storedFile->uploaded_by === $userId,
+            ],
+            'reaction' => [
+                'count' => $storedFile->reactors->count(),
+                'reacted' => $storedFile->reactors->contains('id', $userId),
+                'names' => $storedFile->reactors->pluck('name')->all(),
+            ],
+            'comments' => $storedFile->comments->map(fn (Comment $comment): array => [
+                'id' => $comment->id,
+                'body' => $comment->body,
+                'authorName' => $comment->user?->name,
+                'createdAt' => $comment->created_at?->toISOString(),
+                'canDelete' => $canManageProject || $comment->user_id === $userId,
+            ])->all(),
+            'members' => $project->members()
+                ->orderBy('name')
+                ->get(['users.id', 'users.name'])
+                ->map(fn (User $user): array => ['id' => $user->id, 'name' => $user->name]),
+        ]);
+    }
+
     public function download(Team $currentTeam, Project $project, StoredFile $storedFile): StreamedResponse
     {
         Gate::authorize('view', $project);
 
         return Storage::disk($storedFile->disk)->download($storedFile->path, $storedFile->original_name);
+    }
+
+    public function replace(
+        ReplaceProjectFileRequest $request,
+        Team $currentTeam,
+        Project $project,
+        StoredFile $storedFile,
+    ): RedirectResponse {
+        /** @var UploadedFile $file */
+        $file = $request->file('file');
+        $newPath = $file->store("projects/{$project->id}", 'local');
+        abort_if($newPath === false, 500);
+
+        $disk = Storage::disk($storedFile->disk);
+        $oldPath = $storedFile->path;
+
+        // ponytail: straight overwrite — no version history (Basecamp keeps versions;
+        // add a stored_file_versions table if that's ever needed).
+        $storedFile->update([
+            'path' => $newPath,
+            'mime_type' => $file->getMimeType(),
+            'size' => $file->getSize(),
+        ]);
+
+        $disk->delete($oldPath);
+        $disk->delete("previews/{$storedFile->id}.pdf");
+
+        Inertia::flash('toast', ['type' => 'success', 'message' => __('File replaced.')]);
+
+        return back();
     }
 
     public function preview(Team $currentTeam, Project $project, StoredFile $storedFile): Response
@@ -188,6 +238,20 @@ class ProjectFileController extends Controller
         return back();
     }
 
+    public function toggleReaction(
+        Request $request,
+        Team $currentTeam,
+        Project $project,
+        StoredFile $storedFile,
+    ): RedirectResponse {
+        Gate::authorize('view', $project);
+        abort_unless($storedFile->project_id === $project->id, 404);
+
+        $storedFile->reactors()->toggle($request->user()->id);
+
+        return back();
+    }
+
     public function destroy(Team $currentTeam, Project $project, StoredFile $storedFile): RedirectResponse
     {
         Gate::authorize('view', $project);
@@ -196,7 +260,10 @@ class ProjectFileController extends Controller
         $disk = Storage::disk($storedFile->disk);
         abort_if($disk->exists($storedFile->path) && ! $disk->delete($storedFile->path), 500);
         $disk->delete("previews/{$storedFile->id}.pdf");
-        $storedFile->delete();
+        DB::transaction(function () use ($storedFile): void {
+            InlineAttachments::removeFromBody($storedFile);
+            $storedFile->delete();
+        });
 
         return back();
     }

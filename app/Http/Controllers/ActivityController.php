@@ -47,6 +47,7 @@ class ActivityController extends Controller
                 'actorId' => $activity->actor_id,
                 'actorName' => $activity->actor?->name,
                 'subjectLabel' => $activity->metadata['label'],
+                'subjectId' => $activity->subject_id,
                 'createdAt' => $activity->created_at?->toISOString(),
                 'project' => [
                     'id' => $activity->project->id,

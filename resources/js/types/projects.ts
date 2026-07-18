@@ -39,6 +39,38 @@ export type Project = ProjectSummary & {
     members: ProjectMember[];
 };
 
+export type ProjectMaterialPreviewEntry =
+    | {
+          id: number;
+          type: 'folder';
+          title: string;
+          itemCount: number;
+      }
+    | {
+          id: number;
+          type: 'document';
+          title: string;
+          updaterName: string | null;
+          updatedAt: string | null;
+      }
+    | {
+          id: number;
+          type: 'file';
+          title: string;
+          updaterName: string | null;
+          updatedAt: string | null;
+          mimeType: string | null;
+          size: number;
+      }
+    | {
+          id: number;
+          type: 'link';
+          title: string;
+          url: string;
+          updaterName: string | null;
+          updatedAt: string | null;
+      };
+
 export type ProjectHome = {
     messages: {
         count: number;
@@ -85,22 +117,7 @@ export type ProjectHome = {
         }[];
     };
     materials: {
-        documents: {
-            id: number;
-            title: string;
-            updatedAt: string | null;
-        }[];
-        files: {
-            id: number;
-            name: string;
-            createdAt: string | null;
-        }[];
-        links: {
-            id: number;
-            title: string;
-            url: string;
-            updatedAt: string | null;
-        }[];
+        entries: ProjectMaterialPreviewEntry[];
     };
     chat: {
         recent: {
@@ -336,6 +353,7 @@ export type ActivityItem = {
     actorId: number | null;
     actorName: string | null;
     subjectLabel: string;
+    subjectId: number;
     createdAt: string | null;
     project: ProjectTool;
 };
@@ -489,6 +507,8 @@ export type ProjectTodo = {
     completionNotifyIds: number[];
     dueOn: string | null;
     completed: boolean;
+    creatorName: string | null;
+    createdAt: string | null;
     canEdit: boolean;
     attachments: ProjectStoredFile[];
     subtasks: ProjectSubtask[];

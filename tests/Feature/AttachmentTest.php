@@ -58,11 +58,14 @@ test('project participants can attach files to todos', function () {
     $list = TodoList::factory()->for($project)->create();
     $todo = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->create();
 
+    $showRoute = route('projects.todos.show', [$team, $project, $list, $todo]);
+
     $this->actingAs($owner)
+        ->from($showRoute)
         ->post(route('projects.todos.attachments.store', [$team, $project, $list, $todo]), [
             'file' => UploadedFile::fake()->create('確認表.xlsx', 100, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
         ])
-        ->assertRedirect(route('projects.todos.index', [$team, $project]));
+        ->assertRedirect($showRoute);
 
     $attachment = StoredFile::query()->firstOrFail();
 
@@ -70,10 +73,11 @@ test('project participants can attach files to todos', function () {
         ->attachable_type->toBe(Todo::class)
         ->attachable_id->toBe($todo->id);
 
-    $this->get(route('projects.todos.index', [$team, $project]))
+    $this->get($showRoute)
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
-            ->where('lists.0.todos.0.attachments.0.name', '確認表.xlsx'));
+            ->component('projects/todos/Show')
+            ->where('todo.attachments.0.name', '確認表.xlsx'));
 });
 
 test('attachment routes enforce project scoped bindings', function () {
@@ -137,6 +141,49 @@ test('a file dropped into the editor uploads inline and is linked once the messa
     expect($attachment->fresh())
         ->attachable_type->toBe(MessageBoardPost::class)
         ->attachable_id->toBe($post->id);
+});
+
+test('a file dropped into a new todo is linked without claiming another users upload', function () {
+    Storage::fake('local');
+
+    $owner = User::factory()->create();
+    $member = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([$owner->id, $member->id]);
+    $list = TodoList::factory()->for($project)->create();
+
+    $memberUpload = $this->actingAs($member)
+        ->postJson(route('projects.messages.inline-attachments.store', [$team, $project]), [
+            'file' => UploadedFile::fake()->create('member.pdf', 10, 'application/pdf'),
+        ])
+        ->assertCreated()
+        ->json();
+    $ownerUpload = $this->actingAs($owner)
+        ->postJson(route('projects.messages.inline-attachments.store', [$team, $project]), [
+            'file' => UploadedFile::fake()->create('owner.pdf', 10, 'application/pdf'),
+        ])
+        ->assertCreated()
+        ->json();
+
+    $this->actingAs($owner)
+        ->post(route('projects.todos.store', [$team, $project, $list]), [
+            'title' => '添付ファイルを確認する',
+            'details' => "<a href=\"{$memberUpload['previewUrl']}\">member.pdf</a><a href=\"{$ownerUpload['previewUrl']}\">owner.pdf</a>",
+        ])
+        ->assertRedirect()
+        ->assertSessionHasNoErrors();
+
+    $todo = Todo::query()->firstOrFail();
+
+    expect(StoredFile::query()->findOrFail($ownerUpload['id']))
+        ->attachable_type->toBe(Todo::class)
+        ->attachable_id->toBe($todo->id)
+        ->and(StoredFile::query()->findOrFail($memberUpload['id']))
+        ->attachable_type->toBeNull()
+        ->attachable_id->toBeNull();
 });
 
 test('deleting a message keeps its attachment in project files', function () {

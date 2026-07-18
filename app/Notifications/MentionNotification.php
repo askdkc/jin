@@ -18,6 +18,8 @@ class MentionNotification extends Notification
 
     public const Todo = 'mention_todo';
 
+    public const File = 'mention_file';
+
     public function __construct(
         public string $type,
         public User $actor,
@@ -55,12 +57,15 @@ class MentionNotification extends Notification
      */
     public function toMail(object $notifiable): MailMessage
     {
-        $url = $this->type === self::Message && $this->targetId !== null
-            ? route('projects.messages.show', [$this->project->team, $this->project, $this->targetId])
-            : route(
-                $this->type === self::Message ? 'projects.messages.index' : 'projects.todos.index',
-                [$this->project->team, $this->project],
-            );
+        $url = match ($this->type) {
+            self::Message => $this->targetId !== null
+                ? route('projects.messages.show', [$this->project->team, $this->project, $this->targetId])
+                : route('projects.messages.index', [$this->project->team, $this->project]),
+            self::File => $this->targetId !== null
+                ? route('projects.files.show', [$this->project->team, $this->project, $this->targetId])
+                : route('projects.materials.index', [$this->project->team, $this->project]),
+            default => route('projects.todos.index', [$this->project->team, $this->project]),
+        };
 
         return (new MailMessage)
             ->subject(__(':actorName mentioned you', ['actorName' => $this->actor->name]))
@@ -84,7 +89,8 @@ class MentionNotification extends Notification
             'projectId' => $this->project->id,
             'projectName' => $this->project->name,
             'messageTitle' => $this->type === self::Message ? $this->title : null,
-            'todoTitle' => $this->type === self::Todo ? $this->title : null,
+            // File mentions reuse the todoTitle display slot so they render without new mappers.
+            'todoTitle' => in_array($this->type, [self::Todo, self::File], true) ? $this->title : null,
             'messageBoardPostId' => $this->type === self::Message ? $this->targetId : null,
             'actorName' => $this->actor->name,
         ];

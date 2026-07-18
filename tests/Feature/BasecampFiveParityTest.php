@@ -14,11 +14,8 @@ use App\Models\Team;
 use App\Models\Todo;
 use App\Models\TodoList;
 use App\Models\User;
-use App\Models\VoiceNote;
 use App\Notifications\TodoActivityNotification;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Event;
-use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia as Assert;
 
 function basecampFiveWorkspace(): array
@@ -186,23 +183,4 @@ test('events keep meeting links and public documents work without login', functi
         ->assertInertia(fn (Assert $page) => $page
             ->component('public/DocumentShow')
             ->where('document.title', '公開手順'));
-});
-
-test('voice notes validate store and stream within their team', function () {
-    Storage::fake('local');
-    [$owner, , $team] = basecampFiveWorkspace();
-
-    $this->actingAs($owner)
-        ->post(route('voice-notes.store', $team), [
-            'audio' => UploadedFile::fake()->create('voice-note.webm', 64, 'audio/webm'),
-        ])
-        ->assertCreated()
-        ->assertJsonStructure(['id', 'url']);
-
-    $voiceNote = VoiceNote::query()->firstOrFail();
-    Storage::disk('local')->assertExists($voiceNote->path);
-
-    $this->get(route('voice-notes.show', [$team, $voiceNote]))
-        ->assertOk()
-        ->assertHeader('Content-Type', 'audio/webm');
 });

@@ -144,27 +144,55 @@
         }
     };
 
+    const hideBrokenImage = (image: HTMLImageElement): void => {
+        const wrapper = image.closest('figure') ?? image.closest('a') ?? image;
+
+        if (wrapper instanceof HTMLElement) {
+            wrapper.hidden = true;
+        }
+    };
+
     $effect(() => {
         void content;
 
-        const blocks = containerEl
-            ? [
-                  ...containerEl.querySelectorAll<HTMLPreElement>(
-                      'pre:not([data-shiki])',
-                  ),
-              ]
-            : [];
+        if (!containerEl) {
+            return;
+        }
+
+        const container = containerEl;
+        const handleImageError = (event: Event): void => {
+            if (event.target instanceof HTMLImageElement) {
+                hideBrokenImage(event.target);
+            }
+        };
+        const blocks = [
+            ...container.querySelectorAll<HTMLPreElement>(
+                'pre:not([data-shiki])',
+            ),
+        ];
+
+        container.addEventListener('click', handleClick);
+        container.addEventListener('error', handleImageError, true);
+        container.querySelectorAll<HTMLImageElement>('img').forEach((image) => {
+            if (image.complete && image.naturalWidth === 0) {
+                hideBrokenImage(image);
+            }
+        });
 
         if (blocks.length > 0) {
             void highlightCodeBlocks(blocks);
         }
+
+        return () => {
+            container.removeEventListener('click', handleClick);
+            container.removeEventListener('error', handleImageError, true);
+        };
     });
 </script>
 
 <div
     bind:this={containerEl}
     class={`trix-content rich-text-content ${className}`}
-    onclick={handleClick}
 >
     <!-- eslint-disable-next-line svelte/no-at-html-tags -- server-side rich-text casts sanitize this HTML. -->
     {@html content ?? ''}

@@ -82,3 +82,68 @@ it('sanitizes message HTML before validation and storage', function () {
         ])
         ->assertSessionHasErrors('body');
 });
+
+it('supports visible inline attachment uploads in every project rich text editor', function () {
+    $editor = file_get_contents(resource_path('js/components/RichTextEditor.svelte'));
+
+    expect($editor)
+        ->toContain('onclick={openImageChooser}')
+        ->toContain("{t('Insert image')}")
+        ->toMatch('/<input\s+[^>]*type="file"[^>]*accept="image\/jpeg,image\/png,image\/webp"[^>]*hidden[^>]*>/s')
+        ->toContain('onchange={handleImageSelection}')
+        ->toContain("editor.addEventListener('trix-file-accept', handleFileAccept)")
+        ->toContain("editor.removeEventListener('trix-file-accept', handleFileAccept)")
+        ->toContain('attachmentUploadError =')
+        ->toContain('aria-live="polite"')
+        ->toContain('inline: boolean;')
+        ->toContain('payload.inline === true')
+        ->not->toContain("payload.mimeType?.startsWith('image/')");
+
+    expect(substr_count($editor, 'void uploadAttachment(file);'))->toBeGreaterThanOrEqual(2);
+
+    $missingUploadUrls = [];
+    $nonSelfClosingEditors = [];
+    $editorCount = 0;
+    $projectPages = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator(resource_path('js/pages/projects')),
+    );
+
+    foreach ($projectPages as $page) {
+        if (! $page->isFile() || $page->getExtension() !== 'svelte') {
+            continue;
+        }
+
+        $source = file_get_contents($page->getPathname());
+        preg_match_all('/<RichTextEditor\b/', $source, $editors, PREG_OFFSET_CAPTURE);
+
+        foreach ($editors[0] as [$start, $offset]) {
+            $editorCount++;
+            $tagEnd = strpos($source, '>', $offset);
+            $component = $tagEnd === false
+                ? substr($source, $offset)
+                : substr($source, $offset, $tagEnd - $offset + 1);
+            $relativePath = str_replace(base_path().'/', '', $page->getPathname());
+            $line = substr_count(substr($source, 0, $offset), "\n") + 1;
+
+            if ($tagEnd === false || ! str_ends_with(rtrim($component), '/>')) {
+                $nonSelfClosingEditors[] = "{$relativePath}:{$line}";
+            }
+
+            if (str_contains($component, 'attachmentUploadUrl')) {
+                continue;
+            }
+
+            $missingUploadUrls[] = "{$relativePath}:{$line}";
+        }
+    }
+
+    expect($editorCount)->toBeGreaterThan(0)
+        ->and($nonSelfClosingEditors)->toBeEmpty()
+        ->and($missingUploadUrls)->toBeEmpty();
+
+    $translations = json_decode(file_get_contents(lang_path('ja.json')), true);
+
+    expect($translations['Insert image'] ?? null)->toBe('画像を挿入')
+        ->and($translations['Attachment upload failed. Please try again.'] ?? null)
+        ->toBe('添付ファイルのアップロードに失敗しました。もう一度お試しください。');
+});

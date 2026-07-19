@@ -139,6 +139,8 @@ class CommentController extends Controller
             return $comment;
         });
 
+        InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
+
         TodoActivityNotification::sendToUsers(
             [$todo->created_by, $todo->assignee_id],
             $request->user(),
@@ -167,6 +169,8 @@ class CommentController extends Controller
         Comment $comment,
     ): RedirectResponse {
         $comment->update($request->validated());
+
+        InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
 
         MentionNotification::sendToUsers(
             Mentions::extract($comment->body, $project->members),
@@ -221,6 +225,8 @@ class CommentController extends Controller
             return $comment;
         });
 
+        InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
+
         // Whoever comments starts following the list, Basecamp-style, so they get replies.
         $todoList->subscribers()->syncWithoutDetaching([$request->user()->id]);
 
@@ -269,6 +275,8 @@ class CommentController extends Controller
         Comment $comment,
     ): RedirectResponse {
         $comment->update($request->validated());
+
+        InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
 
         MentionNotification::sendToUsers(
             Mentions::extract($comment->body, $project->members),

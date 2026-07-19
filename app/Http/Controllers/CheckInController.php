@@ -12,6 +12,7 @@ use App\Models\CheckInPrompt;
 use App\Models\Project;
 use App\Models\Team;
 use App\Models\User;
+use App\Support\InlineAttachments;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -274,6 +275,13 @@ class CheckInController extends Controller
                 'answer' => $request->validated('answer'),
                 'answered_at' => now(),
             ]);
+
+            InlineAttachments::syncFromBody(
+                $prompt,
+                $project,
+                $request->user()->id,
+                $prompt->answer,
+            );
 
             Activity::record(
                 $project,

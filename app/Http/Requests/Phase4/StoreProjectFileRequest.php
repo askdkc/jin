@@ -29,7 +29,7 @@ class StoreProjectFileRequest extends FormRequest
     public function rules(): array
     {
         $project = $this->route('project');
-        $fileTypes = ['pdf', 'txt', 'csv', 'jpg', 'jpeg', 'png', 'webp', 'mp4', 'webm', 'mov', 'm4v', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip'];
+        $fileTypes = ['pdf', 'txt', 'csv', 'jpg', 'jpeg', 'png', 'webp', 'mp4', 'webm', 'mov', 'm4v', 'doc', 'docx', 'xls', 'xlsx', 'xlsm', 'ods', 'odt', 'ppt', 'pptx', 'odp', 'zip'];
         $extensions = 'extensions:'.implode(',', $fileTypes);
 
         return [

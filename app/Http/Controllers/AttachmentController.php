@@ -10,6 +10,7 @@ use App\Models\Project;
 use App\Models\Team;
 use App\Models\Todo;
 use App\Models\TodoList;
+use App\Support\InlineAttachmentPolicy;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -44,6 +45,7 @@ class AttachmentController extends Controller
             'name' => $storedFile->original_name,
             'mimeType' => $storedFile->mime_type,
             'previewUrl' => route('projects.files.preview', [$currentTeam, $project, $storedFile], absolute: false),
+            'inline' => InlineAttachmentPolicy::isInline($storedFile->mime_type),
         ], 201);
     }
 

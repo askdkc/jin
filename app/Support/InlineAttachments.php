@@ -2,9 +2,13 @@
 
 namespace App\Support;
 
+use App\Models\Card;
+use App\Models\CheckInPrompt;
 use App\Models\Comment;
+use App\Models\Document;
 use App\Models\MessageBoardPost;
 use App\Models\Project;
+use App\Models\ScheduleEvent;
 use App\Models\StoredFile;
 use App\Models\Todo;
 use DOMDocument;
@@ -48,6 +52,10 @@ class InlineAttachments
     {
         $attachable = $file->attachable;
         $attribute = match (true) {
+            $attachable instanceof Document => 'body',
+            $attachable instanceof ScheduleEvent => 'details',
+            $attachable instanceof Card => 'description',
+            $attachable instanceof CheckInPrompt => 'answer',
             $attachable instanceof Todo => 'details',
             $attachable instanceof Comment, $attachable instanceof MessageBoardPost => 'body',
             default => null,

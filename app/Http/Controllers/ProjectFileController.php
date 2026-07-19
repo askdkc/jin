@@ -13,16 +13,16 @@ use App\Models\StoredFile;
 use App\Models\Team;
 use App\Models\User;
 use App\Support\InlineAttachments;
-use Illuminate\Filesystem\FilesystemAdapter;
+use App\Support\OnlyOfficeDocumentTypeResolver;
+use App\Support\StoredFilePreviewDispatcher;
+use App\Support\StoredFilePreviewGenerator;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 use Inertia\Response as InertiaResponse;
@@ -99,13 +99,18 @@ class ProjectFileController extends Controller
         return back();
     }
 
-    public function show(Team $currentTeam, Project $project, StoredFile $storedFile): InertiaResponse
-    {
+    public function show(
+        Team $currentTeam,
+        Project $project,
+        StoredFile $storedFile,
+        OnlyOfficeDocumentTypeResolver $onlyOfficeResolver,
+    ): InertiaResponse {
         Gate::authorize('view', $project);
         abort_unless($storedFile->project_id === $project->id, 404);
 
         $canManageProject = Gate::allows('update', $project);
         $userId = request()->user()->id;
+        $onlyOfficeSupported = $onlyOfficeResolver->supports($storedFile);
         $storedFile->load([
             'uploader:id,name',
             'comments' => fn ($query) => $query->with('user:id,name')->oldest(),
@@ -114,11 +119,24 @@ class ProjectFileController extends Controller
 
         return Inertia::render('projects/files/Show', [
             'project' => ['id' => $project->id, 'name' => $project->name],
+            'onlyOffice' => [
+                'enabled' => (bool) config('onlyoffice.enabled', false),
+                'supported' => $onlyOfficeSupported,
+                'configUrl' => $onlyOfficeSupported
+                    ? route('projects.files.onlyoffice.config', [$currentTeam, $project, $storedFile], absolute: false)
+                    : null,
+            ],
             'file' => [
                 'id' => $storedFile->id,
                 'name' => $storedFile->original_name,
                 'mimeType' => $storedFile->mime_type,
                 'size' => $storedFile->size,
+                'previewStatus' => $storedFile->preview_status,
+                'previewImageUrl' => $storedFile->preview_status === 'ready'
+                    && $storedFile->preview_path !== null
+                    && Storage::disk($storedFile->disk)->exists($storedFile->preview_path)
+                    ? route('projects.files.thumbnail', [$currentTeam, $project, $storedFile], absolute: false)
+                    : null,
                 'uploaderName' => $storedFile->uploader?->name,
                 'createdAt' => $storedFile->created_at?->toISOString(),
                 'canManage' => $canManageProject || $storedFile->uploaded_by === $userId,
@@ -157,36 +175,93 @@ class ProjectFileController extends Controller
     ): RedirectResponse {
         /** @var UploadedFile $file */
         $file = $request->file('file');
+        $expectedOldPath = $storedFile->path;
         $newPath = $file->store("projects/{$project->id}", $storedFile->disk);
         abort_if($newPath === false, 500);
 
         $disk = Storage::disk($storedFile->disk);
-        $oldPath = $storedFile->path;
 
         try {
-            // ponytail: straight overwrite — no version history (Basecamp keeps versions;
-            // add a stored_file_versions table if that's ever needed).
-            throw_unless($storedFile->update([
-                'path' => $newPath,
-                'mime_type' => $file->getMimeType(),
-                'size' => $file->getSize(),
-            ]), RuntimeException::class, 'File replacement failed.');
+            $replacement = DB::transaction(function () use ($storedFile, $expectedOldPath, $newPath, $file): ?array {
+                $current = StoredFile::query()
+                    ->whereKey($storedFile->id)
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($current === null
+                    || $current->path !== $expectedOldPath
+                    || $current->preview_status === 'deleting') {
+                    return null;
+                }
+
+                $oldPreviewPath = $current->preview_path;
+                $previewStatus = StoredFilePreviewGenerator::supports($current->original_name)
+                    ? 'pending'
+                    : null;
+
+                throw_unless($current->update([
+                    'path' => $newPath,
+                    'mime_type' => $file->getMimeType(),
+                    'size' => $file->getSize(),
+                    'preview_path' => null,
+                    'preview_status' => $previewStatus,
+                ]), RuntimeException::class, 'File replacement failed.');
+
+                return [
+                    'id' => $current->id,
+                    'disk' => $current->disk,
+                    'path' => $expectedOldPath,
+                    'preview_path' => $oldPreviewPath,
+                    'preview_status' => $previewStatus,
+                    'new_path' => $newPath,
+                ];
+            });
         } catch (Throwable $exception) {
             $disk->delete($newPath);
 
             throw $exception;
         }
 
-        $disk->delete($oldPath);
-        $disk->delete("previews/{$storedFile->id}.pdf");
+        if ($replacement === null) {
+            $disk->delete($newPath);
+
+            abort(409, 'The file changed while it was being replaced.');
+        }
+
+        $disk = Storage::disk($replacement['disk']);
+        $oldPath = $replacement['path'];
+        $oldPreviewPath = $replacement['preview_path'];
+
+        if ($disk->exists($oldPath) && ! $disk->delete($oldPath)) {
+            Log::warning('Stored file replacement cleanup failed.', [
+                'stored_file_id' => $storedFile->id,
+                'path' => $oldPath,
+            ]);
+        }
+        StoredFilePreviewGenerator::cleanup(
+            $disk,
+            $storedFile->id,
+            $oldPath,
+            $oldPreviewPath,
+            includeLegacy: true,
+        );
+
+        if ($replacement['preview_status'] === 'pending') {
+            app(StoredFilePreviewDispatcher::class)
+                ->dispatchAfterCommit($replacement['id'], $replacement['new_path']);
+        }
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('File replaced.')]);
 
         return back();
     }
 
-    public function preview(Team $currentTeam, Project $project, StoredFile $storedFile): Response
-    {
+    public function preview(
+        Team $currentTeam,
+        Project $project,
+        StoredFile $storedFile,
+        StoredFilePreviewGenerator $previewGenerator,
+    ): Response {
         Gate::authorize('view', $project);
 
         $disk = Storage::disk($storedFile->disk);
@@ -207,8 +282,8 @@ class ProjectFileController extends Controller
             ]);
         }
 
-        if (in_array($extension, ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'], true)) {
-            $pdf = $this->officePreviewPdf($disk, $storedFile);
+        if (in_array($extension, ['doc', 'docx', 'xls', 'xlsx', 'xlsm', 'ods', 'odt', 'ppt', 'pptx', 'odp'], true)) {
+            $pdf = $previewGenerator->officePreviewPdf($storedFile);
 
             if ($pdf !== null) {
                 return response($pdf, 200, [
@@ -227,6 +302,32 @@ class ProjectFileController extends Controller
             $storedFile->path,
             $storedFile->original_name,
             $headers,
+            'inline',
+        );
+    }
+
+    public function thumbnail(Team $currentTeam, Project $project, StoredFile $storedFile): Response
+    {
+        Gate::authorize('view', $project);
+        abort_unless($storedFile->project_id === $project->id, 404);
+        abort_unless(
+            $storedFile->preview_status === 'ready'
+                && $storedFile->preview_path !== null,
+            404,
+        );
+
+        $disk = Storage::disk($storedFile->disk);
+        abort_unless($disk->exists($storedFile->preview_path), 404);
+
+        return $disk->response(
+            $storedFile->preview_path,
+            basename($storedFile->preview_path),
+            [
+                'Cache-Control' => 'private, no-store',
+                'Content-Disposition' => 'inline',
+                'Content-Type' => 'image/webp',
+                'X-Content-Type-Options' => 'nosniff',
+            ],
             'inline',
         );
     }
@@ -263,75 +364,119 @@ class ProjectFileController extends Controller
         Gate::authorize('view', $project);
         abort_unless($storedFile->uploaded_by === request()->user()->id || Gate::allows('update', $project), 403);
 
-        $disk = Storage::disk($storedFile->disk);
-        abort_if($disk->exists($storedFile->path) && ! $disk->delete($storedFile->path), 500);
-        $disk->delete("previews/{$storedFile->id}.pdf");
-        DB::transaction(function () use ($storedFile): void {
-            InlineAttachments::removeFromBody($storedFile);
-            $storedFile->comments()->delete();
-            Activity::query()
-                ->where('subject_type', $storedFile->getMorphClass())
-                ->where('subject_id', $storedFile->id)
-                ->get()
-                ->each(fn (Activity $activity) => $activity->update([
-                    'metadata' => [...$activity->metadata, 'subjectDeleted' => true],
-                ]));
-            $storedFile->delete();
+        $deletion = DB::transaction(function () use ($storedFile): ?array {
+            $current = StoredFile::query()
+                ->whereKey($storedFile->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($current === null || $current->preview_status === 'deleting') {
+                return null;
+            }
+
+            $deletion = [
+                'disk' => $current->disk,
+                'path' => $current->path,
+                'original_name' => $current->original_name,
+                'preview_path' => $current->preview_path,
+                'preview_status' => $current->preview_status,
+            ];
+
+            $current->update([
+                'preview_path' => null,
+                'preview_status' => 'deleting',
+            ]);
+
+            return $deletion;
         });
+
+        if ($deletion === null) {
+            return back();
+        }
+
+        $disk = Storage::disk($deletion['disk']);
+
+        try {
+            if ($disk->exists($deletion['path']) && ! $disk->delete($deletion['path'])) {
+                throw new RuntimeException('File deletion failed.');
+            }
+        } catch (Throwable $exception) {
+            $this->restoreAfterDeletionFailure($storedFile->id, $deletion);
+
+            throw $exception;
+        }
+
+        StoredFilePreviewGenerator::cleanup(
+            $disk,
+            $storedFile->id,
+            $deletion['path'],
+            $deletion['preview_path'],
+            includeLegacy: true,
+        );
+
+        $this->finalizeDeletion($storedFile->id, $deletion);
 
         return back();
     }
 
-    /**
-     * PDF rendered from an Office file via LibreOffice, cached on the same disk.
-     * Returns null when conversion is unavailable so callers can fall back to
-     * streaming the original file.
-     */
-    private function officePreviewPdf(FilesystemAdapter $disk, StoredFile $storedFile): ?string
+    /** @param array{path: string} $deletion */
+    private function finalizeDeletion(int $storedFileId, array $deletion): bool
     {
-        $cachePath = "previews/{$storedFile->id}.pdf";
+        return DB::transaction(function () use ($storedFileId, $deletion): bool {
+            $current = StoredFile::query()
+                ->whereKey($storedFileId)
+                ->lockForUpdate()
+                ->first();
 
-        if ($disk->exists($cachePath)) {
-            return $disk->get($cachePath);
-        }
-
-        $workDir = sys_get_temp_dir().'/office-preview-'.uniqid();
-
-        try {
-            $result = Process::timeout(120)->run([
-                config('services.libreoffice.path'),
-                '--headless',
-                // Parallel soffice runs deadlock on a shared user profile.
-                '-env:UserInstallation=file://'.$workDir.'/profile',
-                '--convert-to', 'pdf',
-                '--outdir', $workDir,
-                $disk->path($storedFile->path),
-            ]);
-
-            $converted = $workDir.'/'.pathinfo($storedFile->path, PATHINFO_FILENAME).'.pdf';
-
-            if (! $result->successful() || ! is_file($converted)) {
-                Log::warning('Office preview conversion failed.', [
-                    'stored_file_id' => $storedFile->id,
-                    'output' => $result->errorOutput() ?: $result->output(),
-                ]);
-
-                return null;
+            if ($current === null
+                || $current->path !== $deletion['path']
+                || $current->preview_status !== 'deleting') {
+                return false;
             }
 
-            $disk->put($cachePath, (string) file_get_contents($converted));
+            InlineAttachments::removeFromBody($current);
+            $current->comments()->delete();
+            Activity::query()
+                ->where('subject_type', $current->getMorphClass())
+                ->where('subject_id', $current->id)
+                ->get()
+                ->each(fn (Activity $activity) => $activity->update([
+                    'metadata' => [...$activity->metadata, 'subjectDeleted' => true],
+                ]));
+            $current->delete();
 
-            return $disk->get($cachePath);
-        } catch (Throwable $exception) {
-            Log::warning('Office preview conversion failed.', [
-                'stored_file_id' => $storedFile->id,
-                'error' => $exception->getMessage(),
+            return true;
+        });
+    }
+
+    /** @param array{disk: string, path: string, original_name: string, preview_path: string|null, preview_status: string|null} $deletion */
+    private function restoreAfterDeletionFailure(int $storedFileId, array $deletion): void
+    {
+        DB::transaction(function () use ($storedFileId, $deletion): void {
+            $current = StoredFile::query()
+                ->whereKey($storedFileId)
+                ->where('path', $deletion['path'])
+                ->where('preview_status', 'deleting')
+                ->lockForUpdate()
+                ->first();
+
+            if ($current === null) {
+                return;
+            }
+
+            $needsRegeneration = StoredFilePreviewGenerator::supports($deletion['original_name'])
+                && $deletion['preview_status'] !== 'ready';
+
+            $current->update([
+                'preview_path' => $deletion['preview_path'],
+                'preview_status' => $needsRegeneration ? 'pending' : $deletion['preview_status'],
             ]);
 
-            return null;
-        } finally {
-            File::deleteDirectory($workDir);
-        }
+            if ($needsRegeneration) {
+                app(StoredFilePreviewDispatcher::class)
+                    ->dispatchAfterCommit($storedFileId, $deletion['path']);
+            }
+        });
     }
 
     private function csvAsUtf8(string $contents): string

@@ -8,6 +8,7 @@ use App\Models\Activity;
 use App\Models\Document;
 use App\Models\Project;
 use App\Models\Team;
+use App\Support\InlineAttachments;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -55,6 +56,13 @@ class ProjectDocumentController extends Controller
                 'created_by' => $request->user()->id,
             ]);
 
+            InlineAttachments::syncFromBody(
+                $document,
+                $project,
+                $request->user()->id,
+                $document->body,
+            );
+
             Activity::record(
                 $project,
                 $request->user(),
@@ -76,6 +84,13 @@ class ProjectDocumentController extends Controller
         Document $document,
     ): RedirectResponse {
         $document->update($request->validated());
+
+        InlineAttachments::syncFromBody(
+            $document,
+            $project,
+            $request->user()->id,
+            $document->body,
+        );
 
         return to_route('projects.documents.index', [$currentTeam, $project]);
     }

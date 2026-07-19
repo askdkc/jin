@@ -14,6 +14,7 @@
     import DirectMessageController from '@/actions/App/Http/Controllers/DirectMessageController';
     import NotificationController from '@/actions/App/Http/Controllers/NotificationController';
     import NotificationReplyController from '@/actions/App/Http/Controllers/NotificationReplyController';
+    import PersonalNoteAttachmentController from '@/actions/App/Http/Controllers/PersonalNoteAttachmentController';
     import PersonalNoteController from '@/actions/App/Http/Controllers/PersonalNoteController';
     import ProjectTodoController from '@/actions/App/Http/Controllers/ProjectTodoController';
     import WorkspaceCalendarController from '@/actions/App/Http/Controllers/WorkspaceCalendarController';
@@ -323,6 +324,9 @@
                             required
                             ariaLabel={t('Note')}
                             placeholder={t('Jot something down...')}
+                            attachmentUploadUrl={PersonalNoteAttachmentController.upload.url(
+                                currentTeam.slug,
+                            )}
                         />
                     </div>
                     {#if errors.title || errors.body}<p

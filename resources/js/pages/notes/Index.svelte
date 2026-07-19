@@ -16,6 +16,7 @@
     import { Form } from '@inertiajs/svelte';
     import NotebookPen from 'lucide-svelte/icons/notebook-pen';
     import Trash2 from 'lucide-svelte/icons/trash-2';
+    import PersonalNoteAttachmentController from '@/actions/App/Http/Controllers/PersonalNoteAttachmentController';
     import AppHead from '@/components/AppHead.svelte';
     import InputError from '@/components/InputError.svelte';
     import RichTextEditor from '@/components/RichTextEditor.svelte';
@@ -70,6 +71,9 @@
                     name="body"
                     required
                     ariaLabel={t('Note')}
+                    attachmentUploadUrl={PersonalNoteAttachmentController.upload.url(
+                        currentTeam.slug,
+                    )}
                 />
                 <InputError message={errors.body} />
             </div>
@@ -104,6 +108,9 @@
                             value={note.body}
                             required
                             ariaLabel={t('Note')}
+                            attachmentUploadUrl={PersonalNoteAttachmentController.upload.url(
+                                currentTeam.slug,
+                            )}
                         />
                         <InputError message={errors.body} />
                         <Button type="submit" size="sm" disabled={processing}>

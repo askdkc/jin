@@ -15,6 +15,7 @@ use App\Models\CardTable;
 use App\Models\Project;
 use App\Models\Team;
 use App\Models\User;
+use App\Support\InlineAttachments;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -201,6 +202,13 @@ class CardTableController extends Controller
                 'version' => 1,
             ]);
 
+            InlineAttachments::syncFromBody(
+                $card,
+                $project,
+                $request->user()->id,
+                $card->description,
+            );
+
             Activity::record($project, $request->user(), ActivityType::CardCreated, $card, $card->title);
         });
 
@@ -225,6 +233,14 @@ class CardTableController extends Controller
             ]);
 
         $this->throwVersionConflictWhen($updated === 0);
+
+        $card->refresh();
+        InlineAttachments::syncFromBody(
+            $card,
+            $project,
+            $request->user()->id,
+            $card->description,
+        );
 
         return to_route('projects.card-tables.index', [$currentTeam, $project]);
     }

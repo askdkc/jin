@@ -31,6 +31,7 @@ use Illuminate\Support\Carbon;
  * @property-read Collection<int, TeamAuditLog> $auditLogs
  * @property-read Collection<int, ProjectFolder> $projectFolders
  * @property-read Collection<int, PersonalNote> $personalNotes
+ * @property-read Collection<int, PersonalNoteAttachment> $personalNoteAttachments
  * @property-read Collection<int, BubbleUp> $bubbleUps
  * @property-read Collection<int, DirectMessage> $directMessages
  */
@@ -71,6 +72,11 @@ class Team extends Model
             if ($team->isDirty('name')) {
                 $team->slug = static::generateUniqueTeamSlug($team->name, $team->id);
             }
+        });
+
+        static::forceDeleting(function (Team $team): void {
+            $team->personalNoteAttachments()
+                ->each(fn (PersonalNoteAttachment $attachment) => $attachment->delete());
         });
     }
 
@@ -166,6 +172,12 @@ class Team extends Model
     public function personalNotes(): HasMany
     {
         return $this->hasMany(PersonalNote::class);
+    }
+
+    /** @return HasMany<PersonalNoteAttachment, $this> */
+    public function personalNoteAttachments(): HasMany
+    {
+        return $this->hasMany(PersonalNoteAttachment::class);
     }
 
     /** @return HasMany<BubbleUp, $this> */

@@ -113,15 +113,16 @@ test('a file dropped into the editor uploads inline and is linked once the messa
     $project = Project::factory()->for($team)->for($owner, 'creator')->create();
 
     $response = $this->actingAs($owner)
-        ->postJson(route('projects.messages.inline-attachments.store', [$team, $project]), [
+        ->postJson(route('projects.inline-attachments.store', [$team, $project]), [
             'file' => UploadedFile::fake()->create('企画書.pdf', 100, 'application/pdf'),
         ])
         ->assertCreated()
         ->json();
 
-    expect($response)->toHaveKeys(['id', 'name', 'mimeType', 'previewUrl'])
+    expect($response)->toHaveKeys(['id', 'name', 'mimeType', 'previewUrl', 'inline'])
         ->and($response['name'])->toBe('企画書.pdf')
-        ->and($response['mimeType'])->toBe('application/pdf');
+        ->and($response['mimeType'])->toBe('application/pdf')
+        ->and($response['inline'])->toBeFalse();
 
     $attachment = StoredFile::query()->findOrFail($response['id']);
 
@@ -143,6 +144,38 @@ test('a file dropped into the editor uploads inline and is linked once the messa
         ->attachable_id->toBe($post->id);
 });
 
+test('authorized project members can use inline uploads without the messages tool', function () {
+    Storage::fake('local');
+
+    $owner = User::factory()->create();
+    $member = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create([
+        'enabled_tools' => ['todos'],
+    ]);
+    $project->members()->attach($member);
+
+    foreach ([
+        ['photo.jpg', 'image/jpeg'],
+        ['photo.png', 'image/png'],
+        ['photo.webp', 'image/webp'],
+        ['document.pdf', 'application/pdf'],
+    ] as [$name, $mimeType]) {
+        $this->actingAs($member)
+            ->postJson(route('projects.inline-attachments.store', [$team, $project]), [
+                'file' => UploadedFile::fake()->create($name, 10, $mimeType),
+            ])
+            ->assertCreated()
+            ->assertJsonPath('inline', in_array($mimeType, [
+                'image/jpeg',
+                'image/png',
+                'image/webp',
+            ], true));
+    }
+});
+
 test('a file dropped into a new todo is linked without claiming another users upload', function () {
     Storage::fake('local');
 
@@ -156,13 +189,13 @@ test('a file dropped into a new todo is linked without claiming another users up
     $list = TodoList::factory()->for($project)->create();
 
     $memberUpload = $this->actingAs($member)
-        ->postJson(route('projects.messages.inline-attachments.store', [$team, $project]), [
+        ->postJson(route('projects.inline-attachments.store', [$team, $project]), [
             'file' => UploadedFile::fake()->create('member.pdf', 10, 'application/pdf'),
         ])
         ->assertCreated()
         ->json();
     $ownerUpload = $this->actingAs($owner)
-        ->postJson(route('projects.messages.inline-attachments.store', [$team, $project]), [
+        ->postJson(route('projects.inline-attachments.store', [$team, $project]), [
             'file' => UploadedFile::fake()->create('owner.pdf', 10, 'application/pdf'),
         ])
         ->assertCreated()

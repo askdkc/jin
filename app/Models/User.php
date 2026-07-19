@@ -41,6 +41,7 @@ use Laravel\Fortify\TwoFactorAuthenticatable;
  * @property-read Collection<int, CheckIn> $bookmarkedCheckIns
  * @property-read Collection<int, TimeEntry> $timeEntries
  * @property-read Collection<int, PersonalNote> $personalNotes
+ * @property-read Collection<int, PersonalNoteAttachment> $personalNoteAttachments
  * @property-read Collection<int, BubbleUp> $bubbleUps
  * @property-read Collection<int, DirectMessage> $sentDirectMessages
  * @property-read Collection<int, DirectMessage> $receivedDirectMessages
@@ -51,6 +52,14 @@ class User extends Authenticatable implements PasskeyUser
 {
     /** @use HasFactory<UserFactory> */
     use HasFactory, HasTeams, Notifiable, PasskeyAuthenticatable, TwoFactorAuthenticatable;
+
+    protected static function booted(): void
+    {
+        static::deleting(function (User $user): void {
+            $user->personalNoteAttachments()
+                ->each(fn (PersonalNoteAttachment $attachment) => $attachment->delete());
+        });
+    }
 
     /**
      * Get calendar subscriptions issued by the user.
@@ -84,6 +93,12 @@ class User extends Authenticatable implements PasskeyUser
     public function personalNotes(): HasMany
     {
         return $this->hasMany(PersonalNote::class);
+    }
+
+    /** @return HasMany<PersonalNoteAttachment, $this> */
+    public function personalNoteAttachments(): HasMany
+    {
+        return $this->hasMany(PersonalNoteAttachment::class, 'uploaded_by');
     }
 
     /** @return HasMany<BubbleUp, $this> */

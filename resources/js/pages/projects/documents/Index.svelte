@@ -35,6 +35,7 @@
     import { Form } from '@inertiajs/svelte';
     import ExternalLink from 'lucide-svelte/icons/external-link';
     import Globe2 from 'lucide-svelte/icons/globe-2';
+    import AttachmentController from '@/actions/App/Http/Controllers/AttachmentController';
     import AppHead from '@/components/AppHead.svelte';
     import InputError from '@/components/InputError.svelte';
     import RichTextContent from '@/components/RichTextContent.svelte';
@@ -113,6 +114,9 @@
                             name="body"
                             required
                             ariaLabel={t('Body')}
+                            attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                routeArguments,
+                            )}
                         />
                         <InputError message={errors.body} />
                     </div>
@@ -246,6 +250,9 @@
                                             value={document.body}
                                             required
                                             ariaLabel={t('Body')}
+                                            attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                                routeArguments,
+                                            )}
                                         />
                                         <InputError message={errors.body} />
                                         <select

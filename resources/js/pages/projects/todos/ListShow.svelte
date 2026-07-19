@@ -37,6 +37,7 @@
     import Bell from 'lucide-svelte/icons/bell';
     import BellOff from 'lucide-svelte/icons/bell-off';
     import Check from 'lucide-svelte/icons/check';
+    import ChevronDown from 'lucide-svelte/icons/chevron-down';
     import FileText from 'lucide-svelte/icons/file-text';
     import Pencil from 'lucide-svelte/icons/pencil';
     import Plus from 'lucide-svelte/icons/plus';
@@ -103,6 +104,8 @@
     const completedCount = $derived(
         todos.filter((todo) => todo.completed).length,
     );
+    const activeTodos = $derived(todos.filter((todo) => !todo.completed));
+    const completedTodos = $derived(todos.filter((todo) => todo.completed));
     let addingTodo = $state(false);
     let newSubtasks = $state<string[]>([]);
 
@@ -123,9 +126,13 @@
 
 <AppHead title={list.title} />
 
-<main class="mx-auto w-full max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
-    <article class="overflow-hidden rounded-xl border bg-card">
-        <header class="px-5 pt-5 pb-6 sm:px-8">
+<main
+    class="min-h-[calc(100vh-7rem)] bg-slate-100/70 px-3 py-5 sm:px-6 sm:py-9 dark:bg-slate-950/50"
+>
+    <article
+        class="mx-auto w-full max-w-5xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_18px_55px_rgba(15,23,42,0.08)] sm:rounded-[1.75rem] dark:border-slate-800 dark:bg-slate-900 dark:shadow-black/25"
+    >
+        <header class="px-5 pt-6 pb-5 sm:px-10 sm:pt-9">
             <div class="flex items-center justify-between gap-4">
                 <nav
                     class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted-foreground"
@@ -171,30 +178,37 @@
                 {/if}
             </div>
 
-            <h1 class="mt-4 break-words text-3xl font-bold tracking-tight">
+            <h1
+                class="mt-4 break-words text-3xl font-black tracking-[-0.035em] text-slate-900 sm:text-4xl dark:text-slate-50"
+            >
                 {list.title}
             </h1>
 
-            <div class="mt-4 flex items-center gap-2 text-sm">
+            <div class="mt-4 flex flex-wrap items-center gap-2 text-sm">
                 <span
-                    class="size-3.5 rounded-full {completedCount ===
+                    class="size-3 rounded-full {completedCount ===
                         todos.length && todos.length > 0
-                        ? 'bg-primary'
-                        : 'bg-primary/40'}"
+                        ? 'bg-emerald-500'
+                        : 'bg-amber-400'}"
                     aria-hidden="true"
                 ></span>
-                <span class="font-medium text-muted-foreground"
+                <span
+                    class="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300"
                     >{completedCount}/{todos.length} {t('Completed')}</span
                 >
             </div>
         </header>
 
-        <section class="min-h-56 px-5 pb-12 sm:px-8">
-            <div class="space-y-1" role="list">
-                {#each todos as todo (todo.id)}
+        <section class="min-h-56 px-5 pb-10 sm:px-10 sm:pb-12">
+            <div
+                class="divide-y divide-slate-100 border-y border-slate-200 dark:divide-slate-800 dark:border-slate-700"
+                role="list"
+                aria-label={t('To-dos')}
+            >
+                {#each activeTodos as todo (todo.id)}
                     <div
                         role="listitem"
-                        class="group flex min-w-0 items-start gap-2 rounded-md px-1 py-1.5 hover:bg-muted/50"
+                        class="group flex min-w-0 items-start gap-3 py-3.5"
                     >
                         <Form
                             {...ProjectTodoController.toggleTodo.form([
@@ -211,7 +225,7 @@
                                     aria-label={todo.completed
                                         ? t('Mark incomplete')
                                         : t('Mark complete')}
-                                    class="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded border border-foreground/60 text-primary disabled:opacity-50"
+                                    class="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-md border-2 border-slate-400 bg-white text-emerald-600 transition hover:border-emerald-500 disabled:opacity-50 dark:bg-slate-900"
                                 >
                                     {#if todo.completed}
                                         <Check class="size-4" />
@@ -229,30 +243,31 @@
                                         list.id,
                                         todo.id,
                                     ])}
-                                    class={`break-words text-[0.95rem] font-medium hover:text-primary hover:underline ${
-                                        todo.completed
-                                            ? 'text-muted-foreground line-through'
-                                            : 'text-foreground'
-                                    }`}
+                                    class="break-words text-[0.95rem] font-medium text-slate-800 hover:text-primary hover:underline sm:text-base dark:text-slate-100"
                                 >
                                     {todo.title}
                                 </Link>
                                 {#if todo.hasNotes}
                                     <FileText
-                                        class="size-3.5 shrink-0 text-muted-foreground"
+                                        class="size-3.5 shrink-0 text-slate-400"
                                         aria-label={t('Notes')}
                                     />
                                 {/if}
                             </div>
                             {#if todo.assigneeName || todo.dueOn}
                                 <p
-                                    class="mt-0.5 flex flex-wrap gap-x-2 text-xs text-muted-foreground"
+                                    class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400"
                                 >
                                     {#if todo.assigneeName}
-                                        <span>{todo.assigneeName}</span>
+                                        <span
+                                            class="rounded-full bg-slate-100 px-2 py-0.5 dark:bg-slate-800"
+                                            >{todo.assigneeName}</span
+                                        >
                                     {/if}
                                     {#if todo.dueOn}
-                                        <span>{todo.dueOn}</span>
+                                        <time datetime={todo.dueOn}
+                                            >{todo.dueOn}</time
+                                        >
                                     {/if}
                                 </p>
                             {/if}
@@ -422,7 +437,7 @@
             {:else}
                 <button
                     type="button"
-                    class="mt-2 flex items-center gap-1.5 pl-1 text-sm font-medium text-primary hover:underline"
+                    class="mt-3 flex items-center gap-1.5 text-sm font-semibold text-sky-700 hover:underline dark:text-sky-400"
                     onclick={() => {
                         addingTodo = true;
                         newSubtasks = [];
@@ -432,9 +447,101 @@
                     {t('Add a to-do')}
                 </button>
             {/if}
+
+            {#if completedTodos.length > 0}
+                <details class="group/completed mt-7">
+                    <summary
+                        class="[&::-webkit-details-marker]:hidden flex w-fit cursor-pointer list-none items-center gap-2 rounded-lg px-1 py-1 text-sm font-semibold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100"
+                    >
+                        <span
+                            class="flex size-5 items-center justify-center rounded-md border border-emerald-300 bg-emerald-50 text-emerald-600 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                        >
+                            <Check class="size-3.5" />
+                        </span>
+                        {completedTodos.length}
+                        {t('Completed')}
+                        <ChevronDown
+                            class="size-4 transition-transform group-open/completed:rotate-180"
+                            aria-hidden="true"
+                        />
+                    </summary>
+
+                    <div
+                        class="mt-2 divide-y divide-slate-100 border-y border-slate-200 dark:divide-slate-800 dark:border-slate-700"
+                        role="list"
+                        aria-label={t('Completed')}
+                    >
+                        {#each completedTodos as todo (todo.id)}
+                            <div
+                                role="listitem"
+                                class="group flex min-w-0 items-start gap-3 py-3"
+                            >
+                                <Form
+                                    {...ProjectTodoController.toggleTodo.form([
+                                        currentTeam.slug,
+                                        project.id,
+                                        list.id,
+                                        todo.id,
+                                    ])}
+                                >
+                                    {#snippet children({ processing })}
+                                        <button
+                                            type="submit"
+                                            disabled={processing}
+                                            aria-label={t('Mark incomplete')}
+                                            class="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-md border border-emerald-400 bg-emerald-50 text-emerald-600 disabled:opacity-50 dark:bg-emerald-950/40 dark:text-emerald-300"
+                                        >
+                                            <Check class="size-4" />
+                                        </button>
+                                    {/snippet}
+                                </Form>
+
+                                <div class="min-w-0 flex-1">
+                                    <div class="flex items-center gap-1.5">
+                                        <Link
+                                            href={ProjectTodoController.show([
+                                                currentTeam.slug,
+                                                project.id,
+                                                list.id,
+                                                todo.id,
+                                            ])}
+                                            class="break-words text-[0.95rem] font-medium text-slate-400 line-through hover:text-slate-600 hover:underline dark:text-slate-500 dark:hover:text-slate-300"
+                                        >
+                                            {todo.title}
+                                        </Link>
+                                        {#if todo.hasNotes}
+                                            <FileText
+                                                class="size-3.5 shrink-0 text-slate-400"
+                                                aria-label={t('Notes')}
+                                            />
+                                        {/if}
+                                    </div>
+                                    {#if todo.assigneeName || todo.dueOn}
+                                        <p
+                                            class="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-slate-400 dark:text-slate-500"
+                                        >
+                                            {#if todo.assigneeName}
+                                                <span>{todo.assigneeName}</span>
+                                            {/if}
+                                            {#if todo.dueOn}
+                                                <time datetime={todo.dueOn}
+                                                    >{todo.dueOn}</time
+                                                >
+                                            {/if}
+                                        </p>
+                                    {/if}
+                                </div>
+                            </div>
+                        {/each}
+                    </div>
+                </details>
+            {/if}
         </section>
 
-        <section class="border-t px-5 py-6 sm:px-8" aria-label={t('Comments')}>
+        <section
+            class="border-t border-slate-200 bg-slate-50/40 px-5 py-6 sm:px-10 dark:border-slate-700 dark:bg-slate-800/20"
+            aria-label={t('Comments')}
+        >
             <div class="flex flex-wrap items-center justify-between gap-3">
                 <h2 class="text-base font-semibold">
                     {t('Comments')} ({comments.length})
@@ -524,6 +631,9 @@
                                                         required
                                                         ariaLabel={t('Comment')}
                                                         mentionables={members}
+                                                        attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                                            projectRouteArguments,
+                                                        )}
                                                     />
                                                     <InputError
                                                         message={errors.body}
@@ -580,6 +690,9 @@
                         required
                         ariaLabel={t('Comment')}
                         mentionables={members}
+                        attachmentUploadUrl={AttachmentController.uploadInline.url(
+                            projectRouteArguments,
+                        )}
                     />
                     <InputError message={errors.body} />
                     <Button type="submit" disabled={processing}

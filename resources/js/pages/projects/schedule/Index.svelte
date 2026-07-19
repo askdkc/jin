@@ -26,6 +26,7 @@
 <script lang="ts">
     import { Form, Link } from '@inertiajs/svelte';
     import Video from 'lucide-svelte/icons/video';
+    import AttachmentController from '@/actions/App/Http/Controllers/AttachmentController';
     import AppHead from '@/components/AppHead.svelte';
     import InputError from '@/components/InputError.svelte';
     import RichTextContent from '@/components/RichTextContent.svelte';
@@ -510,6 +511,9 @@
                                                 id="event-details"
                                                 name="details"
                                                 ariaLabel={t('Notes')}
+                                                attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                                    routeArguments,
+                                                )}
                                             />
                                         </div>
                                     {/if}
@@ -895,6 +899,9 @@
                                                 name="details"
                                                 value={event.details}
                                                 ariaLabel={t('Details')}
+                                                attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                                    routeArguments,
+                                                )}
                                             />
                                             <div class="grid gap-2">
                                                 <Label

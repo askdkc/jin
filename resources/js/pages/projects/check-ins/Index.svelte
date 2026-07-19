@@ -26,6 +26,7 @@
 <script lang="ts">
     import { Form, Link } from '@inertiajs/svelte';
     import Plus from 'lucide-svelte/icons/plus';
+    import AttachmentController from '@/actions/App/Http/Controllers/AttachmentController';
     import AppHead from '@/components/AppHead.svelte';
     import InputError from '@/components/InputError.svelte';
     import RichTextContent from '@/components/RichTextContent.svelte';
@@ -187,6 +188,9 @@
                                             required
                                             placeholder={t('Write your answer')}
                                             ariaLabel={t('Answer')}
+                                            attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                                routeArguments,
+                                            )}
                                         />
                                         <InputError message={errors.answer} />
                                         <Button

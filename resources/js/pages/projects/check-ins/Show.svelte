@@ -39,6 +39,7 @@
     import Pencil from 'lucide-svelte/icons/pencil';
     import Play from 'lucide-svelte/icons/play';
     import Trash2 from 'lucide-svelte/icons/trash-2';
+    import AttachmentController from '@/actions/App/Http/Controllers/AttachmentController';
     import AppHead from '@/components/AppHead.svelte';
     import InputError from '@/components/InputError.svelte';
     import RichTextContent from '@/components/RichTextContent.svelte';
@@ -318,6 +319,9 @@
                                 required
                                 placeholder={t('Write your answer')}
                                 ariaLabel={t('Answer')}
+                                attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                    [currentTeam.slug, project.id],
+                                )}
                             />
                             <InputError message={errors.answer} />
                             <Button

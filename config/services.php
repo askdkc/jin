@@ -20,6 +20,17 @@ return [
 
     'libreoffice' => [
         'path' => env('LIBREOFFICE_PATH', 'soffice'),
+        'timeout' => (int) env('LIBREOFFICE_TIMEOUT', 120),
+    ],
+
+    'imagemagick' => [
+        'path' => env('IMAGEMAGICK_PATH', 'convert'),
+        'timeout' => (int) env('IMAGEMAGICK_TIMEOUT', 45),
+    ],
+
+    'poppler' => [
+        'path' => env('POPPLER_PATH', 'pdftoppm'),
+        'timeout' => (int) env('POPPLER_TIMEOUT', 45),
     ],
 
     'resend' => [

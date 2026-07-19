@@ -91,3 +91,9 @@ Schedule::command('check-ins:dispatch')
     ->everyFiveMinutes()
     ->withoutOverlapping()
     ->description('Create due check-in prompts and queue notifications');
+
+Schedule::command('model:prune --model=App\\Models\\PersonalNoteAttachment')
+    ->daily()
+    ->withoutOverlapping()
+    ->name('prune-orphaned-personal-note-attachments')
+    ->description('Prune orphaned personal-note attachments');

@@ -78,6 +78,9 @@
         list.id,
         todo.id,
     ] as [string, number, number, number]);
+    const attachmentUploadUrl = $derived(
+        AttachmentController.uploadInline.url([currentTeam.slug, project.id]),
+    );
     const completionNotifyNames = $derived(
         members
             .filter((member) => todo.completionNotifyIds.includes(member.id))
@@ -491,6 +494,7 @@
                                     value={todo.details}
                                     ariaLabel={t('Notes')}
                                     mentionables={members}
+                                    {attachmentUploadUrl}
                                 />
                                 <InputError message={errors.details} />
                                 <div class="flex gap-2">
@@ -764,7 +768,7 @@
                                     id="todo-attachment"
                                     error={errors.file}
                                     compact
-                                    accept=".pdf,.txt,.csv,.jpg,.jpeg,.png,.webp,.mp4,.webm,.mov,.m4v,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip"
+                                    accept=".pdf,.txt,.csv,.jpg,.jpeg,.png,.webp,.mp4,.webm,.mov,.m4v,.doc,.docx,.odt,.xls,.xlsx,.xlsm,.ods,.ppt,.pptx,.odp,.zip"
                                 />
                                 {#if progress}
                                     <progress
@@ -868,6 +872,7 @@
                                                         required
                                                         ariaLabel={t('Comment')}
                                                         mentionables={members}
+                                                        {attachmentUploadUrl}
                                                     />
                                                     <InputError
                                                         message={errors.body}
@@ -925,6 +930,7 @@
                         required
                         ariaLabel={t('Comment')}
                         mentionables={members}
+                        {attachmentUploadUrl}
                     />
                     <InputError message={errors.body} />
                     <Button type="submit" disabled={processing}

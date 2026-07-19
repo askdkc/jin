@@ -34,7 +34,7 @@ class ReplaceProjectFileRequest extends FormRequest
      */
     public function rules(): array
     {
-        $fileTypes = ['pdf', 'txt', 'csv', 'jpg', 'jpeg', 'png', 'webp', 'mp4', 'webm', 'mov', 'm4v', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip'];
+        $fileTypes = ['pdf', 'txt', 'csv', 'jpg', 'jpeg', 'png', 'webp', 'mp4', 'webm', 'mov', 'm4v', 'doc', 'docx', 'xls', 'xlsx', 'xlsm', 'ods', 'odt', 'ppt', 'pptx', 'odp', 'zip'];
         $storedFile = $this->route('stored_file');
         $extension = $storedFile instanceof StoredFile
             ? strtolower(pathinfo($storedFile->original_name, PATHINFO_EXTENSION))

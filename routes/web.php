@@ -17,6 +17,9 @@ use App\Http\Controllers\LineupController;
 use App\Http\Controllers\MessageBoardController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\NotificationReplyController;
+use App\Http\Controllers\OnlyOfficeFileController;
+use App\Http\Controllers\OnlyOfficePreviewController;
+use App\Http\Controllers\PersonalNoteAttachmentController;
 use App\Http\Controllers\PersonalNoteController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\ProjectDocumentController;
@@ -55,6 +58,14 @@ Route::prefix('{current_team}')
         Route::patch('notifications/read-all', [NotificationController::class, 'markAllRead'])->name('notifications.read-all');
         Route::post('notifications/{notification}/reply', [NotificationReplyController::class, 'store'])->name('notifications.reply');
         Route::get('notes', [PersonalNoteController::class, 'index'])->name('notes.index');
+        Route::post('notes/attachments', [PersonalNoteAttachmentController::class, 'upload'])
+            ->name('personal-note-attachments.store');
+        Route::get('notes/attachments/{personal_note_attachment}/preview', [PersonalNoteAttachmentController::class, 'preview'])
+            ->name('personal-note-attachments.preview');
+        Route::scopeBindings()->group(function () {
+            Route::post('projects/{project}/inline-attachments', [AttachmentController::class, 'uploadInline'])
+                ->name('projects.inline-attachments.store');
+        });
         Route::scopeBindings()->middleware(EnsureProjectToolIsEnabled::class)->group(function () {
             Route::post('notes', [PersonalNoteController::class, 'store'])->name('notes.store');
             Route::patch('notes/{personal_note}', [PersonalNoteController::class, 'update'])->name('notes.update');
@@ -81,7 +92,6 @@ Route::prefix('{current_team}')
             Route::get('projects/{project}/messages', [MessageBoardController::class, 'index'])->name('projects.messages.index');
             Route::get('projects/{project}/messages/create', [MessageBoardController::class, 'create'])->name('projects.messages.create');
             Route::post('projects/{project}/messages', [MessageBoardController::class, 'store'])->name('projects.messages.store');
-            Route::post('projects/{project}/messages/inline-attachments', [AttachmentController::class, 'uploadInline'])->name('projects.messages.inline-attachments.store');
             Route::get('projects/{project}/messages/{message_board_post}/edit', [MessageBoardController::class, 'edit'])->name('projects.messages.edit');
             Route::get('projects/{project}/messages/{message_board_post}', [MessageBoardController::class, 'show'])->name('projects.messages.show');
             Route::patch('projects/{project}/messages/{message_board_post}', [MessageBoardController::class, 'update'])->name('projects.messages.update');
@@ -126,10 +136,13 @@ Route::prefix('{current_team}')
 
             Route::get('projects/{project}/files', [ProjectMaterialController::class, 'index'])->name('projects.materials.index');
             Route::post('projects/{project}/files', [ProjectFileController::class, 'store'])->name('projects.files.store');
+            Route::get('projects/{project}/files/{stored_file}/onlyoffice/config', OnlyOfficePreviewController::class)
+                ->name('projects.files.onlyoffice.config');
             Route::get('projects/{project}/files/{stored_file}', [ProjectFileController::class, 'show'])->name('projects.files.show');
             Route::patch('projects/{project}/files/{stored_file}', [ProjectFileController::class, 'update'])->name('projects.files.update');
             Route::post('projects/{project}/files/{stored_file}/replace', [ProjectFileController::class, 'replace'])->name('projects.files.replace');
             Route::get('projects/{project}/files/{stored_file}/preview', [ProjectFileController::class, 'preview'])->name('projects.files.preview');
+            Route::get('projects/{project}/files/{stored_file}/thumbnail', [ProjectFileController::class, 'thumbnail'])->name('projects.files.thumbnail');
             Route::get('projects/{project}/files/{stored_file}/download', [ProjectFileController::class, 'download'])->name('projects.files.download');
             Route::post('projects/{project}/files/{stored_file}/reaction', [ProjectFileController::class, 'toggleReaction'])->name('projects.files.reaction.toggle');
             Route::delete('projects/{project}/files/{stored_file}', [ProjectFileController::class, 'destroy'])->name('projects.files.destroy');
@@ -169,6 +182,10 @@ Route::prefix('{current_team}')
             Route::resource('projects', ProjectController::class)->except('destroy');
         });
     });
+
+Route::get('internal/onlyoffice/files/{stored_file}', OnlyOfficeFileController::class)
+    ->middleware('signed:relative')
+    ->name('onlyoffice.files.download');
 
 Route::middleware(['auth'])->group(function () {
     Route::get('invitations/{invitation}/accept', [TeamInvitationController::class, 'accept'])->name('invitations.accept');

@@ -259,6 +259,15 @@
 
         return ticks;
     });
+    let ganttWeekendBands = $derived.by(() =>
+        Array.from({ length: ganttDayCount }, (_, index) =>
+            addDays(rangeStart, index),
+        ).filter((calendarDate) => {
+            const day = weekday(calendarDate);
+
+            return day === 0 || day === 6;
+        }),
+    );
     let ganttMinWidthRem = $derived(Math.max(48, Math.min(120, ganttDayCount)));
     let ganttGridStepDays = $derived(ganttDayCount > 180 ? 7 : 1);
     const ganttTickOffset = (value: string): number =>
@@ -380,13 +389,13 @@
             {#if view === 'gantt'}
                 <div class="flex flex-wrap items-end gap-2">
                     <nav
-                        class="inline-flex w-fit overflow-hidden rounded-lg border bg-muted/30"
+                        class="inline-flex w-fit overflow-hidden rounded-md border bg-muted/20"
                         aria-label={t('Gantt range')}
                     >
                         {#each ganttRanges as rangeOption, index (rangeOption.value)}
                             <Link
                                 href={ganttRangeHref(rangeOption.value)}
-                                class={`px-3 py-2 text-sm font-medium ${index > 0 ? 'border-l' : ''} ${
+                                class={`px-2.5 py-1.5 text-xs font-semibold ${index > 0 ? 'border-l' : ''} ${
                                     ganttRange === rangeOption.value
                                         ? 'bg-primary text-primary-foreground'
                                         : 'hover:bg-muted'
@@ -420,6 +429,7 @@
                                     name="start"
                                     value={rangeStart}
                                     required
+                                    class="h-8 text-xs"
                                 />
                                 <InputError message={errors.start} />
                             </div>
@@ -436,12 +446,14 @@
                                     name="end"
                                     value={rangeEnd}
                                     required
+                                    class="h-8 text-xs"
                                 />
                                 <InputError message={errors.end} />
                             </div>
                             <Button
                                 type="submit"
                                 variant="outline"
+                                size="sm"
                                 disabled={processing}
                             >
                                 {t('Show')}
@@ -665,18 +677,42 @@
             </div>
         {:else if view === 'gantt'}
             <div
-                class="overflow-x-auto overscroll-x-contain"
+                class="overflow-x-auto overscroll-x-contain bg-white dark:bg-slate-950"
                 aria-label={t('Gantt')}
                 use:centerGanttOnSelectedDate
             >
-                <div style={`min-width: ${ganttMinWidthRem}rem;`}>
+                <div
+                    class="relative"
+                    style={`min-width: ${ganttMinWidthRem}rem;`}
+                >
+                    {#if todayInGanttRange}
+                        <div
+                            class="pointer-events-none absolute inset-y-0 z-30 border-l-2 border-blue-500"
+                            style={`left: ${todayOffset}%;`}
+                            aria-label={t('Today')}
+                        >
+                            <span
+                                class="absolute top-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-blue-600 px-2.5 py-1 text-xs font-bold text-white shadow-sm"
+                            >
+                                {t('Today')} · {formatShortDate(today)}
+                            </span>
+                        </div>
+                    {/if}
+
                     <div
-                        class="relative h-11 overflow-hidden border-b bg-muted/30 text-xs font-semibold text-muted-foreground"
+                        class="relative h-12 overflow-hidden border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400"
                     >
+                        {#each ganttWeekendBands as weekend (weekend)}
+                            <span
+                                class="absolute inset-y-0 bg-slate-200/55 dark:bg-slate-800/70"
+                                style={`left: ${ganttTickOffset(weekend)}%; width: ${100 / ganttDayCount}%;`}
+                                aria-hidden="true"
+                            ></span>
+                        {/each}
                         {#each ganttTicks as tick (tick)}
                             <time
                                 datetime={tick}
-                                class="absolute inset-y-0 border-l px-2 py-3 whitespace-nowrap"
+                                class="absolute inset-y-0 z-10 border-l border-slate-300 px-2 py-3.5 whitespace-nowrap dark:border-slate-700"
                                 style={`left: ${ganttTickOffset(tick)}%;`}
                             >
                                 {formatGanttTick(tick)}
@@ -685,22 +721,7 @@
                     </div>
 
                     <div class="relative">
-                        {#if todayInGanttRange}
-                            <div
-                                class="pointer-events-none absolute inset-y-0 z-20 border-l-2 border-blue-500"
-                                style={`left: ${todayOffset}%;`}
-                            >
-                                <span
-                                    class="absolute top-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-blue-600 px-2 py-1 text-xs font-bold text-white shadow-sm"
-                                >
-                                    {t('Today')} · {formatShortDate(today)}
-                                </span>
-                            </div>
-                        {/if}
-
-                        <div
-                            class={`space-y-7 p-4 ${todayInGanttRange ? 'pt-12' : ''}`}
-                        >
+                        <div class="space-y-8 px-4 pt-6 pb-7">
                             <section class="space-y-3">
                                 <div>
                                     <h3 class="text-sm font-bold">
@@ -715,9 +736,20 @@
 
                                 {#each ganttProjects as project (project.id)}
                                     <div
-                                        class="relative grid min-h-24 overflow-hidden border-y border-slate-200/70 bg-[#fbfaf8] dark:border-slate-800 dark:bg-slate-900/60"
+                                        class="relative grid min-h-20 overflow-hidden border-y border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950"
                                         style={`grid-template-columns: repeat(${ganttDayCount}, minmax(0, 1fr));`}
                                     >
+                                        <div
+                                            class="pointer-events-none absolute inset-0"
+                                            aria-hidden="true"
+                                        >
+                                            {#each ganttWeekendBands as weekend (weekend)}
+                                                <span
+                                                    class="absolute inset-y-0 bg-slate-100 dark:bg-slate-900"
+                                                    style={`left: ${ganttTickOffset(weekend)}%; width: ${100 / ganttDayCount}%;`}
+                                                ></span>
+                                            {/each}
+                                        </div>
                                         <div
                                             class="pointer-events-none absolute inset-0"
                                             aria-hidden="true"
@@ -730,7 +762,7 @@
                                             {/each}
                                         </div>
                                         <div
-                                            class="pointer-events-none absolute inset-0 opacity-30"
+                                            class="pointer-events-none absolute inset-0 opacity-50"
                                             style={`background-image: linear-gradient(to right, var(--color-border) 1px, transparent 1px); background-size: calc(100% / ${ganttDayCount} * ${ganttGridStepDays}) 100%;`}
                                             aria-hidden="true"
                                         ></div>
@@ -739,7 +771,7 @@
                                                 currentTeam.slug,
                                                 project.id,
                                             ])}
-                                            class="relative z-10 m-2 flex min-w-0 flex-col items-start justify-center overflow-hidden rounded-xl border border-stone-300 bg-[#eee7df] px-4 py-3 text-stone-800 shadow-lg transition hover:-translate-y-0.5 hover:border-stone-400 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+                                            class="relative z-10 m-2 flex min-w-0 flex-col items-start justify-center overflow-hidden rounded-lg border border-sky-200 bg-sky-100 px-3 py-2 text-sky-950 shadow-sm transition hover:-translate-y-0.5 hover:border-sky-300 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-100"
                                             style={`grid-column: ${ganttGridColumn(project.startsOn, project.endsOn)};`}
                                             title={`${project.name} · ${formatLongDate(project.startsOn)} – ${formatLongDate(project.endsOn)}`}
                                         >
@@ -749,7 +781,7 @@
                                                 {project.name}
                                             </span>
                                             <span
-                                                class="w-full truncate text-xs font-medium text-stone-500 dark:text-stone-300"
+                                                class="w-full truncate text-xs font-medium text-sky-700 dark:text-sky-300"
                                             >
                                                 {formatShortDate(
                                                     project.startsOn,
@@ -777,9 +809,20 @@
 
                                 {#each events as event (event.id)}
                                     <div
-                                        class="relative grid min-h-16 overflow-hidden border-y border-slate-200/70 bg-white dark:border-slate-800 dark:bg-slate-950"
+                                        class="relative grid min-h-14 overflow-hidden border-y border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950"
                                         style={`grid-template-columns: repeat(${ganttDayCount}, minmax(0, 1fr));`}
                                     >
+                                        <div
+                                            class="pointer-events-none absolute inset-0"
+                                            aria-hidden="true"
+                                        >
+                                            {#each ganttWeekendBands as weekend (weekend)}
+                                                <span
+                                                    class="absolute inset-y-0 bg-slate-100 dark:bg-slate-900"
+                                                    style={`left: ${ganttTickOffset(weekend)}%; width: ${100 / ganttDayCount}%;`}
+                                                ></span>
+                                            {/each}
+                                        </div>
                                         <div
                                             class="pointer-events-none absolute inset-0"
                                             aria-hidden="true"
@@ -792,7 +835,7 @@
                                             {/each}
                                         </div>
                                         <div
-                                            class="pointer-events-none absolute inset-0 opacity-30"
+                                            class="pointer-events-none absolute inset-0 opacity-50"
                                             style={`background-image: linear-gradient(to right, var(--color-border) 1px, transparent 1px); background-size: calc(100% / ${ganttDayCount} * ${ganttGridStepDays}) 100%;`}
                                             aria-hidden="true"
                                         ></div>
@@ -810,7 +853,7 @@
                                                     },
                                                 },
                                             )}
-                                            class={`relative z-10 mx-px my-1 flex min-w-0 items-center overflow-visible rounded-lg border px-2 py-2 text-sm font-bold shadow-sm transition hover:brightness-95 ${eventColor(event.project.id)}`}
+                                            class="relative z-10 mx-px my-1 flex min-w-0 items-center overflow-visible rounded-lg border border-sky-200 bg-sky-100 px-2 py-2 text-sm font-bold text-sky-950 shadow-sm transition hover:border-sky-300 hover:brightness-95 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-100"
                                             style={`grid-column: ${ganttGridColumn(dateKeyInTokyo(event.startsAt), dateKeyInTokyo(event.endsAt, true))};`}
                                             title={`${event.title} · ${event.project.name}`}
                                         >

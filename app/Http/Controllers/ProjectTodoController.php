@@ -259,6 +259,13 @@ class ProjectTodoController extends Controller
             'completion_notify_ids' => $request->validated('completion_notify_ids') ?? [],
         ]);
 
+        InlineAttachments::syncFromBody(
+            $todo,
+            $project,
+            $request->user()->id,
+            $todo->details,
+        );
+
         if ($todo->assignee_id !== $previousAssigneeId) {
             TodoActivityNotification::sendToUsers(
                 [$todo->assignee_id],

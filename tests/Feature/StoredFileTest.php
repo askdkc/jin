@@ -2,6 +2,8 @@
 
 use App\Enums\ActivityType;
 use App\Enums\TeamRole;
+use App\Http\Controllers\ProjectFileController;
+use App\Jobs\GenerateStoredFilePreview;
 use App\Models\Activity;
 use App\Models\MaterialFolder;
 use App\Models\Project;
@@ -10,8 +12,10 @@ use App\Models\Team;
 use App\Models\Todo;
 use App\Models\TodoList;
 use App\Models\User;
+use App\Support\StoredFilePreviewGenerator;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia as Assert;
 
@@ -92,6 +96,35 @@ test('project participants can upload and download private files', function () {
         ->toContain("filename*=utf-8''".rawurlencode('運用資料.pdf'))
         ->and($storedFile->uploaded_by)->toBe($member->id)
         ->and($storedFile->path)->not->toContain('運用資料.pdf');
+});
+
+test('additional office formats validate and enqueue their previews', function () {
+    Storage::fake('local');
+    Queue::fake();
+
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $files = [
+        ['name' => 'macros.xlsm', 'mime' => 'application/vnd.ms-excel.sheet.macroEnabled.12'],
+        ['name' => 'budget.ods', 'mime' => 'application/vnd.oasis.opendocument.spreadsheet'],
+        ['name' => 'memo.odt', 'mime' => 'application/vnd.oasis.opendocument.text'],
+        ['name' => 'slides.odp', 'mime' => 'application/vnd.oasis.opendocument.presentation'],
+    ];
+
+    foreach ($files as ['name' => $name, 'mime' => $mime]) {
+        $this->actingAs($owner)
+            ->post(route('projects.files.store', [$team, $project]), [
+                'file' => UploadedFile::fake()->create($name, 10, $mime),
+            ])
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
+    }
+
+    expect(StoredFile::query()->count())->toBe(4)
+        ->and(StoredFile::query()->where('preview_status', 'pending')->count())->toBe(4);
+    Queue::assertPushed(GenerateStoredFilePreview::class, 4);
 });
 
 test('folder uploads create or reuse a material folder for every uploaded file', function () {
@@ -179,7 +212,10 @@ test('office previews are served from the cached pdf conversion', function () {
         'mime_type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'size' => 15,
     ]);
-    Storage::disk('local')->put("previews/{$storedFile->id}.pdf", 'converted pdf content');
+    Storage::disk('local')->put(
+        StoredFilePreviewGenerator::cachedPdfPath($storedFile->id, $storedFile->path),
+        'converted pdf content',
+    );
 
     $this->actingAs($owner)
         ->get(route('projects.files.preview', [$team, $project, $storedFile]))
@@ -241,14 +277,19 @@ test('deleting a stored file removes its blobs and comments without breaking act
         $storedFile,
         $storedFile->original_name,
     );
-    Storage::disk('local')->put("previews/{$storedFile->id}.pdf", 'converted pdf content');
+    Storage::disk('local')->put(
+        StoredFilePreviewGenerator::cachedPdfPath($storedFile->id, $storedFile->path),
+        'converted pdf content',
+    );
 
     $this->actingAs($owner)
         ->delete(route('projects.files.destroy', [$team, $project, $storedFile]))
         ->assertRedirect();
 
     Storage::disk('local')->assertMissing('projects/test/report.docx');
-    Storage::disk('local')->assertMissing("previews/{$storedFile->id}.pdf");
+    Storage::disk('local')->assertMissing(
+        StoredFilePreviewGenerator::cachedPdfPath($storedFile->id, $storedFile->path),
+    );
     expect(StoredFile::query()->count())->toBe(0)
         ->and($comment->fresh())->toBeNull()
         ->and($activity->fresh())->not->toBeNull()
@@ -436,11 +477,23 @@ test('uploaders and team managers can rename files while other members cannot', 
 
     $this->actingAs($uploader)
         ->patch(route('projects.files.update', [$team, $project, $storedFile]), [
-            'original_name' => 'renamed.pdf',
+            'original_name' => 'renamed.txt',
+        ])
+        ->assertSessionHasErrors('original_name');
+
+    $this->actingAs($uploader)
+        ->patch(route('projects.files.update', [$team, $project, $storedFile]), [
+            'original_name' => 'renamed',
+        ])
+        ->assertSessionHasErrors('original_name');
+
+    $this->actingAs($uploader)
+        ->patch(route('projects.files.update', [$team, $project, $storedFile]), [
+            'original_name' => 'renamed.PDF',
         ])
         ->assertRedirect();
 
-    expect($storedFile->fresh()->original_name)->toBe('renamed.pdf');
+    expect($storedFile->fresh()->original_name)->toBe('renamed.PDF');
 
     $this->actingAs($owner)
         ->patch(route('projects.files.update', [$team, $project, $storedFile]), [
@@ -623,6 +676,41 @@ test('a replacement must keep the current filename extension', function () {
     Storage::disk('local')->assertExists('projects/test/report.pdf');
 });
 
+test('same-extension replacement supports macro-enabled workbooks', function () {
+    Storage::fake('local');
+    Queue::fake();
+
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'path' => "projects/{$project->id}/report.xlsm",
+        'original_name' => 'report.xlsm',
+        'mime_type' => 'application/vnd.ms-excel.sheet.macroEnabled.12',
+    ]);
+    Storage::disk('local')->put($file->path, 'old workbook');
+    $oldPath = $file->path;
+
+    $this->actingAs($owner)
+        ->post(route('projects.files.replace', [$team, $project, $file]), [
+            'file' => UploadedFile::fake()->create(
+                'new-report.xlsm',
+                25,
+                'application/vnd.ms-excel.sheet.macroEnabled.12',
+            ),
+        ])
+        ->assertRedirect()
+        ->assertSessionHasNoErrors();
+
+    $file->refresh();
+
+    expect($file->path)->not->toBe($oldPath)
+        ->and($file->original_name)->toBe('report.xlsm')
+        ->and($file->preview_status)->toBe('pending');
+    Queue::assertPushed(GenerateStoredFilePreview::class, 2);
+});
+
 test('a failed replacement update removes the newly stored blob', function () {
     Storage::fake('local');
 
@@ -657,4 +745,60 @@ test('a failed replacement update removes the newly stored blob', function () {
 
     expect($file->fresh()->path)->toBe('projects/test/report.pdf')
         ->and(Storage::disk('local')->allFiles())->toBe(['projects/test/report.pdf']);
+});
+
+test('replacement against an already-deleting row returns a conflict without changing the row or orphaning the upload', function () {
+    Storage::fake('local');
+
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $oldPath = 'projects/test/report.pdf';
+    Storage::disk('local')->put($oldPath, 'old pdf');
+    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'path' => $oldPath,
+        'original_name' => 'report.pdf',
+        'mime_type' => 'application/pdf',
+    ]);
+    $file->update(['preview_status' => 'deleting']);
+
+    $this->actingAs($owner)
+        ->post(route('projects.files.replace', [$team, $project, $file]), [
+            'file' => UploadedFile::fake()->create('new-report.pdf', 10, 'application/pdf'),
+        ])
+        ->assertConflict();
+
+    expect($file->refresh()->path)->toBe($oldPath)
+        ->and($file->preview_status)->toBe('deleting')
+        ->and(Storage::disk('local')->allFiles())->toBe([$oldPath]);
+});
+
+test('final deletion CAS leaves a changed stored file and its relations untouched', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'path' => 'projects/test/old-report.pdf',
+        'original_name' => 'report.pdf',
+    ]);
+    $comment = $file->comments()->create([
+        'project_id' => $project->id,
+        'user_id' => $owner->id,
+        'body' => 'Keep this comment.',
+    ]);
+    $expectedPath = $file->path;
+    $file->update([
+        'path' => 'projects/test/new-report.pdf',
+        'preview_status' => 'pending',
+    ]);
+
+    $finalizeDeletion = new ReflectionMethod(ProjectFileController::class, 'finalizeDeletion');
+    expect($finalizeDeletion->invoke(new ProjectFileController, $file->id, [
+        'path' => $expectedPath,
+    ]))->toBeFalse();
+
+    expect($file->fresh()->path)->toBe('projects/test/new-report.pdf')
+        ->and($comment->fresh())->not->toBeNull();
 });

@@ -8,6 +8,7 @@ use App\Models\Activity;
 use App\Models\Project;
 use App\Models\ScheduleEvent;
 use App\Models\Team;
+use App\Support\InlineAttachments;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -194,6 +195,13 @@ class ScheduleEventController extends Controller
             return $event;
         });
 
+        InlineAttachments::syncFromBody(
+            $event,
+            $project,
+            $request->user()->id,
+            $event->details,
+        );
+
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Event created.')]);
 
         return to_route('projects.schedule.index', [$currentTeam, $project, 'month' => $event->starts_at->format('Y-m')]);
@@ -239,6 +247,13 @@ class ScheduleEventController extends Controller
         ScheduleEvent $scheduleEvent,
     ): RedirectResponse {
         $scheduleEvent->update($request->validated());
+
+        InlineAttachments::syncFromBody(
+            $scheduleEvent,
+            $project,
+            $request->user()->id,
+            $scheduleEvent->details,
+        );
 
         return to_route('projects.schedule.index', [$currentTeam, $project, 'month' => $scheduleEvent->starts_at->format('Y-m')]);
     }

@@ -4,6 +4,7 @@ namespace App\Http\Requests\Phase4;
 
 use App\Models\Project;
 use App\Models\StoredFile;
+use Closure;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Gate;
@@ -32,7 +33,22 @@ class UpdateProjectFileRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'original_name' => ['required', 'string', 'max:255'],
+            'original_name' => [
+                'required',
+                'string',
+                'max:255',
+                function (string $attribute, mixed $value, Closure $fail): void {
+                    $storedFile = $this->route('stored_file');
+                    $currentExtension = $storedFile instanceof StoredFile
+                        ? strtolower(pathinfo($storedFile->original_name, PATHINFO_EXTENSION))
+                        : '';
+                    $newExtension = strtolower(pathinfo((string) $value, PATHINFO_EXTENSION));
+
+                    if ($newExtension !== $currentExtension) {
+                        $fail('The file extension cannot be changed.');
+                    }
+                },
+            ],
         ];
     }
 }

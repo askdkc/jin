@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Support\StoredFilePreviewDispatcher;
+use App\Support\StoredFilePreviewGenerator;
 use Database\Factories\StoredFileFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Collection;
@@ -25,6 +27,8 @@ use Illuminate\Support\Carbon;
  * @property string $original_name
  * @property string|null $mime_type
  * @property int $size
+ * @property string|null $preview_path
+ * @property string|null $preview_status
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  * @property-read Project $project
@@ -34,7 +38,7 @@ use Illuminate\Support\Carbon;
  * @property-read Collection<int, Comment> $comments
  * @property-read Collection<int, User> $reactors
  */
-#[Fillable(['project_id', 'material_folder_id', 'uploaded_by', 'attachable_type', 'attachable_id', 'disk', 'path', 'original_name', 'mime_type', 'size'])]
+#[Fillable(['project_id', 'material_folder_id', 'uploaded_by', 'attachable_type', 'attachable_id', 'disk', 'path', 'original_name', 'mime_type', 'size', 'preview_path', 'preview_status'])]
 class StoredFile extends Model
 {
     /** @use HasFactory<StoredFileFactory> */
@@ -42,6 +46,26 @@ class StoredFile extends Model
 
     /** @var array<string, string> */
     protected $attributes = ['disk' => 'local'];
+
+    protected static function booted(): void
+    {
+        static::creating(function (StoredFile $storedFile): void {
+            if (StoredFilePreviewGenerator::supports($storedFile->original_name)) {
+                $storedFile->preview_path = null;
+                $storedFile->preview_status = 'pending';
+            } else {
+                $storedFile->preview_path = null;
+                $storedFile->preview_status = null;
+            }
+        });
+
+        static::created(function (StoredFile $storedFile): void {
+            if ($storedFile->preview_status === 'pending') {
+                app(StoredFilePreviewDispatcher::class)
+                    ->dispatchAfterCommit($storedFile->id, $storedFile->path);
+            }
+        });
+    }
 
     /** @return BelongsTo<Project, $this> */
     public function project(): BelongsTo

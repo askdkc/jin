@@ -1,4 +1,5 @@
 <script lang="ts">
+    import ImagePlus from 'lucide-svelte/icons/image-plus';
     import Table2 from 'lucide-svelte/icons/table-2';
     import { onMount } from 'svelte';
     import 'trix';
@@ -49,8 +50,10 @@
     } = $props();
 
     let editor: TrixEditorElement;
+    let imageInput = $state<HTMLInputElement>();
     const inputId = $derived(`${id}-input`);
     let uploadingAttachment = $state(false);
+    let attachmentUploadError = $state('');
 
     // ponytail: curated to shiki/bundle/web — anything outside it would render unhighlighted anyway.
     const codeLanguages = [
@@ -373,6 +376,7 @@
         }
 
         uploadingAttachment = true;
+        attachmentUploadError = '';
 
         try {
             const formData = new FormData();
@@ -398,18 +402,36 @@
                 name: string;
                 mimeType: string | null;
                 previewUrl: string;
+                inline: boolean;
             };
             const url = escapeHtml(payload.previewUrl);
             const name = escapeHtml(payload.name);
-            const html = payload.mimeType?.startsWith('image/')
-                ? `<p><a href="${url}"><img src="${url}" alt="${name}"></a></p>`
-                : `<p><a href="${url}">📎 ${name}</a></p>`;
+            const html =
+                payload.inline === true
+                    ? `<p><a href="${url}"><img src="${url}" alt="${name}"></a></p>`
+                    : `<p><a href="${url}">📎 ${name}</a></p>`;
             editor.editor?.insertHTML(html);
             editor.focus();
         } catch {
-            // ponytail: silent failure just leaves the file unattached; user can retry the drop.
+            attachmentUploadError = t(
+                'Attachment upload failed. Please try again.',
+            );
         } finally {
             uploadingAttachment = false;
+        }
+    };
+
+    const openImageChooser = (): void => {
+        imageInput?.click();
+    };
+
+    const handleImageSelection = (event: Event): void => {
+        const input = event.currentTarget as HTMLInputElement;
+        const file = input.files?.[0];
+        input.value = '';
+
+        if (file) {
+            void uploadAttachment(file);
         }
     };
 
@@ -510,6 +532,25 @@
                 {/each}
             </select>
         {/if}
+        {#if attachmentUploadUrl}
+            <input
+                bind:this={imageInput}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                hidden
+                disabled={uploadingAttachment}
+                onchange={handleImageSelection}
+            />
+            <button
+                type="button"
+                class="inline-flex min-h-9 items-center gap-2 rounded-md border bg-background px-3 text-xs font-semibold hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+                onclick={openImageChooser}
+                disabled={uploadingAttachment}
+            >
+                <ImagePlus class="size-4" />
+                {t('Insert image')}
+            </button>
+        {/if}
         <button
             type="button"
             class="inline-flex min-h-9 items-center gap-2 rounded-md border bg-background px-3 text-xs font-semibold hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -554,3 +595,6 @@
         </ul>
     {/if}
 </div>
+<p class="mt-2 text-sm text-destructive" aria-live="polite">
+    {attachmentUploadError}
+</p>

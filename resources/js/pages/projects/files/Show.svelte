@@ -45,9 +45,12 @@
     import AppHead from '@/components/AppHead.svelte';
     import FileDropzone from '@/components/FileDropzone.svelte';
     import InputError from '@/components/InputError.svelte';
+    import OnlyOfficePreviewDialog from '@/components/OnlyOfficePreviewDialog.svelte';
     import RichTextContent from '@/components/RichTextContent.svelte';
     import RichTextEditor from '@/components/RichTextEditor.svelte';
-    import { canPreviewStoredFile } from '@/components/StoredFilePreviewDialog.svelte';
+    import StoredFilePreviewDialog, {
+        canPreviewStoredFile,
+    } from '@/components/StoredFilePreviewDialog.svelte';
     import { Button } from '@/components/ui/button';
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
@@ -66,17 +69,25 @@
         currentTeam,
         project,
         file,
+        onlyOffice,
         reaction,
         comments,
         members,
     }: {
         currentTeam: Team;
         project: ProjectTool;
+        onlyOffice: {
+            enabled: boolean;
+            supported: boolean;
+            configUrl: string | null;
+        };
         file: {
             id: number;
             name: string;
             mimeType: string | null;
             size: number;
+            previewStatus: string | null;
+            previewImageUrl: string | null;
             uploaderName: string | null;
             createdAt: string | null;
             canManage: boolean;
@@ -98,14 +109,32 @@
     const extension = $derived(
         file.name.split('.').pop()?.toLocaleLowerCase('en-US') ?? '',
     );
+    const generatedPreviewExtensions = [
+        'pdf',
+        'doc',
+        'docx',
+        'xls',
+        'xlsx',
+        'xlsm',
+        'ods',
+        'odt',
+        'ppt',
+        'pptx',
+        'odp',
+    ];
+    const usesGeneratedPreview = $derived(
+        generatedPreviewExtensions.includes(extension),
+    );
     const previewKind = $derived(
         ['jpg', 'jpeg', 'png', 'webp'].includes(extension)
             ? 'image'
             : ['mp4', 'webm', 'mov', 'm4v'].includes(extension)
               ? 'video'
-              : canPreviewStoredFile(file.name)
-                ? 'embed'
-                : 'none',
+              : usesGeneratedPreview
+                ? 'generated'
+                : canPreviewStoredFile(file.name)
+                  ? 'embed'
+                  : 'none',
     );
     const previewUrl = $derived(
         ProjectFileController.preview.url([
@@ -114,11 +143,30 @@
             file.id,
         ]),
     );
+    let previewOpen = $state(false);
+    let onlyOfficeOpen = $state(false);
     let showRename = $state(false);
     let showReplace = $state(false);
 
     const confirmDelete = (): boolean =>
         window.confirm(t('Are you sure you want to delete this?'));
+    const openPreview = (): void => {
+        if (
+            onlyOffice.enabled &&
+            onlyOffice.supported &&
+            onlyOffice.configUrl
+        ) {
+            onlyOfficeOpen = true;
+
+            return;
+        }
+
+        previewOpen = true;
+    };
+    const openFallbackPreview = (): void => {
+        onlyOfficeOpen = false;
+        previewOpen = true;
+    };
     const formatDate = (value: string | null): string =>
         value
             ? new Intl.DateTimeFormat('ja-JP', {
@@ -263,6 +311,29 @@
                         controls
                         class="mx-auto max-h-[75vh] w-full bg-black"
                     ></video>
+                {:else if previewKind === 'generated'}
+                    {#if file.previewImageUrl}
+                        <img
+                            src={file.previewImageUrl}
+                            alt={file.name}
+                            class="mx-auto max-h-[75vh] w-auto max-w-full object-contain"
+                        />
+                    {:else}
+                        <div
+                            class="flex min-h-80 flex-col items-center justify-center gap-3 px-6 py-16 text-center"
+                            role={file.previewStatus === 'failed'
+                                ? 'alert'
+                                : 'status'}
+                        >
+                            <FileIcon class="size-10 text-muted-foreground" />
+                            <p class="text-sm text-muted-foreground">
+                                {file.previewStatus === 'pending' ||
+                                file.previewStatus === 'processing'
+                                    ? t('Preparing preview...')
+                                    : t('Could not load this file preview.')}
+                            </p>
+                        </div>
+                    {/if}
                 {:else if previewKind === 'embed'}
                     <iframe
                         src={previewUrl}
@@ -282,6 +353,18 @@
             </div>
 
             <div class="mt-4 flex flex-wrap items-center gap-2">
+                {#if canPreviewStoredFile(file.name)}
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onclick={openPreview}
+                    >
+                        <FileIcon aria-hidden="true" />
+                        {t('Preview')}
+                    </Button>
+                {/if}
+
                 <Button variant="outline" size="sm" asChild>
                     {#snippet children(buttonProps)}
                         <a
@@ -347,7 +430,7 @@
                             id="file-replacement"
                             error={errors.file}
                             compact
-                            accept=".pdf,.txt,.csv,.jpg,.jpeg,.png,.webp,.mp4,.webm,.mov,.m4v,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip"
+                            accept=".pdf,.txt,.csv,.jpg,.jpeg,.png,.webp,.mp4,.webm,.mov,.m4v,.doc,.docx,.odt,.xls,.xlsx,.xlsm,.ods,.ppt,.pptx,.odp,.zip"
                         />
                         {#if progress}
                             <progress
@@ -511,3 +594,21 @@
         </section>
     </article>
 </main>
+
+{#if onlyOffice.configUrl}
+    <OnlyOfficePreviewDialog
+        {currentTeam}
+        {project}
+        {file}
+        configUrl={onlyOffice.configUrl}
+        onFallback={openFallbackPreview}
+        bind:open={onlyOfficeOpen}
+    />
+{/if}
+
+<StoredFilePreviewDialog
+    {currentTeam}
+    {project}
+    {file}
+    bind:open={previewOpen}
+/>

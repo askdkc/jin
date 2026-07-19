@@ -14,11 +14,12 @@
 
 <script lang="ts">
     import { Link, router } from '@inertiajs/svelte';
-    import ArrowRight from 'lucide-svelte/icons/arrow-right';
+    import CalendarDays from 'lucide-svelte/icons/calendar-days';
+    import CheckCircle2 from 'lucide-svelte/icons/circle-check-big';
+    import FileText from 'lucide-svelte/icons/file-text';
     import History from 'lucide-svelte/icons/history';
     import MessageCircle from 'lucide-svelte/icons/message-circle';
     import Search from 'lucide-svelte/icons/search';
-    import Users from 'lucide-svelte/icons/users';
     import AppHead from '@/components/AppHead.svelte';
     import { Avatar, AvatarFallback } from '@/components/ui/avatar';
     import { Button } from '@/components/ui/button';
@@ -26,6 +27,7 @@
     import { activityAction, activityHref } from '@/lib/activity';
     import { t } from '@/lib/i18n';
     import { getInitials } from '@/lib/initials';
+    import { show as showProject } from '@/routes/projects';
     import type {
         ActivityFilters,
         ActivityItem,
@@ -33,11 +35,20 @@
         ProjectTool,
     } from '@/types';
 
+    type ActivePerson = {
+        key: string;
+        name: string;
+    };
+    type ProjectActivityGroup = {
+        key: number;
+        project: ProjectTool;
+        activities: ActivityItem[];
+    };
     type ActivityGroup = {
         key: string;
         label: string;
-        activePeople: number;
-        activities: ActivityItem[];
+        activePeople: ActivePerson[];
+        projects: ProjectActivityGroup[];
     };
 
     let {
@@ -135,16 +146,42 @@
             }
         }
 
-        return grouped.map((group) => ({
-            key: group.key,
-            label: formatGroupLabel(group.date, group.key),
-            activePeople: new Set(
-                group.activities.map(
-                    (activity) => activity.actorId ?? 'deleted-user',
-                ),
-            ).size,
-            activities: group.activities,
-        }));
+        return grouped.map((group) => {
+            const activePeople: ActivePerson[] = [];
+            const projectGroups: ProjectActivityGroup[] = [];
+
+            for (const activity of group.activities) {
+                const actorKey = String(activity.actorId ?? 'deleted-user');
+
+                if (!activePeople.some((person) => person.key === actorKey)) {
+                    activePeople.push({
+                        key: actorKey,
+                        name: activity.actorName || t('Deleted user'),
+                    });
+                }
+
+                const projectGroup = projectGroups.find(
+                    (candidate) => candidate.key === activity.project.id,
+                );
+
+                if (projectGroup) {
+                    projectGroup.activities.push(activity);
+                } else {
+                    projectGroups.push({
+                        key: activity.project.id,
+                        project: activity.project,
+                        activities: [activity],
+                    });
+                }
+            }
+
+            return {
+                key: group.key,
+                label: formatGroupLabel(group.date, group.key),
+                activePeople,
+                projects: projectGroups,
+            };
+        });
     };
     const hasFilters = (): boolean =>
         Boolean(filters.q || filters.project || filters.user);
@@ -153,53 +190,43 @@
 <AppHead title={t('Latest activity')} />
 
 <div
-    class="min-h-[calc(100vh-7rem)] bg-[#f2f7fc] px-3 py-5 sm:px-6 sm:py-8 dark:bg-[#07161d]"
+    class="min-h-[calc(100vh-7rem)] bg-slate-100/70 px-3 py-5 sm:px-6 sm:py-8 dark:bg-slate-950/50"
 >
     <main
-        class="mx-auto w-full max-w-6xl overflow-hidden rounded-[1.75rem] border border-slate-200/90 bg-white shadow-[0_22px_65px_rgba(15,23,42,0.1)] dark:border-slate-700/80 dark:bg-[#14242c] dark:shadow-black/25"
+        class="mx-auto w-full max-w-6xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_16px_48px_rgba(15,23,42,0.07)] dark:border-slate-800 dark:bg-slate-900 dark:shadow-black/25"
     >
         <header
-            class="border-b border-slate-200 px-5 py-7 sm:px-10 sm:py-10 dark:border-slate-700"
+            class="border-b border-slate-200 px-5 py-6 sm:px-10 sm:py-8 dark:border-slate-700"
         >
-            <div class="flex items-start gap-4">
-                <span
-                    class="mt-1 flex size-11 shrink-0 items-center justify-center rounded-full bg-[#dceee1] text-[#246447] dark:bg-[#25453a] dark:text-[#9dd6b3]"
+            <div>
+                <p
+                    class="text-sm font-semibold text-emerald-700 dark:text-emerald-300"
                 >
-                    <History class="size-5" />
-                </span>
-                <div>
-                    <p
-                        class="text-sm font-semibold text-[#347552] dark:text-[#9dd6b3]"
-                    >
-                        {currentTeam.name}
-                    </p>
-                    <h1
-                        class="mt-1 text-3xl font-black tracking-[-0.035em] text-slate-900 sm:text-5xl dark:text-slate-50"
-                    >
-                        {t('Latest activity')}
-                    </h1>
-                    <p
-                        class="mt-3 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base dark:text-slate-300"
-                    >
-                        {t(
-                            'See what everyone is working on and join the conversation.',
-                        )}
-                    </p>
-                </div>
+                    {currentTeam.name}
+                </p>
+                <h1
+                    class="mt-1 text-3xl font-black tracking-[-0.035em] text-slate-900 sm:text-4xl dark:text-slate-50"
+                >
+                    {t('Latest activity')}
+                </h1>
+                <p
+                    class="mt-2 max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400"
+                >
+                    {t(
+                        'See what everyone is working on and join the conversation.',
+                    )}
+                </p>
             </div>
 
             <form
                 onsubmit={submitFilters}
-                class="mt-7 flex flex-col gap-3 lg:flex-row lg:items-center"
+                class="mt-5 flex flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:items-center"
             >
                 <div
-                    class="inline-flex w-fit rounded-xl border border-slate-300 bg-slate-100 p-1 dark:border-slate-600 dark:bg-[#0e1e26]"
+                    class="inline-flex h-9 w-fit items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-800 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                 >
-                    <span
-                        class="rounded-lg bg-white px-4 py-2 text-sm font-bold text-slate-900 shadow-sm dark:bg-[#243740] dark:text-white"
-                    >
-                        {t('Timeline')}
-                    </span>
+                    <History class="size-4" />
+                    {t('Timeline')}
                 </div>
 
                 <label class="sr-only" for="activity-project">
@@ -209,7 +236,7 @@
                     id="activity-project"
                     name="project"
                     onchange={submitSelect}
-                    class="h-11 min-w-44 rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 shadow-sm outline-none focus:border-[#4d8f6c] focus:ring-2 focus:ring-[#4d8f6c]/20 dark:border-slate-600 dark:bg-[#0e1e26] dark:text-slate-100"
+                    class="h-9 min-w-40 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                 >
                     <option value="">{t('All projects')}</option>
                     {#each projects as project (project.id)}
@@ -229,7 +256,7 @@
                     id="activity-user"
                     name="user"
                     onchange={submitSelect}
-                    class="h-11 min-w-40 rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 shadow-sm outline-none focus:border-[#4d8f6c] focus:ring-2 focus:ring-[#4d8f6c]/20 dark:border-slate-600 dark:bg-[#0e1e26] dark:text-slate-100"
+                    class="h-9 min-w-36 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                 >
                     <option value="">{t('Everyone')}</option>
                     {#each people as person (person.id)}
@@ -242,7 +269,7 @@
                     {/each}
                 </select>
 
-                <div class="relative min-w-0 flex-1 lg:max-w-xs">
+                <div class="relative min-w-0 flex-1 sm:min-w-48 sm:max-w-xs">
                     <Search
                         class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-slate-400"
                     />
@@ -253,13 +280,14 @@
                         maxlength={100}
                         value={filters.q ?? ''}
                         placeholder={t('Search activity')}
-                        class="h-11 rounded-xl border-slate-300 bg-white pl-9 dark:border-slate-600 dark:bg-[#0e1e26]"
+                        class="h-9 rounded-lg border-slate-300 bg-white pl-9 dark:border-slate-600 dark:bg-slate-800"
                     />
                 </div>
                 <Button
                     type="submit"
                     disabled={processing}
-                    class="h-11 rounded-xl px-5"
+                    size="sm"
+                    class="h-9 rounded-lg px-4"
                 >
                     {t('Filter')}
                 </Button>
@@ -292,133 +320,191 @@
                 </p>
             </div>
         {:else}
-            <div class="space-y-10 px-5 py-8 sm:px-10 sm:py-10">
+            <div class="space-y-10 px-5 py-7 sm:px-10 sm:py-9">
                 {#each getActivityGroups() as group (group.key)}
                     <section aria-labelledby={`activity-day-${group.key}`}>
-                        <div
-                            class="grid items-center gap-3 sm:grid-cols-[auto_minmax(2rem,1fr)_auto]"
-                        >
+                        <div class="flex flex-wrap items-center gap-3">
                             <h2
                                 id={`activity-day-${group.key}`}
-                                class="w-fit rounded-lg bg-slate-900 px-4 py-2 text-sm font-black tracking-wide text-white sm:text-base dark:bg-slate-100 dark:text-slate-900"
+                                class="w-fit rounded-md bg-slate-900 px-3 py-2 text-sm font-black tracking-wide text-white dark:bg-slate-100 dark:text-slate-900"
                             >
                                 {group.label}
                             </h2>
                             <span
-                                class="hidden h-px bg-slate-200 sm:block dark:bg-slate-700"
+                                class="hidden h-px min-w-8 flex-1 bg-slate-200 sm:block dark:bg-slate-700"
                                 aria-hidden="true"
                             ></span>
-                            <span
-                                class="flex items-center gap-2 text-sm font-semibold text-slate-500 dark:text-slate-300"
-                            >
-                                <Users class="size-4" />
-                                {t(':count people active', {
-                                    count: String(group.activePeople),
-                                })}
-                            </span>
+                            <div class="ml-auto flex items-center gap-2">
+                                <span
+                                    class="text-sm font-medium text-slate-500 dark:text-slate-300"
+                                >
+                                    {t(':count people active', {
+                                        count: String(
+                                            group.activePeople.length,
+                                        ),
+                                    })}
+                                </span>
+                                <div
+                                    class="flex -space-x-2"
+                                    aria-label={t(':count people active', {
+                                        count: String(
+                                            group.activePeople.length,
+                                        ),
+                                    })}
+                                >
+                                    {#each group.activePeople.slice(0, 8) as person (person.key)}
+                                        <span title={person.name}>
+                                            <Avatar
+                                                class="size-7 border-2 border-white dark:border-slate-900"
+                                            >
+                                                <AvatarFallback
+                                                    class="bg-slate-700 text-[0.58rem] font-bold text-white dark:bg-slate-200 dark:text-slate-900"
+                                                >
+                                                    {getInitials(person.name)}
+                                                </AvatarFallback>
+                                            </Avatar>
+                                        </span>
+                                    {/each}
+                                    {#if group.activePeople.length > 8}
+                                        <span
+                                            class="flex size-7 items-center justify-center rounded-full border-2 border-white bg-slate-200 text-[0.6rem] font-bold text-slate-700 dark:border-slate-900 dark:bg-slate-700 dark:text-slate-100"
+                                        >
+                                            +{group.activePeople.length - 8}
+                                        </span>
+                                    {/if}
+                                </div>
+                            </div>
                         </div>
 
-                        <ol class="mt-6 space-y-5">
-                            {#each group.activities as activity, index (activity.id)}
-                                <li
-                                    class="grid grid-cols-[3.5rem_2.5rem_minmax(0,1fr)] items-start gap-2 sm:grid-cols-[4.5rem_3rem_minmax(0,1fr)] sm:gap-3"
+                        <div class="mt-6 space-y-7">
+                            {#each group.projects as projectGroup (projectGroup.key)}
+                                <section
+                                    aria-labelledby={`activity-project-${group.key}-${projectGroup.key}`}
                                 >
-                                    <time
-                                        datetime={activity.createdAt || ''}
-                                        class="pt-2 text-right text-xs font-semibold tabular-nums text-slate-500 sm:text-sm dark:text-slate-400"
-                                    >
-                                        {formatTime(activity.createdAt)}
-                                    </time>
-                                    <div class="relative flex justify-center">
-                                        <Avatar
-                                            class="z-10 size-10 border-2 border-white shadow-sm dark:border-[#14242c]"
-                                        >
-                                            <AvatarFallback
-                                                class="bg-[#5f63db] text-xs font-bold text-white"
-                                            >
-                                                {getInitials(
-                                                    activity.actorName ||
-                                                        t('Deleted user'),
-                                                )}
-                                            </AvatarFallback>
-                                        </Avatar>
-                                        {#if index < group.activities.length - 1}
-                                            <span
-                                                class="absolute top-10 bottom-[-1.5rem] left-1/2 w-px -translate-x-1/2 bg-slate-200 dark:bg-slate-700"
-                                                aria-hidden="true"
-                                            ></span>
-                                        {/if}
-                                    </div>
-
-                                    <article
-                                        class="min-w-0 rounded-2xl border border-transparent px-3 py-2 transition hover:border-slate-200 hover:bg-slate-50 dark:hover:border-slate-700 dark:hover:bg-[#1a2d36]"
+                                    <h3
+                                        id={`activity-project-${group.key}-${projectGroup.key}`}
                                     >
                                         <Link
-                                            href={activityHref(
+                                            href={showProject([
                                                 currentTeam.slug,
-                                                activity,
-                                            )}
-                                            class="group block focus-visible:rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8f6c]"
+                                                projectGroup.project.id,
+                                            ])}
+                                            class="inline-flex max-w-full items-center rounded-full bg-slate-800 px-3 py-1.5 text-sm font-bold text-white hover:bg-slate-700 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
                                         >
-                                            <span
-                                                class="flex min-w-0 items-start justify-between gap-3"
+                                            <span class="truncate">
+                                                {projectGroup.project.name}
+                                            </span>
+                                        </Link>
+                                    </h3>
+
+                                    <ol
+                                        class="mt-2 divide-y divide-slate-200 border-b border-slate-200 dark:divide-slate-700 dark:border-slate-700"
+                                    >
+                                        {#each projectGroup.activities as activity (activity.id)}
+                                            <li
+                                                class="grid grid-cols-[2rem_minmax(0,1fr)] gap-3 py-3"
                                             >
-                                                <span class="min-w-0">
-                                                    <span
-                                                        class="block text-sm leading-6 text-slate-600 dark:text-slate-300"
+                                                <span
+                                                    class="flex size-8 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
+                                                >
+                                                    {#if activity.target === 'messages'}
+                                                        <MessageCircle
+                                                            class="size-4"
+                                                        />
+                                                    {:else if activity.target === 'todos'}
+                                                        <CheckCircle2
+                                                            class="size-4"
+                                                        />
+                                                    {:else if activity.target === 'schedule'}
+                                                        <CalendarDays
+                                                            class="size-4"
+                                                        />
+                                                    {:else if activity.target === 'documents' || activity.target === 'files' || activity.target === 'materials'}
+                                                        <FileText
+                                                            class="size-4"
+                                                        />
+                                                    {:else}
+                                                        <History
+                                                            class="size-4"
+                                                        />
+                                                    {/if}
+                                                </span>
+
+                                                <article class="min-w-0">
+                                                    <div
+                                                        class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"
                                                     >
-                                                        <strong
-                                                            class="font-extrabold text-slate-900 dark:text-white"
+                                                        <Avatar
+                                                            class="size-5 border border-slate-200 dark:border-slate-700"
                                                         >
-                                                            {activity.actorName ||
-                                                                t(
-                                                                    'Deleted user',
+                                                            <AvatarFallback
+                                                                class="bg-slate-200 text-[0.5rem] font-bold text-slate-700 dark:bg-slate-700 dark:text-slate-100"
+                                                            >
+                                                                {getInitials(
+                                                                    activity.actorName ||
+                                                                        t(
+                                                                            'Deleted user',
+                                                                        ),
                                                                 )}
-                                                        </strong>
-                                                        <span>
+                                                            </AvatarFallback>
+                                                        </Avatar>
+                                                        <p
+                                                            class="min-w-0 text-sm leading-5 text-slate-600 dark:text-slate-300"
+                                                        >
+                                                            <strong
+                                                                class="font-bold text-slate-900 dark:text-slate-100"
+                                                            >
+                                                                {activity.actorName ||
+                                                                    t(
+                                                                        'Deleted user',
+                                                                    )}
+                                                            </strong>
                                                             {activityAction(
                                                                 activity.type,
                                                             )}
-                                                        </span>
-                                                    </span>
-                                                    <span
-                                                        class="mt-0.5 block break-words text-base font-bold text-[#2176c7] underline decoration-[#2176c7]/35 underline-offset-4 group-hover:decoration-[#2176c7] dark:text-[#6db8ff]"
+                                                        </p>
+                                                        <time
+                                                            datetime={activity.createdAt ||
+                                                                undefined}
+                                                            class="ml-auto text-xs tabular-nums text-slate-400"
+                                                        >
+                                                            {formatTime(
+                                                                activity.createdAt,
+                                                            )}
+                                                        </time>
+                                                    </div>
+                                                    <Link
+                                                        href={activityHref(
+                                                            currentTeam.slug,
+                                                            activity,
+                                                        )}
+                                                        class="mt-0.5 block break-words text-[0.95rem] font-semibold text-sky-700 hover:underline dark:text-sky-400"
                                                     >
                                                         {activity.subjectLabel}
-                                                    </span>
-                                                </span>
-                                                <ArrowRight
-                                                    class="mt-2 size-4 shrink-0 text-slate-400 transition group-hover:translate-x-0.5"
-                                                />
-                                            </span>
-                                        </Link>
-                                        <div
-                                            class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs"
-                                        >
-                                            <span
-                                                class="rounded-full bg-[#e5f1e8] px-2.5 py-1 font-semibold text-[#286345] dark:bg-[#244438] dark:text-[#a6ddbb]"
-                                            >
-                                                {activity.project.name}
-                                            </span>
-                                            {#if canComment(activity)}
-                                                <Link
-                                                    href={activityHref(
-                                                        currentTeam.slug,
-                                                        activity,
-                                                    )}
-                                                    class="inline-flex items-center gap-1.5 font-bold text-slate-600 hover:text-[#2176c7] dark:text-slate-300 dark:hover:text-[#6db8ff]"
-                                                >
-                                                    <MessageCircle
-                                                        class="size-3.5"
-                                                    />
-                                                    {t('View and comment')}
-                                                </Link>
-                                            {/if}
-                                        </div>
-                                    </article>
-                                </li>
+                                                    </Link>
+                                                    {#if canComment(activity)}
+                                                        <Link
+                                                            href={activityHref(
+                                                                currentTeam.slug,
+                                                                activity,
+                                                            )}
+                                                            class="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-sky-700 dark:text-slate-400 dark:hover:text-sky-400"
+                                                        >
+                                                            <MessageCircle
+                                                                class="size-3"
+                                                            />
+                                                            {t(
+                                                                'View and comment',
+                                                            )}
+                                                        </Link>
+                                                    {/if}
+                                                </article>
+                                            </li>
+                                        {/each}
+                                    </ol>
+                                </section>
                             {/each}
-                        </ol>
+                        </div>
                     </section>
                 {/each}
             </div>

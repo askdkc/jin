@@ -15,6 +15,7 @@ use App\Notifications\MentionNotification;
 use App\Support\InlineAttachments;
 use App\Support\Mentions;
 use App\Support\RichText;
+use Illuminate\Database\Eloquent\Relations\Pivot;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -253,7 +254,12 @@ class MessageBoardController extends Controller
             'notifyCount' => $post->subscribers()->count(),
             'canEdit' => $canManageProject || $post->user_id === $userId,
             'reactions' => $post->reactors
-                ->groupBy(fn (User $user): string => (string) $user->pivot?->getAttribute('reaction'))
+                ->groupBy(function (User $user): string {
+                    /** @var Pivot|null $pivot */
+                    $pivot = $user->getRelation('pivot');
+
+                    return (string) $pivot?->getAttribute('reaction');
+                })
                 ->map(fn ($users, string $reaction): array => [
                     'reaction' => $reaction,
                     'count' => $users->count(),

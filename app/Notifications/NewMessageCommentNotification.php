@@ -29,7 +29,9 @@ class NewMessageCommentNotification extends Notification
      */
     public function via(object $notifiable): array
     {
-        return ['database', 'mail'];
+        return $notifiable instanceof User
+            ? $notifiable->notificationChannels()
+            : ['database', 'mail'];
     }
 
     /**

@@ -1,9 +1,21 @@
 <script lang="ts">
+    import { ToggleGroup } from 'bits-ui';
     import ImagePlus from 'lucide-svelte/icons/image-plus';
+    import Paperclip from 'lucide-svelte/icons/paperclip';
     import Table2 from 'lucide-svelte/icons/table-2';
+    import { Marked, Renderer } from 'marked';
     import { onMount } from 'svelte';
-    import 'trix';
+    import Trix from 'trix';
     import { t } from '@/lib/i18n';
+
+    for (let level = 2; level <= 6; level++) {
+        Trix.config.blockAttributes[`heading${level}`] = {
+            tagName: `h${level}`,
+            terminal: true,
+            breakOnReturn: true,
+            group: false,
+        };
+    }
 
     type TrixAttachment = object;
     type TrixRect = { left: number; top: number; bottom: number };
@@ -15,6 +27,7 @@
         getBlockAtIndex: (index: number) => { toString: () => string };
     };
     type TrixEditorApi = {
+        loadHTML: (html: string) => void;
         insertHTML: (html: string) => void;
         insertAttachment: (attachment: TrixAttachment) => void;
         insertString: (text: string) => void;
@@ -24,10 +37,14 @@
         getDocument: () => TrixDocumentApi;
         attributeIsActive: (attribute: string) => boolean;
     };
-    type TrixEditorElement = HTMLElement & { editor?: TrixEditorApi };
+    type TrixEditorElement = HTMLElement & {
+        editor?: TrixEditorApi;
+        value: string;
+    };
     type TrixConstructor = {
         Attachment: new (attributes: { content: string }) => TrixAttachment;
     };
+    type EditorMode = 'rich' | 'markdown';
 
     let {
         id,
@@ -50,8 +67,13 @@
     } = $props();
 
     let editor: TrixEditorElement;
+    let hiddenInput: HTMLInputElement;
     let imageInput = $state<HTMLInputElement>();
+    let fileInput = $state<HTMLInputElement>();
     const inputId = $derived(`${id}-input`);
+    let mode = $state<EditorMode>('rich');
+    let markdownValue = $state('');
+    let markdownDirty = false;
     let uploadingAttachment = $state(false);
     let attachmentUploadError = $state('');
 
@@ -225,13 +247,41 @@
             .replaceAll('"', '&quot;')
             .replaceAll("'", '&#039;');
 
-    const inlineMarkdown = (text: string): string =>
-        escapeHtml(text)
-            .replace(/`([^`]+)`/g, '<code>$1</code>')
-            .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-            .replace(/__([^_]+)__/g, '<strong>$1</strong>')
-            .replace(/~~([^~]+)~~/g, '<del>$1</del>')
-            .replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    const safeLink = (url: string): boolean =>
+        !/^[a-z][a-z\d+.-]*:/i.test(url) || /^(https?:|mailto:)/i.test(url);
+    const markdownRenderer = new Renderer();
+
+    markdownRenderer.html = ({ text }): string => escapeHtml(text);
+    markdownRenderer.code = ({ text, lang }): string => {
+        // Trix drops unknown HTML attributes, so retain the code language in a
+        // first-line marker that RichTextContent removes before highlighting.
+        const language = lang?.trim().split(/\s+/)[0] ?? '';
+        const marker = language ? `lang:${escapeHtml(language)}\n` : '';
+
+        return `<pre><code>${marker}${escapeHtml(text)}</code></pre>`;
+    };
+    markdownRenderer.link = ({ href, tokens }): string => {
+        const label = markdownRenderer.parser.parseInline(tokens);
+
+        return safeLink(href)
+            ? `<a href="${escapeHtml(href)}">${label}</a>`
+            : label;
+    };
+    markdownRenderer.image = ({ href, text }): string =>
+        /^\/(?!\/)/.test(href)
+            ? `<img src="${escapeHtml(href)}" alt="${escapeHtml(text)}">`
+            : escapeHtml(text);
+
+    const markdownParser = new Marked({
+        async: false,
+        breaks: false,
+        gfm: true,
+        renderer: markdownRenderer,
+    });
+    const markdownToHtml = (markdown: string): string =>
+        markdownParser.parse(markdown, { async: false });
+    const inlineMarkdown = (markdown: string): string =>
+        markdownParser.parseInline(markdown, { async: false });
 
     const tableFromMarkdown = (markdown: string): string | null => {
         const lines = markdown
@@ -260,96 +310,185 @@
         return `<div class="table-scroll"><table><thead><tr>${headers.map((cell) => `<th>${cell}</th>`).join('')}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
     };
 
-    const markdownToHtml = (markdown: string): string => {
-        const lines = markdown.replaceAll('\r\n', '\n').split('\n');
-        const html: string[] = [];
-        let code: string[] | null = null;
-        let codeLanguage = '';
-        let list: 'ul' | 'ol' | null = null;
+    const htmlToMarkdown = (html: string): string => {
+        const document = new DOMParser().parseFromString(html, 'text/html');
+        const escapeText = (text: string): string =>
+            text.replace(/([\\`*_[\]~])/g, '\\$1');
+        const children = (node: Node): string =>
+            Array.from(node.childNodes, renderNode).join('');
+        const list = (element: Element, depth = 0): string => {
+            const ordered = element.tagName === 'OL';
+            const start = Number(element.getAttribute('start') ?? 1);
 
-        const closeList = (): void => {
-            if (list) {
-                html.push(`</${list}>`);
-                list = null;
-            }
-        };
-
-        for (const line of lines) {
-            if (line.startsWith('```')) {
-                closeList();
-
-                if (code === null) {
-                    code = [];
-                    codeLanguage = line.slice(3).trim();
-                } else {
-                    // ponytail: Trix's document model drops unknown HTML attributes on
-                    // save (no data-language survives), so the language rides along as a
-                    // literal "lang:xxx" first line instead; RichTextContent strips it
-                    // back out before highlighting.
-                    const marker = codeLanguage
-                        ? `lang:${escapeHtml(codeLanguage)}\n`
-                        : '';
-                    html.push(
-                        `<pre><code>${marker}${escapeHtml(code.join('\n'))}</code></pre>`,
+            return Array.from(element.children)
+                .filter((child) => child.tagName === 'LI')
+                .map((item, index) => {
+                    const nestedLists = Array.from(item.children).filter(
+                        (child) =>
+                            child.tagName === 'UL' || child.tagName === 'OL',
                     );
-                    code = null;
-                }
+                    const nestedSet = new Set(nestedLists);
+                    const body = Array.from(item.childNodes)
+                        .filter(
+                            (child) =>
+                                !(child instanceof Element) ||
+                                !nestedSet.has(child),
+                        )
+                        .map(renderNode)
+                        .join('')
+                        .replace(/\s*\n+\s*/g, ' ')
+                        .trim();
+                    const prefix = ordered ? `${start + index}. ` : '- ';
+                    const nested = nestedLists
+                        .map((child) => list(child, depth + 1))
+                        .join('\n');
 
-                continue;
-            }
-
-            if (code !== null) {
-                code.push(line);
-                continue;
-            }
-
-            const heading = line.match(/^(#{1,3})\s+(.+)$/);
-            const unordered = line.match(/^[-*]\s+(.+)$/);
-            const ordered = line.match(/^\d+\.\s+(.+)$/);
-
-            if (heading) {
-                closeList();
-                const level = Math.min(heading[1].length, 3);
-                html.push(
-                    `<h${level}>${inlineMarkdown(heading[2])}</h${level}>`,
-                );
-            } else if (unordered || ordered) {
-                const nextList = unordered ? 'ul' : 'ol';
-
-                if (list !== nextList) {
-                    closeList();
-                    list = nextList;
-                    html.push(`<${list}>`);
-                }
-
-                html.push(
-                    `<li>${inlineMarkdown((unordered || ordered)?.[1] ?? '')}</li>`,
-                );
-            } else if (line.startsWith('> ')) {
-                closeList();
-                html.push(
-                    `<blockquote>${inlineMarkdown(line.slice(2))}</blockquote>`,
-                );
-            } else if (line.trim() === '') {
-                closeList();
-            } else {
-                closeList();
-                html.push(`<p>${inlineMarkdown(line)}</p>`);
-            }
-        }
-
-        closeList();
-
-        if (code !== null) {
-            const marker = codeLanguage
-                ? `lang:${escapeHtml(codeLanguage)}\n`
-                : '';
-            html.push(
-                `<pre><code>${marker}${escapeHtml(code.join('\n'))}</code></pre>`,
+                    return `${'    '.repeat(depth)}${prefix}${body}${nested ? `\n${nested}` : ''}`;
+                })
+                .join('\n');
+        };
+        const table = (element: Element): string => {
+            const rows = Array.from(element.querySelectorAll('tr')).map((row) =>
+                Array.from(row.querySelectorAll('th, td')).map((cell) =>
+                    children(cell)
+                        .replace(/\s*\n+\s*/g, ' ')
+                        .trim()
+                        .replaceAll('|', '\\|'),
+                ),
             );
+
+            if (rows.length === 0 || rows[0].length === 0) {
+                return '';
+            }
+
+            return [
+                `| ${rows[0].join(' | ')} |`,
+                `| ${rows[0].map(() => '---').join(' | ')} |`,
+                ...rows.slice(1).map((row) => `| ${row.join(' | ')} |`),
+            ].join('\n');
+        };
+        const block = (element: Element): string =>
+            children(element)
+                .trim()
+                .replace(/^(\s*)(#{1,3}\s|[-*]\s|\d+\.\s|>\s|```)/, '$1\\$2');
+
+        function renderNode(node: Node): string {
+            if (node.nodeType === Node.TEXT_NODE) {
+                return escapeText(node.textContent ?? '');
+            }
+
+            if (!(node instanceof Element)) {
+                return '';
+            }
+
+            const content = children(node);
+            const tag = node.tagName;
+
+            if (tag === 'BR') {
+                return '\n';
+            }
+
+            if (tag === 'STRONG' || tag === 'B') {
+                return `**${content}**`;
+            }
+
+            if (tag === 'EM' || tag === 'I') {
+                return `*${content}*`;
+            }
+
+            if (tag === 'DEL' || tag === 'S') {
+                return `~~${content}~~`;
+            }
+
+            if (tag === 'CODE' && node.parentElement?.tagName !== 'PRE') {
+                return `\`${node.textContent?.replaceAll('`', '\\`') ?? ''}\``;
+            }
+
+            if (tag === 'PRE') {
+                const raw = node.textContent ?? '';
+                const marker = raw.match(languageMarker);
+                const language = marker?.[1] ?? '';
+                const code = marker ? raw.slice(marker[0].length) : raw;
+
+                return `\`\`\`${language}\n${code.replace(/\n$/, '')}\n\`\`\`\n\n`;
+            }
+
+            if (tag === 'A') {
+                const href = node.getAttribute('href');
+
+                return href ? `[${content}](${href})` : content;
+            }
+
+            if (tag === 'IMG') {
+                const src = node.getAttribute('src');
+
+                return src
+                    ? `![${escapeText(node.getAttribute('alt') ?? '')}](${src})`
+                    : '';
+            }
+
+            if (/^H[1-6]$/.test(tag)) {
+                return `${'#'.repeat(Number(tag[1]))} ${content.trim()}\n\n`;
+            }
+
+            if (tag === 'UL' || tag === 'OL') {
+                return `${list(node)}\n\n`;
+            }
+
+            if (tag === 'BLOCKQUOTE') {
+                return `${content
+                    .trim()
+                    .split('\n')
+                    .map((line) => `> ${line}`)
+                    .join('\n')}\n\n`;
+            }
+
+            if (tag === 'TABLE') {
+                return `${table(node)}\n\n`;
+            }
+
+            if (tag === 'P' || tag === 'DIV') {
+                return `${block(node)}\n\n`;
+            }
+
+            if (tag === 'FIGCAPTION') {
+                return '';
+            }
+
+            return content;
         }
 
-        return html.join('');
+        return children(document.body)
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    };
+
+    const setMode = (nextMode: string): void => {
+        if (
+            (nextMode !== 'rich' && nextMode !== 'markdown') ||
+            nextMode === mode
+        ) {
+            return;
+        }
+
+        if (nextMode === 'markdown') {
+            markdownValue = htmlToMarkdown(hiddenInput.value);
+            markdownDirty = false;
+        } else if (markdownDirty) {
+            const html = markdownToHtml(markdownValue);
+            hiddenInput.value = html;
+            editor.editor?.loadHTML(html);
+            markdownDirty = false;
+        }
+
+        mode = nextMode;
+        closeMentions();
+    };
+
+    const updateMarkdown = (event: Event): void => {
+        markdownValue = (event.currentTarget as HTMLTextAreaElement).value;
+        markdownDirty = true;
+        hiddenInput.value = markdownToHtml(markdownValue);
     };
 
     const looksLikeMarkdown = (text: string): boolean =>
@@ -425,6 +564,10 @@
         imageInput?.click();
     };
 
+    const openFileChooser = (): void => {
+        fileInput?.click();
+    };
+
     const handleImageSelection = (event: Event): void => {
         const input = event.currentTarget as HTMLInputElement;
         const file = input.files?.[0];
@@ -436,6 +579,17 @@
     };
 
     onMount(() => {
+        const form = hiddenInput.form;
+        const resetEditor = (): void => {
+            queueMicrotask(() => {
+                const resetValue = hiddenInput.value;
+
+                markdownValue = htmlToMarkdown(resetValue);
+                markdownDirty = false;
+                editor.editor?.loadHTML(resetValue);
+                closeMentions();
+            });
+        };
         const hideBrokenImage = (image: HTMLImageElement): void => {
             const wrapper =
                 image.closest('figure') ?? image.closest('a') ?? image;
@@ -475,6 +629,7 @@
             }
         };
 
+        form?.addEventListener('reset', resetEditor);
         editor.addEventListener('trix-file-accept', handleFileAccept);
         editor.addEventListener('error', handleImageError, true);
         editor.addEventListener('paste', formatMarkdownPaste);
@@ -490,6 +645,7 @@
         });
 
         return () => {
+            form?.removeEventListener('reset', resetEditor);
             editor.removeEventListener('trix-file-accept', handleFileAccept);
             editor.removeEventListener('error', handleImageError, true);
             editor.removeEventListener('paste', formatMarkdownPaste);
@@ -505,20 +661,79 @@
     });
 </script>
 
-<div class="mb-2 flex items-center justify-between gap-2">
-    <span class="text-xs text-muted-foreground">
-        {t('Markdown supported')}
-        {#if attachmentUploadUrl}
-            · {t('Drop files to attach')}
+<input
+    bind:this={hiddenInput}
+    id={inputId}
+    type="hidden"
+    {name}
+    value={value ?? ''}
+/>
+<div class="rich-text-editor-shell relative" data-mode={mode}>
+    <trix-editor
+        bind:this={editor}
+        id={mode === 'rich' ? id : `${id}-rich`}
+        input={inputId}
+        {placeholder}
+        aria-label={ariaLabel}
+        aria-required={required}
+        aria-hidden={mode === 'markdown'}
+        class="trix-content rich-text-editor"
+    ></trix-editor>
+    {#if mode === 'rich'}
+        <div class="rich-text-editor-insert-tools">
+            {#if attachmentUploadUrl}
+                <input
+                    bind:this={imageInput}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    hidden
+                    disabled={uploadingAttachment}
+                    onchange={handleImageSelection}
+                />
+                <button
+                    type="button"
+                    aria-label={t('Insert image')}
+                    title={t('Insert image')}
+                    onclick={openImageChooser}
+                    disabled={uploadingAttachment}
+                >
+                    <ImagePlus class="size-4" />
+                    <span class="sr-only">{t('Insert image')}</span>
+                </button>
+                <input
+                    bind:this={fileInput}
+                    type="file"
+                    hidden
+                    disabled={uploadingAttachment}
+                    onchange={handleImageSelection}
+                />
+                <button
+                    type="button"
+                    aria-label={t('Insert file')}
+                    title={t('Insert file')}
+                    onclick={openFileChooser}
+                    disabled={uploadingAttachment}
+                >
+                    <Paperclip class="size-4" />
+                    <span class="sr-only">{t('Insert file')}</span>
+                </button>
+            {/if}
+        </div>
+    {/if}
+    <div class="rich-text-editor-mode-tools">
+        {#if mode === 'rich'}
+            <button
+                type="button"
+                aria-label={t('Insert table')}
+                title={t('Insert table')}
+                onclick={() => insertTable()}
+            >
+                <Table2 class="size-4" />
+                <span class="sr-only">{t('Insert table')}</span>
+            </button>
         {/if}
-        {#if uploadingAttachment}
-            · {t('Uploading')}
-        {/if}
-    </span>
-    <div class="flex flex-wrap justify-end gap-2">
-        {#if inCodeBlock}
+        {#if mode === 'rich' && inCodeBlock}
             <select
-                class="min-h-9 rounded-md border bg-background px-2 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 aria-label={t('Code block language')}
                 value={codeLanguage}
                 onchange={(event) => setCodeLanguage(event.currentTarget.value)}
@@ -532,47 +747,42 @@
                 {/each}
             </select>
         {/if}
-        {#if attachmentUploadUrl}
-            <input
-                bind:this={imageInput}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                hidden
-                disabled={uploadingAttachment}
-                onchange={handleImageSelection}
-            />
-            <button
-                type="button"
-                class="inline-flex min-h-9 items-center gap-2 rounded-md border bg-background px-3 text-xs font-semibold hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
-                onclick={openImageChooser}
-                disabled={uploadingAttachment}
-            >
-                <ImagePlus class="size-4" />
-                {t('Insert image')}
-            </button>
-        {/if}
-        <button
-            type="button"
-            class="inline-flex min-h-9 items-center gap-2 rounded-md border bg-background px-3 text-xs font-semibold hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onclick={() => insertTable()}
+        <ToggleGroup.Root
+            type="single"
+            value={mode}
+            onValueChange={setMode}
+            aria-label={t('Editor mode')}
+            class="inline-flex rounded-sm bg-muted p-px"
         >
-            <Table2 class="size-4" />
-            {t('Insert table')}
-        </button>
+            <ToggleGroup.Item
+                value="rich"
+                class="min-h-6 rounded-sm px-1.5 text-xs font-semibold text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm"
+            >
+                {t('Rich text')}
+            </ToggleGroup.Item>
+            <ToggleGroup.Item
+                value="markdown"
+                class="min-h-6 rounded-sm px-1.5 text-xs font-semibold text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm"
+            >
+                Markdown
+            </ToggleGroup.Item>
+        </ToggleGroup.Root>
+        <span class="sr-only" aria-live="polite">
+            {uploadingAttachment ? t('Uploading') : ''}
+        </span>
     </div>
-</div>
-<input id={inputId} type="hidden" {name} value={value ?? ''} />
-<div class="relative">
-    <trix-editor
-        bind:this={editor}
-        {id}
-        input={inputId}
-        {placeholder}
-        aria-label={ariaLabel}
-        aria-required={required}
-        class="trix-content rich-text-editor"
-    ></trix-editor>
-    {#if mentionQuery !== null && mentionMatches.length > 0}
+    {#if mode === 'markdown'}
+        <textarea
+            {id}
+            value={markdownValue}
+            {placeholder}
+            {required}
+            aria-label={ariaLabel}
+            oninput={updateMarkdown}
+            class="rich-text-editor-markdown min-h-32 w-full resize-y bg-card px-3 py-3 font-mono text-sm text-foreground outline-none placeholder:text-muted-foreground"
+        ></textarea>
+    {/if}
+    {#if mode === 'rich' && mentionQuery !== null && mentionMatches.length > 0}
         <ul
             class="absolute z-10 w-56 overflow-hidden rounded-md border bg-popover py-1 shadow-md"
             style={`left: ${mentionPosition.left}px; top: ${mentionPosition.top}px;`}
@@ -595,6 +805,8 @@
         </ul>
     {/if}
 </div>
-<p class="mt-2 text-sm text-destructive" aria-live="polite">
-    {attachmentUploadError}
-</p>
+{#if attachmentUploadError}
+    <p class="mt-2 text-sm text-destructive" aria-live="polite">
+        {attachmentUploadError}
+    </p>
+{/if}

@@ -57,7 +57,11 @@ class TodoActivityNotification extends Notification
      */
     public function via(object $notifiable): array
     {
-        return ['database', 'mail'];
+        return $notifiable instanceof User
+            ? $notifiable->notificationChannels(
+                $this->type === self::Due ? 'assignment_reminder' : 'activity',
+            )
+            : ['database', 'mail'];
     }
 
     /**

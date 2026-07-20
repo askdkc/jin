@@ -30,6 +30,7 @@ use Laravel\Fortify\TwoFactorAuthenticatable;
  * @property Carbon|null $two_factor_confirmed_at
  * @property string|null $remember_token
  * @property int|null $current_team_id
+ * @property array<string, mixed>|null $notification_preferences
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  * @property-read Team|null $currentTeam
@@ -46,10 +47,26 @@ use Laravel\Fortify\TwoFactorAuthenticatable;
  * @property-read Collection<int, DirectMessage> $sentDirectMessages
  * @property-read Collection<int, DirectMessage> $receivedDirectMessages
  */
-#[Fillable(['name', 'email', 'password', 'current_team_id'])]
+#[Fillable(['name', 'email', 'password', 'current_team_id', 'notification_preferences'])]
 #[Hidden(['password', 'two_factor_secret', 'two_factor_recovery_codes', 'remember_token'])]
 class User extends Authenticatable implements PasskeyUser
 {
+    /** @var array<string, bool|string|array<int, int>> */
+    public const DEFAULT_NOTIFICATION_PREFERENCES = [
+        'enabled' => true,
+        'scope' => 'everything',
+        'event_reminders' => true,
+        'assignment_reminders' => true,
+        'in_app' => true,
+        'email' => true,
+        'show_unread_count' => true,
+        'schedule' => 'always',
+        'work_days' => [1, 2, 3, 4, 5],
+        'work_start' => '09:00',
+        'work_end' => '17:00',
+        'timezone' => 'Asia/Tokyo',
+    ];
+
     /** @use HasFactory<UserFactory> */
     use HasFactory, HasTeams, Notifiable, PasskeyAuthenticatable, TwoFactorAuthenticatable;
 
@@ -119,6 +136,81 @@ class User extends Authenticatable implements PasskeyUser
         return $this->hasMany(DirectMessage::class, 'recipient_id');
     }
 
+    /** @return array<string, mixed> */
+    public function notificationPreferences(): array
+    {
+        return array_replace(
+            self::DEFAULT_NOTIFICATION_PREFERENCES,
+            $this->notification_preferences ?? [],
+        );
+    }
+
+    /**
+     * Resolve the channels for an application notification.
+     *
+     * @return array<int, string>
+     */
+    public function notificationChannels(string $category = 'activity'): array
+    {
+        $preferences = $this->notificationPreferences();
+
+        if (! $preferences['enabled']) {
+            return [];
+        }
+
+        if ($preferences['scope'] === 'mentions' && $category !== 'mention') {
+            return [];
+        }
+
+        if ($category === 'assignment_reminder' && ! $preferences['assignment_reminders']) {
+            return [];
+        }
+
+        $channels = $preferences['in_app'] ? ['database'] : [];
+
+        if ($preferences['email'] && $this->isWithinNotificationWindow()) {
+            $channels[] = 'mail';
+        }
+
+        return $channels;
+    }
+
+    public function showsUnreadNotificationCount(): bool
+    {
+        return (bool) $this->notificationPreferences()['show_unread_count'];
+    }
+
+    public function wantsEventReminders(): bool
+    {
+        $preferences = $this->notificationPreferences();
+
+        return (bool) $preferences['enabled'] && (bool) $preferences['event_reminders'];
+    }
+
+    public function isWithinNotificationWindow(): bool
+    {
+        $preferences = $this->notificationPreferences();
+
+        if ($preferences['schedule'] === 'always') {
+            return true;
+        }
+
+        $now = now((string) $preferences['timezone']);
+        $workDays = array_map('intval', (array) $preferences['work_days']);
+
+        if (! in_array($now->dayOfWeekIso, $workDays, true)) {
+            return false;
+        }
+
+        $time = $now->format('H:i');
+        $start = (string) $preferences['work_start'];
+        $end = (string) $preferences['work_end'];
+
+        return $start <= $end
+            ? $time >= $start && $time < $end
+            : $time >= $start || $time < $end;
+    }
+
     /** @return Attribute<string, string> */
     protected function email(): Attribute
     {
@@ -138,6 +230,7 @@ class User extends Authenticatable implements PasskeyUser
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'two_factor_confirmed_at' => 'datetime',
+            'notification_preferences' => 'array',
         ];
     }
 }

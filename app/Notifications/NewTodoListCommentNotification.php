@@ -24,7 +24,9 @@ class NewTodoListCommentNotification extends Notification
      */
     public function via(object $notifiable): array
     {
-        return ['database', 'mail'];
+        return $notifiable instanceof User
+            ? $notifiable->notificationChannels()
+            : ['database', 'mail'];
     }
 
     public function toMail(object $notifiable): MailMessage

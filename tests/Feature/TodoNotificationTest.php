@@ -130,3 +130,28 @@ test('due todo reminders are sent once per day', function () {
             ->where('notifications.0.todoTitle', $todo->title)
             ->where('notifications.0.actorName', null));
 });
+
+test('due todo reminders respect the assignees reminder setting', function () {
+    $owner = User::factory()->create();
+    $assignee = User::factory()->create([
+        'notification_preferences' => [
+            ...User::DEFAULT_NOTIFICATION_PREFERENCES,
+            'assignment_reminders' => false,
+        ],
+    ]);
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($assignee, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([$owner->id, $assignee->id]);
+    $list = TodoList::factory()->for($project)->create();
+    Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->for($assignee, 'assignee')->create([
+        'due_on' => today(),
+    ]);
+
+    $this->artisan('todos:send-due-reminders')
+        ->expectsOutput('0 due reminder(s) sent.')
+        ->assertSuccessful();
+
+    expect($assignee->notifications()->count())->toBe(0);
+});

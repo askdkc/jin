@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Enums\ActivityType;
+use App\Http\Requests\Phase3\SaveMessageBoardPostReactionRequest;
 use App\Http\Requests\Phase3\SaveMessageBoardPostRequest;
 use App\Models\Activity;
 use App\Models\MessageBoardPost;
@@ -85,6 +86,7 @@ class MessageBoardController extends Controller
             'user:id,name',
             'comments' => fn ($query) => $query->with('user:id,name')->oldest(),
             'subscribers' => fn ($query) => $query->whereKey(request()->user()->id),
+            'reactors' => fn ($query) => $query->select('users.id', 'users.name'),
             'attachments' => fn ($query) => $query->with('uploader:id,name')->oldest(),
         ]);
 
@@ -210,6 +212,31 @@ class MessageBoardController extends Controller
         return to_route('projects.messages.show', [$currentTeam, $project, $messageBoardPost]);
     }
 
+    public function toggleReaction(
+        SaveMessageBoardPostReactionRequest $request,
+        Team $currentTeam,
+        Project $project,
+        MessageBoardPost $messageBoardPost,
+    ): RedirectResponse {
+        Gate::authorize('view', $project);
+
+        $userId = $request->user()->id;
+        $reaction = (string) $request->validated('reaction');
+        $current = $messageBoardPost->reactors()
+            ->whereKey($userId)
+            ->first()?->pivot?->getAttribute('reaction');
+
+        if ($current === $reaction) {
+            $messageBoardPost->reactors()->detach($userId);
+        } else {
+            $messageBoardPost->reactors()->syncWithoutDetaching([
+                $userId => ['reaction' => $reaction],
+            ]);
+        }
+
+        return back();
+    }
+
     /** @return array<string, mixed> */
     private function postData(MessageBoardPost $post, bool $canManageProject): array
     {
@@ -225,6 +252,16 @@ class MessageBoardController extends Controller
             'subscribed' => $post->subscribers->isNotEmpty(),
             'notifyCount' => $post->subscribers()->count(),
             'canEdit' => $canManageProject || $post->user_id === $userId,
+            'reactions' => $post->reactors
+                ->groupBy(fn (User $user): string => (string) $user->pivot?->getAttribute('reaction'))
+                ->map(fn ($users, string $reaction): array => [
+                    'reaction' => $reaction,
+                    'count' => $users->count(),
+                    'reacted' => $users->contains('id', $userId),
+                    'names' => $users->pluck('name')->all(),
+                ])
+                ->values()
+                ->all(),
             'attachments' => $post->attachments->map(fn (StoredFile $file): array => [
                 'id' => $file->id,
                 'name' => $file->original_name,

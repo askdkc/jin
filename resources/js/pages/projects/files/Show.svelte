@@ -147,6 +147,7 @@
     let onlyOfficeOpen = $state(false);
     let showRename = $state(false);
     let showReplace = $state(false);
+    let editingCommentId = $state<number | null>(null);
 
     const confirmDelete = (): boolean =>
         window.confirm(t('Are you sure you want to delete this?'));
@@ -475,69 +476,92 @@
                         <div class="rounded-lg border bg-background p-4">
                             <div class="flex items-start justify-between gap-3">
                                 <div class="min-w-0 flex-1">
-                                    <RichTextContent content={comment.body} />
-                                    <p
-                                        class="mt-2 text-xs text-muted-foreground"
-                                    >
-                                        {comment.authorName ||
-                                            t('Deleted user')} · {formatDate(
-                                            comment.createdAt,
-                                        )}
-                                    </p>
-                                </div>
-
-                                {#if comment.canDelete}
-                                    <div
-                                        class="flex shrink-0 items-start gap-1"
-                                    >
-                                        <details>
-                                            <summary
-                                                aria-label={t('Edit')}
-                                                class="[&::-webkit-details-marker]:hidden flex size-7 list-none cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-muted"
-                                            >
-                                                <Pencil class="size-3.5" />
-                                            </summary>
-                                            <Form
-                                                {...CommentController.updateFile.form(
-                                                    [
-                                                        currentTeam.slug,
-                                                        project.id,
-                                                        file.id,
-                                                        comment.id,
-                                                    ],
-                                                )}
-                                                class="mt-3 min-w-[min(32rem,70vw)] space-y-2"
-                                            >
-                                                {#snippet children({
-                                                    errors,
-                                                    processing,
-                                                })}
-                                                    <RichTextEditor
-                                                        id={`file-comment-edit-${comment.id}`}
-                                                        name="body"
-                                                        value={comment.body}
-                                                        required
-                                                        ariaLabel={t('Comment')}
-                                                        mentionables={members}
-                                                        attachmentUploadUrl={AttachmentController.uploadInline.url(
-                                                            [
-                                                                currentTeam.slug,
-                                                                project.id,
-                                                            ],
-                                                        )}
-                                                    />
-                                                    <InputError
-                                                        message={errors.body}
-                                                    />
+                                    {#if editingCommentId === comment.id}
+                                        <Form
+                                            {...CommentController.updateFile.form(
+                                                [
+                                                    currentTeam.slug,
+                                                    project.id,
+                                                    file.id,
+                                                    comment.id,
+                                                ],
+                                            )}
+                                            onSuccess={() =>
+                                                (editingCommentId = null)}
+                                            class="w-full space-y-2"
+                                        >
+                                            {#snippet children({
+                                                errors,
+                                                processing,
+                                            })}
+                                                <RichTextEditor
+                                                    id={`file-comment-edit-${comment.id}`}
+                                                    name="body"
+                                                    value={comment.body}
+                                                    required
+                                                    ariaLabel={t('Comment')}
+                                                    mentionables={members}
+                                                    attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                                        [
+                                                            currentTeam.slug,
+                                                            project.id,
+                                                        ],
+                                                    )}
+                                                />
+                                                <InputError
+                                                    message={errors.body}
+                                                />
+                                                <div class="flex gap-2">
                                                     <Button
                                                         type="submit"
                                                         size="sm"
                                                         disabled={processing}
                                                         >{t('Save')}</Button
                                                     >
-                                                {/snippet}
-                                            </Form>
-                                        </details>
+                                                    <Button
+                                                        type="button"
+                                                        size="sm"
+                                                        variant="outline"
+                                                        disabled={processing}
+                                                        onclick={() =>
+                                                            (editingCommentId =
+                                                                null)}
+                                                        >{t('Cancel')}</Button
+                                                    >
+                                                </div>
+                                            {/snippet}
+                                        </Form>
+                                    {:else}
+                                        <RichTextContent
+                                            content={comment.body}
+                                        />
+                                        <p
+                                            class="mt-2 text-xs text-muted-foreground"
+                                        >
+                                            {comment.authorName ||
+                                                t('Deleted user')} · {formatDate(
+                                                comment.createdAt,
+                                            )}
+                                        </p>
+                                    {/if}
+                                </div>
+
+                                {#if comment.canDelete}
+                                    <div
+                                        class="flex shrink-0 items-start gap-1"
+                                    >
+                                        {#if editingCommentId !== comment.id}
+                                            <button
+                                                type="button"
+                                                aria-label={t('Edit')}
+                                                onclick={() =>
+                                                    (editingCommentId =
+                                                        comment.id)}
+                                                class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted"
+                                            >
+                                                <Pencil class="size-3.5" />
+                                            </button>
+                                        {/if}
                                         <Form
                                             {...CommentController.destroyFile.form(
                                                 [

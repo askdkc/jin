@@ -6,6 +6,7 @@ use App\Support\StoredFilePreviewDispatcher;
 use App\Support\StoredFilePreviewGenerator;
 use Database\Factories\StoredFileFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -65,6 +66,15 @@ class StoredFile extends Model
                     ->dispatchAfterCommit($storedFile->id, $storedFile->path);
             }
         });
+    }
+
+    /**
+     * @param  Builder<StoredFile>  $query
+     * @return Builder<StoredFile>
+     */
+    public function scopeInMaterialLibrary(Builder $query): Builder
+    {
+        return $query->where('path', 'not like', '%/attachments/%');
     }
 
     /** @return BelongsTo<Project, $this> */

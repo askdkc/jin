@@ -7,6 +7,7 @@ use App\Models\Project;
 use App\Models\Team;
 use App\Models\User;
 use App\Notifications\NewMessageCommentNotification;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Notification;
 use Inertia\Testing\AssertableInertia as Assert;
 
@@ -236,6 +237,87 @@ test('message subscribers receive comment notifications without notifying the co
     Notification::assertNotSentTo($subscriber, NewMessageCommentNotification::class);
 });
 
+test('project participants can add change and remove one reaction per message', function () {
+    $owner = User::factory()->create(['name' => 'Owner']);
+    $member = User::factory()->create(['name' => 'Member']);
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($member);
+    $post = MessageBoardPost::factory()->for($project)->for($owner)->create();
+    $reactionRoute = route('projects.messages.reaction.toggle', [$team, $project, $post]);
+
+    $this->actingAs($member)
+        ->post($reactionRoute, ['reaction' => '👍'])
+        ->assertRedirect();
+
+    $this->assertDatabaseHas('message_board_post_reactions', [
+        'message_board_post_id' => $post->id,
+        'user_id' => $member->id,
+        'reaction' => '👍',
+    ]);
+
+    $this->post($reactionRoute, ['reaction' => '確認しました'])
+        ->assertRedirect();
+
+    expect($post->reactors()->count())->toBe(1);
+    $this->assertDatabaseHas('message_board_post_reactions', [
+        'message_board_post_id' => $post->id,
+        'user_id' => $member->id,
+        'reaction' => '確認しました',
+    ]);
+
+    $this->actingAs($owner)
+        ->post($reactionRoute, ['reaction' => '確認しました'])
+        ->assertRedirect();
+
+    $this->actingAs($member)
+        ->get(route('projects.messages.show', [$team, $project, $post]))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('post.reactions.0.reaction', '確認しました')
+            ->where('post.reactions.0.count', 2)
+            ->where('post.reactions.0.reacted', true)
+            ->where(
+                'post.reactions.0.names',
+                fn (Collection $names): bool => $names->sort()->values()->all() === ['Member', 'Owner'],
+            ));
+
+    $this->post($reactionRoute, ['reaction' => '確認しました'])
+        ->assertRedirect();
+
+    $this->assertDatabaseMissing('message_board_post_reactions', [
+        'message_board_post_id' => $post->id,
+        'user_id' => $member->id,
+    ]);
+});
+
+test('message reactions are limited to twenty characters', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $post = MessageBoardPost::factory()->for($project)->for($owner)->create();
+    $reactionRoute = route('projects.messages.reaction.toggle', [$team, $project, $post]);
+    $twentyCharacters = str_repeat('あ', 20);
+
+    $this->actingAs($owner)
+        ->post($reactionRoute, ['reaction' => $twentyCharacters])
+        ->assertRedirect()
+        ->assertSessionHasNoErrors();
+
+    $this->post($reactionRoute, ['reaction' => str_repeat('あ', 21)])
+        ->assertRedirect()
+        ->assertSessionHasErrors('reaction');
+
+    $this->assertDatabaseHas('message_board_post_reactions', [
+        'message_board_post_id' => $post->id,
+        'user_id' => $owner->id,
+        'reaction' => $twentyCharacters,
+    ]);
+});
+
 test('message routes reject non participants and cross project bindings', function () {
     $owner = User::factory()->create();
     $member = User::factory()->create();
@@ -265,4 +347,16 @@ test('message routes reject non participants and cross project bindings', functi
     $this->actingAs($member)
         ->patch(route('projects.messages.subscription', [$team, $visibleProject, $post]))
         ->assertNotFound();
+
+    $this->actingAs($member)
+        ->post(route('projects.messages.reaction.toggle', [$team, $visibleProject, $post]), [
+            'reaction' => '👍',
+        ])
+        ->assertNotFound();
+
+    $this->actingAs($member)
+        ->post(route('projects.messages.reaction.toggle', [$team, $otherProject, $post]), [
+            'reaction' => '👍',
+        ])
+        ->assertForbidden();
 });

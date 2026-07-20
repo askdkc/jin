@@ -57,6 +57,7 @@ class ProjectMaterialController extends Controller
 
         if ($type === null || $type === 'file') {
             $items = $items->concat($project->storedFiles()
+                ->inMaterialLibrary()
                 ->with(['uploader:id,name', 'materialFolder:id,name'])
                 ->when(
                     $folderId !== null,
@@ -107,7 +108,11 @@ class ProjectMaterialController extends Controller
             'project' => ['id' => $project->id, 'name' => $project->name],
             'items' => $items->sortByDesc('updatedAt')->values(),
             'folders' => $project->materialFolders()
-                ->withCount(['documents', 'storedFiles', 'externalLinks'])
+                ->withCount([
+                    'documents',
+                    'storedFiles' => fn ($query) => $query->inMaterialLibrary(),
+                    'externalLinks',
+                ])
                 ->orderBy('position')
                 ->get()
                 ->map(fn (MaterialFolder $folder): array => [

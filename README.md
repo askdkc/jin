@@ -108,7 +108,7 @@ Dockerは必須ではありません。公式の対応範囲に入るOSでは、
 
 | OS           | 推奨                                         | ネイティブ状態                                   | 注意点                                                                             |
 | ------------ | -------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| macOS        | Docker Desktop（開発・受入れ）またはLinux VM | DocumentServerのネイティブサーバーパッケージなし | Desktop EditorsはDocumentServerではない。本番はLinux。                             |
+| macOS 26     | Apple container（開発・受入れ）またはLinux VM | DocumentServerのネイティブサーバーパッケージなし | Apple siliconが必要。Desktop EditorsはDocumentServerではない。本番はLinux。        |
 | Ubuntu 24.04 | DEBまたはDocker                              | DEBは受入れ可能                                  | 公式DEB要件を満たすNGINXを用意し、stagingで描画を確認する。                        |
 | Ubuntu 26.04 | Dockerを優先、DEBは評価用                    | DEBは評価経路                                    | ネイティブ要件に明示されていないため、依存関係・描画を受入れ確認する。             |
 | AlmaLinux 9  | RPMまたはDocker                              | RHEL 9互換の派生経路                             | AlmaLinux自体は公式一覧に明記されない。stagingで検証する。                         |
@@ -117,22 +117,55 @@ Dockerは必須ではありません。公式の対応範囲に入るOSでは、
 
 ネイティブDEB/RPMは2-core 2 GHz以上、空きディスク40 GB以上、swap 4 GB以上を基本要件とし、DEBはホスト依存でRAM 2 GB以上、RPMの公式一覧はCentOS Stream 9 / RHEL 8 / 9です。いずれもNGINX 1.30以上が必要です。Docker公式ガイドはamd64 Linux、2-core 2 GHz以上、RAM 4 GB以上、swap 4 GB以上、空きディスク40 GB以上を記載しています。現在の`onlyoffice/documentserver:9.4.0.1`はamd64/arm64のmanifestがありますが、arm64は対象環境での受入れ確認を必須にします。
 
-#### macOS（Docker Desktop）
+#### macOS 26（Apple container）
 
-macOSにはDocumentServerのネイティブサーバーパッケージがありません。Desktop Editorsを代用せず、ローカル開発・受入れは[Docker Desktopの公式macOS手順](https://docs.docker.com/desktop/setup/install/mac-install/)で行うか、要件を満たすLinux VMを使います。本番DocumentServerはLinuxへ配置します。
+macOSにはDocumentServerのネイティブサーバーパッケージがありません。Desktop Editorsを代用せず、ローカル開発・受入れはApple公式の[`container`](https://github.com/apple/container)または要件を満たすLinux VMで行います。本番DocumentServerはLinuxへ配置します。
 
-Docker DesktopのSettings > ResourcesでDocker VMに少なくとも2 CPU、RAM 4 GB、swap 4 GBを割り当てます。swapの既定値は1 GBなので変更し、ホスト側の空きディスクも40 GB以上にします。Apple Siliconではarm64コンテナのhealthcheck、対象Office形式、原本URLの往復を受入れ確認してください。
+`container`はApple silicon搭載MacとmacOS 26を必要とし、それ以前のmacOSはサポート対象外です。[Releases](https://github.com/apple/container/releases)から最新の署名済みインストーラを導入し、システムを起動します。
 
 ```bash
-open -a Docker
-docker info
-docker version
-docker run --rm hello-world
+container system start
+container run --rm docker.io/library/alpine:latest uname -m
 ```
 
-Docker Desktopでは`host.docker.internal`を使い、Linux Docker VMのbridge IPへPHPをbindしません。ホストLaravelを使う場合も、Docker Desktopから到達できることを確認し、必要ならローカルのfirewall/EDRで接続元を制限します。これは開発用であり、本番でPHPを`0.0.0.0`へ公開する案内ではありません。
+各コンテナは軽量VMで動作し、既定のリソースはDocumentServerには不足します。次の例では4 CPUとRAM 4 GBを明示し、永続データをmacOSホスト上へ保存します。ホスト側の空きディスクも40 GB以上確保してください。
 
-Docker Desktopの商用利用や有償サブスクリプションの条件は、組織規模と用途によって異なるため、[Dockerの料金・サブスクリプション情報](https://www.docker.com/pricing/)を導入前に確認してください。これは法的助言ではありません。
+```bash
+export ONLYOFFICE_JWT_SECRET="$(openssl rand -hex 32)"
+export ONLYOFFICE_DATA_DIR="$HOME/Library/Application Support/Jin/onlyoffice"
+mkdir -p "$ONLYOFFICE_DATA_DIR"/{data,logs,cache,db}
+
+container run -d \
+  --name onlyoffice-documentserver \
+  --cpus 4 \
+  --memory 4g \
+  -p 127.0.0.1:8081:80 \
+  --env JWT_ENABLED=true \
+  --env JWT_SECRET="$ONLYOFFICE_JWT_SECRET" \
+  --env PLUGINS_ENABLED=false \
+  --env ALLOW_PRIVATE_IP_ADDRESS=true \
+  --volume "$ONLYOFFICE_DATA_DIR/data:/var/www/onlyoffice/Data" \
+  --volume "$ONLYOFFICE_DATA_DIR/logs:/var/log/onlyoffice" \
+  --volume "$ONLYOFFICE_DATA_DIR/cache:/var/lib/onlyoffice" \
+  --volume "$ONLYOFFICE_DATA_DIR/db:/var/lib/postgresql" \
+  docker.io/onlyoffice/documentserver:9.4.0.1
+```
+
+macOSホストのLaravelへDocumentServerから到達させる場合は、Apple公式手順どおり`host.container.internal`を登録します。
+
+```bash
+sudo container system dns create host.container.internal --localhost 203.0.113.113
+```
+
+このlocalhost DNS domainを作成するとiCloud Private Relayが無効になります。また、ホスト再起動でpacket filter ruleが消えた場合は同じコマンドを再実行してください。`.env`の`APP_ONLYOFFICE_INTERNAL_URL`には`http://host.container.internal:8000`を設定します。ホストLaravelを`0.0.0.0`で公開せず、ローカルfirewall/EDRで接続元を制限してください。
+
+`container`にはこのREADMEで使えるDockerの`--restart unless-stopped`相当を前提にしません。Mac再起動後は明示的に再開し、失敗時はログを確認します。
+
+```bash
+container system start
+container start onlyoffice-documentserver
+container logs onlyoffice-documentserver
+```
 
 #### Ubuntu 24.04 / 26.04（DEBまたはDocker）
 
@@ -245,11 +278,11 @@ sudo systemctl enable --now docker.service
 sudo docker run --rm hello-world
 ```
 
-#### Docker共通の事前確認と起動
+#### Linux Docker共通の事前確認と起動
 
-Docker公式ガイドのDocumentServer要件は、amd64 Linux、2 GHz以上のdual-core CPU、RAM 4 GB以上、空きディスク40 GB以上、swap 4 GB以上です。Docker Desktopでは前記のResources設定を使います。
+Docker公式ガイドのDocumentServer要件は、amd64 Linux、2 GHz以上のdual-core CPU、RAM 4 GB以上、空きディスク40 GB以上、swap 4 GB以上です。
 
-次の事前確認blockは**Linux Docker Engine専用**です。macOSでは`nproc`、`free`、`swapon`やホスト上の`/var/lib/docker`を使わず、Docker DesktopのSettings > Resourcesと`docker info`で確認します。LinuxではDocker導入後に次を確認します。swapの作成方法はOSとファイルシステムに依存するため、Btrfsでは各OSの公式手順に従ってください。
+次の事前確認blockは**Linux Docker Engine専用**です。Docker導入後に次を確認します。swapの作成方法はOSとファイルシステムに依存するため、Btrfsでは各OSの公式手順に従ってください。
 
 ```bash
 uname -m
@@ -260,7 +293,7 @@ df -h /var/lib/docker
 sudo docker version
 ```
 
-host-devでは通常のbridgeである`jin-internal`を使えますが、これはegress bridgeであり、隔離を意味しません。Linux rootfulでは`sudo docker`を使い、Docker Desktopでは`sudo`を付けません。productionでコンテナ化したLaravelとDocumentServerを隔離する場合は、専用の内部networkを作ります。
+host-devでは通常のbridgeである`jin-internal`を使えますが、これはegress bridgeであり、隔離を意味しません。Linux rootfulでは`sudo docker`を使います。productionでコンテナ化したLaravelとDocumentServerを隔離する場合は、専用の内部networkを作ります。
 
 ```bash
 # host-dev（通常のegress bridge）
@@ -272,7 +305,7 @@ sudo docker network create --internal jin-production-internal
 
 production例では、後述の`docker run`の`--network jin-internal`を`--network jin-production-internal`へ読み替え、Laravelも同じnetworkへ接続します。外部依存が必要なproduction構成で`--internal`を使わない場合は、DocumentServerとLaravelのegressを必要な宛先へallowlistしてください。既存の`jin-production-internal`を削除・再作成するコマンドは載せていません。環境に既存networkがある場合は、接続先とegress policyを先に確認します。
 
-次の例は、Docker Engineでは`sudo`を付け、Docker Desktopでは外して実行します。`ONLYOFFICE_JWT_SECRET`はJinの`.env`にも同じ値を設定し、ログやREADMEへ書きません。DockerのJWTは`local.json`を編集せず、必ず環境変数で指定します。
+次の例はLinux Docker Engineで実行します。必要に応じて`docker`へ`sudo`を付けてください。`ONLYOFFICE_JWT_SECRET`はJinの`.env`にも同じ値を設定し、ログやREADMEへ書きません。DockerのJWTは`local.json`を編集せず、必ず環境変数で指定します。
 
 ```bash
 export ONLYOFFICE_JWT_SECRET="$(openssl rand -hex 32)"
@@ -293,7 +326,7 @@ docker run -d \
   onlyoffice/documentserver:9.4.0.1
 ```
 
-`-p 127.0.0.1:8081:80`はhost loopbackだけへの公開です。LinuxでホストLaravelへ到達させる場合だけ、起動引数に`--add-host host.docker.internal:host-gateway`を追加します。Docker Desktopでは`host.docker.internal`が組み込みで解決されるため、この引数とLinux bridge IPの手動設定は不要です。
+`-p 127.0.0.1:8081:80`はhost loopbackだけへの公開です。LinuxでホストLaravelへ到達させる場合だけ、起動引数に`--add-host host.docker.internal:host-gateway`を追加します。
 
 Dockerのpublished portは環境によってufw/firewalldの意図したフィルタを迂回することがありますが、上記はpublic interfaceへ開きません。本番では`127.0.0.1:8081`をTLS対応reverse proxyの`https://office.example.com`へ接続します。DocumentServerを直接インターネット公開せず、WebSocketの`Upgrade`/`Connection`ヘッダー、十分なproxy timeout、大容量responseを扱える設定をONLYOFFICE公式例に合わせます。パスprefixではなく専用originを推奨します。
 
@@ -329,11 +362,11 @@ sudo systemctl restart ds-converter ds-docservice ds-metrics
 }
 ```
 
-RPMでは上の`ONLYOFFICE_JWT_SECRET`の値を3か所の`<same-64-hex-secret>`へ安全に設定します。ネイティブのsecretはJinの`ONLYOFFICE_JWT_SECRET`と同じ値にし、秘密鍵をコミット・ログ・ブラウザへ出しません。Dockerではこの`local.json`編集を行わず、コンテナ再作成時の`JWT_ENABLED`/`JWT_SECRET`環境変数を更新します。
+RPMでは上の`ONLYOFFICE_JWT_SECRET`の値を3か所の`<same-64-hex-secret>`へ安全に設定します。ネイティブのsecretはJinの`ONLYOFFICE_JWT_SECRET`と同じ値にし、秘密鍵をコミット・ログ・ブラウザへ出しません。Apple `container`とDockerではこの`local.json`編集を行わず、コンテナ再作成時の`JWT_ENABLED`/`JWT_SECRET`環境変数を更新します。
 
 #### 全方式共通の起動確認
 
-DocumentServerの初回初期化には時間がかかるため、DEB/RPM/Snap/Dockerのいずれでもone-shotの確認にせず、接続2秒・応答3秒のcurl timeoutを設定して最大120秒待ちます。deadlineまでreadyにならない場合は非0で終了し、各方式のservice/container logを確認してください。
+DocumentServerの初回初期化には時間がかかるため、DEB/RPM/Snap/Apple `container`/Dockerのいずれでもone-shotの確認にせず、接続2秒・応答3秒のcurl timeoutを設定して最大120秒待ちます。deadlineまでreadyにならない場合は非0で終了し、各方式のservice/container logを確認してください。
 
 ```bash
 ready=false
@@ -362,7 +395,10 @@ JinとDocumentServerには**同じJWT秘密鍵**を設定します。秘密鍵�
 ONLYOFFICE_ENABLED=true
 ONLYOFFICE_DOCUMENT_SERVER_URL=http://127.0.0.1:8081
 ONLYOFFICE_PUBLIC_URL=https://office.example.com
-APP_ONLYOFFICE_INTERNAL_URL=http://host.docker.internal:8000
+# macOSのApple containerからホストLaravelへ接続する場合
+APP_ONLYOFFICE_INTERNAL_URL=http://host.container.internal:8000
+# Linux DockerからホストLaravelへ接続する場合は次の値へ変更
+# APP_ONLYOFFICE_INTERNAL_URL=http://host.docker.internal:8000
 ONLYOFFICE_JWT_SECRET=replace-with-the-same-64-hex-secret
 ONLYOFFICE_INTERNAL_DOWNLOAD_TTL=300
 ONLYOFFICE_ALLOW_DOWNLOAD=false
@@ -380,15 +416,17 @@ php artisan stored-files:backfill-previews
 
 3方向のURLは混同しないでください。
 
-| 通信                                      | 設定                             | 例                                                                                          |
-| ----------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------- |
-| ブラウザ → DocumentServer API/iframe      | `ONLYOFFICE_PUBLIC_URL`          | `https://office.example.com`                                                                |
-| Laravel → DocumentServer内部経路          | `ONLYOFFICE_DOCUMENT_SERVER_URL` | ホストLaravel: `http://127.0.0.1:8081` / Docker Laravel: `http://onlyoffice-documentserver` |
-| DocumentServer → Laravelの期限付き原本URL | `APP_ONLYOFFICE_INTERNAL_URL`    | ホストLaravel: `http://host.docker.internal:8000` / Docker Laravel: `http://app`            |
+| 通信                                      | 設定                             | 例                                                                                                                                                            |
+| ----------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ブラウザ → DocumentServer API/iframe      | `ONLYOFFICE_PUBLIC_URL`          | `https://office.example.com`                                                                                                                                  |
+| Laravel → DocumentServer内部経路          | `ONLYOFFICE_DOCUMENT_SERVER_URL` | ホストLaravel: `http://127.0.0.1:8081` / Docker Laravel: `http://onlyoffice-documentserver`                                                                   |
+| DocumentServer → Laravelの期限付き原本URL | `APP_ONLYOFFICE_INTERNAL_URL`    | macOS Apple container: `http://host.container.internal:8000` / Linux Docker: `http://host.docker.internal:8000` / Docker Laravel: `http://app`                 |
 
 #### ホストLaravelとのネットワーク
 
-ネイティブDocumentServerとLaravelが同じホストにある場合、Laravelからはloopback公開portの`ONLYOFFICE_DOCUMENT_SERVER_URL=http://127.0.0.1:8081`を使います。Docker DocumentServerからホストLaravelへ原本URLを返す場合は、Dockerから到達できるURLが別途必要です。Laravelをコンテナ化できる場合は、LaravelとDocumentServerを同じDocker networkへ接続し、サービス名を使う構成を優先します。
+ネイティブDocumentServerとLaravelが同じホストにある場合、Laravelからはloopback公開portの`ONLYOFFICE_DOCUMENT_SERVER_URL=http://127.0.0.1:8081`を使います。コンテナのDocumentServerからホストLaravelへ原本URLを返す場合は、コンテナから到達できるURLが別途必要です。LinuxでLaravelをコンテナ化できる場合は、LaravelとDocumentServerを同じDocker networkへ接続し、サービス名を使う構成を優先します。
+
+macOSのApple `container`では前述のlocalhost DNS domainを作成し、`APP_ONLYOFFICE_INTERNAL_URL=http://host.container.internal:8000`を使います。Linux Docker用の`host.docker.internal`と混同しないでください。
 
 Linux rootfulでホストLaravelを使う一時検証では、bridge gatewayを`sudo docker network inspect`で確認し、そのIPにだけLaravel開発serverをbindします。`composer dev`の`localhost` bindはDocumentServerコンテナから到達できません。外部interfaceへ無制限にbindしないでください。
 
@@ -397,7 +435,7 @@ DOCKER_HOST_GATEWAY="$(sudo docker network inspect bridge --format '{{(index .IP
 php artisan serve --host="$DOCKER_HOST_GATEWAY" --port=8000
 ```
 
-この場合は`APP_ONLYOFFICE_INTERNAL_URL=http://host.docker.internal:8000`とし、DocumentServer起動時にLinuxだけ`--add-host host.docker.internal:host-gateway`を指定します。macOSではDocker VMのbridge IPへPHPをbindせず、`host.docker.internal`の到達性を確認してください。ホストlistenerを使うのはDocker Desktopから到達でき、かつfirewall/EDRで開発元を制限できる場合だけです。本番でPHPを`0.0.0.0`へ公開する構成にはしません。
+この場合は`APP_ONLYOFFICE_INTERNAL_URL=http://host.docker.internal:8000`とし、DocumentServer起動時に`--add-host host.docker.internal:host-gateway`を指定します。ホストlistenerを使うのはfirewall/EDRで開発元を制限できる場合だけです。本番でPHPを`0.0.0.0`へ公開する構成にはしません。
 
 常設環境ではLaravelもコンテナ化して両者を同じnetworkへ接続し、`ONLYOFFICE_DOCUMENT_SERVER_URL=http://onlyoffice-documentserver`、`APP_ONLYOFFICE_INTERNAL_URL=http://app`のようなサービス名を使うか、Docker networkからのみ到達できる既存reverse proxyを使用します。productionのnetworkは`docker network create --internal`で作った専用network、または明示的なegress allowlistを使います。DocumentServer側で`localhost`を指定するとDocumentServer自身を指すため、Laravelへ到達しません。
 
@@ -409,13 +447,13 @@ DocumentServer向け原本URLは、ログインsessionに依存しない相対�
 
 - **Download failed**: DocumentServerのhostまたはコンテナ内から`APP_ONLYOFFICE_INTERNAL_URL`へ到達できるか確認します。署名URLは300秒で失効し、ファイル置換後の古いversionは`410 Gone`です。調査ログへ署名URL全文を残さないでください。Dockerで内部IPを使う場合はnetwork policyと`ALLOW_PRIVATE_IP_ADDRESS=true`を確認します。
 - **document key error / 古い文書内容が表示される**: Jinの「新しいバージョンで置き換える」を使うと保存pathとkeyが変わります。storage上の同一pathをDB外から直接上書きしないでください。DocumentServerとLaravel双方の再起動前に、設定cacheを`php artisan optimize:clear`で消します。
-- **JWT validation failed**: Jinの`ONLYOFFICE_JWT_SECRET`と、Dockerの`JWT_SECRET`またはネイティブ`local.json`の3つのsecretが完全一致し、JWT validationが有効であることを確認して両方を再起動します。JWT全文や秘密鍵をログへ出さないでください。
+- **JWT validation failed**: Jinの`ONLYOFFICE_JWT_SECRET`と、コンテナの`JWT_SECRET`またはネイティブ`local.json`の3つのsecretが完全一致し、JWT validationが有効であることを確認して両方を再起動します。JWT全文や秘密鍵をログへ出さないでください。
 - **Mixed Content**: JinがHTTPSなら`ONLYOFFICE_PUBLIC_URL`もHTTPSにします。内部URLがHTTPでもブラウザへ直接ロードされないため、公開URLと混同しません。
 - **CORS**: 設定APIはJinのsame-originです。DocumentServer側のCORSを`*`で開放せず、公開origin、リバースプロキシ、WebSocketヘッダー、CSPを確認します。
-- **DocumentServerからLaravelへ到達できない**: コンテナ内の`localhost`は使わず、Dockerサービス名または`host.docker.internal`を使います。Laravel側のIP制限、DNS、内部TLSのCA、firewallも確認します。
+- **DocumentServerからLaravelへ到達できない**: コンテナ内の`localhost`は使わず、macOSのApple `container`では`host.container.internal`、Linux DockerではDockerサービス名または`host.docker.internal`を使います。Laravel側のIP制限、DNS、内部TLSのCA、firewallも確認します。
 - **ブラウザからDocumentServerへ到達できない**: `${ONLYOFFICE_PUBLIC_URL}/web-apps/apps/api/documents/api.js`へブラウザから到達できるか、DNS/TLS/CSPとリバースプロキシを確認します。Jinのファイル一覧だけではこのAPIへ接続しません。
 - **プレビュー領域の高さが0**: 標準componentは`min-height: 70dvh`を確保します。独自レイアウトで親要素へ`height: 0`や`display: none`を指定していないか確認します。
-- **Viewer初期化失敗 / DocumentServer停止**: dialogの「既存プレビューを開く」またはダウンロードを使います。DocumentServerの`/healthcheck`、container log、ブラウザconsoleを確認します。ユーザー画面には内部URL、JWT、秘密鍵を表示しません。
+- **Viewer初期化失敗 / DocumentServer停止**: dialogの「既存プレビューを開く」またはダウンロードを使います。DocumentServerの`/healthcheck`、`container logs onlyoffice-documentserver`またはDocker log、ブラウザconsoleを確認します。ユーザー画面には内部URL、JWT、秘密鍵を表示しません。
 
 ### 公式リファレンス
 
@@ -425,14 +463,15 @@ DocumentServer向け原本URLは、ログインsessionに依存しない相対�
 - [ONLYOFFICE公式Snapインストールガイド](https://helpcenter.onlyoffice.com/docs/installation/docs-community-install-from-snap.aspx)
 - [ONLYOFFICE公式JWT設定ガイド](https://helpcenter.onlyoffice.com/docs/installation/docs-configure-jwt.aspx)
 - [ONLYOFFICE公式Dockerインストールガイド](https://helpcenter.onlyoffice.com/docs/installation/docs-community-install-docker.aspx)
-- [Docker Desktop for Macの公式インストール手順](https://docs.docker.com/desktop/setup/install/mac-install/)
+- [Apple container公式リポジトリ](https://github.com/apple/container)
+- [Apple container公式How-to](https://github.com/apple/container/blob/main/docs/how-to.md)
+- [Apple container公式Releases](https://github.com/apple/container/releases)
 - [Docker Engine公式インストール一覧](https://docs.docker.com/engine/install/)
 - [Docker Engine公式Ubuntu手順](https://docs.docker.com/engine/install/ubuntu/)
 - [Docker Engine公式CentOSリポジトリ手順](https://docs.docker.com/engine/install/centos/)
 - [NGINX公式パッケージ手順](https://nginx.org/en/linux_packages.html)
 - [ArchWiki Snap](https://wiki.archlinux.org/title/Snap)
 - [ArchWiki Docker](https://wiki.archlinux.org/title/Docker)
-- [Dockerの料金・サブスクリプション情報](https://www.docker.com/pricing/)
 
 ## ローカルセットアップ
 

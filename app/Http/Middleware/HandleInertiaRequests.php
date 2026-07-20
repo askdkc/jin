@@ -62,13 +62,15 @@ class HandleInertiaRequests extends Middleware
             'teams' => fn () => $user?->toUserTeams(includeCurrent: true) ?? [],
             'notificationSummary' => fn (): array => [
                 'unreadCount' => $user && $currentTeam
-                    ? $user->unreadNotifications()
-                        ->where('data->teamId', $currentTeam->id)
-                        ->whereIn(
-                            'data->projectId',
-                            Project::query()->visibleTo($user, $currentTeam)->select('projects.id'),
-                        )
-                        ->count()
+                    ? ($user->showsUnreadNotificationCount()
+                        ? $user->unreadNotifications()
+                            ->where('data->teamId', $currentTeam->id)
+                            ->whereIn(
+                                'data->projectId',
+                                Project::query()->visibleTo($user, $currentTeam)->select('projects.id'),
+                            )
+                            ->count()
+                        : 0)
                     : 0,
             ],
             'navigationProjects' => fn (): array => $user && $currentTeam
@@ -156,9 +158,9 @@ class HandleInertiaRequests extends Middleware
             ->reverse()
             ->values();
 
-        $reminder = $events
+        $reminder = $user->wantsEventReminders() ? $events
             ->first(fn (ScheduleEvent $event): bool => ! $event->all_day
-                && $event->starts_at->between(now(), now()->addMinutes(15)));
+                && $event->starts_at->between(now(), now()->addMinutes(15))) : null;
 
         return [
             'tasks' => $tasks,

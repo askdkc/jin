@@ -24,6 +24,19 @@ it('treats an empty Trix document as empty input', function () {
     expect(RichText::sanitize('<div><br></div>'))->toBe('');
 });
 
+it('keeps Markdown heading levels and nested lists', function () {
+    $html = '<h1>見出し1</h1><h2>見出し2</h2><h3>見出し3</h3>'
+        .'<ul><li>箇条書き<ul><li>ネスト</li></ul></li></ul>'
+        .'<ol start="3"><li>番号付き</li></ol>';
+
+    expect(RichText::sanitize($html))
+        ->toContain('<h1>見出し1</h1>')
+        ->toContain('<h2>見出し2</h2>')
+        ->toContain('<h3>見出し3</h3>')
+        ->toContain('<ul><li>箇条書き<ul><li>ネスト</li></ul></li></ul>')
+        ->toContain('<ol start="3"><li>番号付き</li></ol>');
+});
+
 it('keeps a relative image thumbnail but strips a remote one', function () {
     $sanitized = RichText::sanitize('<p><img src="/projects/1/files/2/preview" alt="cat.png"></p>');
 
@@ -89,6 +102,9 @@ it('supports visible inline attachment uploads in every project rich text editor
     expect($editor)
         ->toContain('onclick={openImageChooser}')
         ->toContain("{t('Insert image')}")
+        ->toContain('onclick={openFileChooser}')
+        ->toContain("{t('Insert file')}")
+        ->toContain('bind:this={fileInput}')
         ->toMatch('/<input\s+[^>]*type="file"[^>]*accept="image\/jpeg,image\/png,image\/webp"[^>]*hidden[^>]*>/s')
         ->toContain('onchange={handleImageSelection}')
         ->toContain("editor.addEventListener('trix-file-accept', handleFileAccept)")
@@ -144,6 +160,90 @@ it('supports visible inline attachment uploads in every project rich text editor
     $translations = json_decode(file_get_contents(lang_path('ja.json')), true);
 
     expect($translations['Insert image'] ?? null)->toBe('画像を挿入')
+        ->and($translations['Insert file'] ?? null)->toBe('ファイルを挿入')
         ->and($translations['Attachment upload failed. Please try again.'] ?? null)
         ->toBe('添付ファイルのアップロードに失敗しました。もう一度お試しください。');
+});
+
+it('expands the message comment editor only when requested', function () {
+    $page = file_get_contents(resource_path('js/pages/projects/messages/Show.svelte'));
+
+    expect($page)
+        ->toContain('let commentComposerOpen = $state(false)')
+        ->toContain('onclick={openCommentComposer}')
+        ->toContain('{#if commentComposerOpen}')
+        ->toContain('onSuccess={() => (commentComposerOpen = false)}')
+        ->toContain('onclick={() =>')
+        ->toContain('(commentComposerOpen = false)')
+        ->toContain("[&_trix-editor.rich-text-editor]:!min-h-56")
+        ->toContain("{t('Add your comment…')}");
+});
+
+it('edits comments in the body column without rendering the original body twice', function () {
+    $pages = [
+        'messages/Show.svelte',
+        'todos/Show.svelte',
+        'todos/ListShow.svelte',
+        'files/Show.svelte',
+    ];
+
+    foreach ($pages as $page) {
+        $source = file_get_contents(resource_path("js/pages/projects/{$page}"));
+
+        expect($source)
+            ->toContain('let editingCommentId = $state<number | null>(null)')
+            ->toContain('{#if editingCommentId === comment.id}')
+            ->toContain('{:else}')
+            ->toMatch('/editingCommentId\s*=\s*comment\.id/')
+            ->toMatch('/editingCommentId\s*=\s*null/')
+            ->not->toContain('min-w-[min(32rem,70vw)]')
+            ->not->toContain('min-w-[min(34rem,70vw)]');
+    }
+});
+
+it('switches every rich text editor between rich text and Markdown without changing form payloads', function () {
+    $editor = file_get_contents(resource_path('js/components/RichTextEditor.svelte'));
+    $css = file_get_contents(resource_path('css/app.css'));
+
+    expect($editor)
+        ->toContain("type EditorMode = 'rich' | 'markdown'")
+        ->toContain("import { Marked, Renderer } from 'marked'")
+        ->toContain('Trix.config.blockAttributes[`heading${level}`]')
+        ->toContain('<ToggleGroup.Root')
+        ->toContain('onValueChange={setMode}')
+        ->toContain("if (nextMode === 'markdown')")
+        ->toContain('markdownValue = htmlToMarkdown(hiddenInput.value)')
+        ->toContain('hiddenInput.value = markdownToHtml(markdownValue)')
+        ->toContain('editor.editor?.loadHTML(html)')
+        ->toContain('<textarea')
+        ->toContain('oninput={updateMarkdown}')
+        ->toContain('data-mode={mode}')
+        ->toContain('rich-text-editor-insert-tools')
+        ->toContain('rich-text-editor-mode-tools')
+        ->toMatch('/<input\s+[^>]*type="hidden"[^>]*\{name\}[^>]*>/s')
+        ->not->toContain('Rich text mode')
+        ->not->toContain("{t('Markdown supported')}");
+
+    expect($css)
+        ->toContain('.rich-text-editor-shell > trix-toolbar')
+        ->toContain('grid-template-columns: auto minmax(0, 1fr) auto')
+        ->toContain('trix-editor.rich-text-editor');
+
+    $translations = json_decode(file_get_contents(lang_path('ja.json')), true);
+
+    expect($translations['Rich text'] ?? null)->toBe('リッチテキスト')
+        ->and($translations['Markdown mode'] ?? null)->toBe('Markdownモード');
+});
+
+it('clears the visible rich text document when its Inertia form resets', function () {
+    $editor = file_get_contents(resource_path('js/components/RichTextEditor.svelte'));
+
+    expect($editor)
+        ->toContain('const form = hiddenInput.form')
+        ->toContain("form?.addEventListener('reset', resetEditor)")
+        ->toContain("form?.removeEventListener('reset', resetEditor)")
+        ->toContain('const resetValue = hiddenInput.value')
+        ->toContain('editor.editor?.loadHTML(resetValue)')
+        ->toContain('markdownValue = htmlToMarkdown(resetValue)')
+        ->toContain('markdownDirty = false');
 });

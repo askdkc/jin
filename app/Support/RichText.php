@@ -63,6 +63,11 @@ class RichText
             ->allowElement('div')
             ->allowElement('em')
             ->allowElement('h1')
+            ->allowElement('h2')
+            ->allowElement('h3')
+            ->allowElement('h4')
+            ->allowElement('h5')
+            ->allowElement('h6')
             // ponytail: img is restricted to relative (same-origin) src only, so pasted/typed
             // HTML can never embed a remote tracking pixel — widen with allowMediaHosts() if
             // cross-origin thumbnails are ever needed. figure has no allowed attributes, which
@@ -72,7 +77,7 @@ class RichText
             ->allowMediaSchemes([])
             ->allowRelativeMedias()
             ->allowElement('li')
-            ->allowElement('ol')
+            ->allowElement('ol', ['start'])
             ->allowElement('p')
             ->allowElement('pre')
             ->allowElement('strong')

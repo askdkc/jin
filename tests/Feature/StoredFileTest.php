@@ -38,6 +38,12 @@ test('materials library is served from the files URL with ordered folders and fi
         'mime_type' => 'application/pdf',
         'size' => 2048,
     ]);
+    StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'material_folder_id' => $laterFolder->id,
+        'path' => "projects/{$project->id}/attachments/pasted-image.png",
+        'original_name' => '貼り付け画像.png',
+        'mime_type' => 'image/png',
+    ]);
 
     $libraryUrl = route('projects.materials.index', [
         $team,
@@ -62,7 +68,8 @@ test('materials library is served from the files URL with ordered folders and fi
             ->where('items.0.canDelete', true)
             ->has('folders', 2)
             ->where('folders.0.id', $firstFolder->id)
-            ->where('folders.1.id', $laterFolder->id));
+            ->where('folders.1.id', $laterFolder->id)
+            ->where('folders.1.itemCount', 1));
 });
 
 test('project participants can upload and download private files', function () {

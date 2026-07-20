@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Models\CheckInPrompt;
+use App\Models\User;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -20,7 +21,9 @@ class CheckInDueNotification extends Notification implements ShouldQueue
     /** @return array<int, string> */
     public function via(object $notifiable): array
     {
-        return ['database', 'mail'];
+        return $notifiable instanceof User
+            ? $notifiable->notificationChannels()
+            : ['database', 'mail'];
     }
 
     /**

@@ -49,7 +49,9 @@ class MentionNotification extends Notification
     /** @return array<int, string> */
     public function via(object $notifiable): array
     {
-        return ['database', 'mail'];
+        return $notifiable instanceof User
+            ? $notifiable->notificationChannels('mention')
+            : ['database', 'mail'];
     }
 
     /**

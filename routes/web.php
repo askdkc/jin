@@ -97,6 +97,7 @@ Route::prefix('{current_team}')
             Route::patch('projects/{project}/messages/{message_board_post}', [MessageBoardController::class, 'update'])->name('projects.messages.update');
             Route::patch('projects/{project}/messages/{message_board_post}/pin', [MessageBoardController::class, 'togglePin'])->name('projects.messages.pin');
             Route::patch('projects/{project}/messages/{message_board_post}/subscription', [MessageBoardController::class, 'toggleSubscription'])->name('projects.messages.subscription');
+            Route::post('projects/{project}/messages/{message_board_post}/reaction', [MessageBoardController::class, 'toggleReaction'])->name('projects.messages.reaction.toggle');
             Route::post('projects/{project}/messages/{message_board_post}/attachments', [AttachmentController::class, 'storeMessage'])->name('projects.messages.attachments.store');
             Route::delete('projects/{project}/messages/{message_board_post}', [MessageBoardController::class, 'destroy'])->name('projects.messages.destroy');
             Route::post('projects/{project}/messages/{message_board_post}/comments', [CommentController::class, 'store'])->name('projects.messages.comments.store');

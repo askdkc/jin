@@ -450,6 +450,12 @@ export type MessageBoardPost = {
     subscribed: boolean;
     notifyCount: number;
     canEdit: boolean;
+    reactions: {
+        reaction: string;
+        count: number;
+        reacted: boolean;
+        names: string[];
+    }[];
     attachments: ProjectStoredFile[];
     comments: MessageComment[];
 };

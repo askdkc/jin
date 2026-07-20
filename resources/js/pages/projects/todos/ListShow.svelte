@@ -108,6 +108,7 @@
     const completedTodos = $derived(todos.filter((todo) => todo.completed));
     let addingTodo = $state(false);
     let newSubtasks = $state<string[]>([]);
+    let editingCommentId = $state<number | null>(null);
 
     const confirmDelete = (): boolean =>
         window.confirm(t('Are you sure you want to delete this?'));
@@ -309,7 +310,7 @@
                         </div>
 
                         <div
-                            class="mt-4 grid gap-x-5 gap-y-4 pl-8 sm:grid-cols-[9rem_minmax(0,1fr)] sm:items-start"
+                            class="mt-4 grid gap-x-5 gap-y-4 sm:grid-cols-[7rem_minmax(0,1fr)] sm:items-start"
                         >
                             <Label
                                 for={`new-todo-assignee-${list.id}`}
@@ -418,7 +419,7 @@
                                 errors.completion_notify_ids ||
                                 errors.subtasks}
                         />
-                        <div class="mt-5 flex gap-2 pl-8">
+                        <div class="mt-5 flex gap-2">
                             <Button
                                 type="submit"
                                 size="sm"
@@ -587,66 +588,89 @@
                         <div class="rounded-lg border bg-background p-4">
                             <div class="flex items-start justify-between gap-3">
                                 <div class="min-w-0 flex-1">
-                                    <RichTextContent content={comment.body} />
-                                    <p
-                                        class="mt-2 text-xs text-muted-foreground"
-                                    >
-                                        {comment.authorName ||
-                                            t('Deleted user')} · {formatDate(
-                                            comment.createdAt,
-                                        )}
-                                    </p>
-                                </div>
-
-                                {#if comment.canDelete}
-                                    <div
-                                        class="flex shrink-0 items-start gap-1"
-                                    >
-                                        <details>
-                                            <summary
-                                                aria-label={t('Edit')}
-                                                class="[&::-webkit-details-marker]:hidden flex size-7 list-none cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-muted"
-                                            >
-                                                <Pencil class="size-3.5" />
-                                            </summary>
-                                            <Form
-                                                {...CommentController.updateList.form(
-                                                    [
-                                                        currentTeam.slug,
-                                                        project.id,
-                                                        list.id,
-                                                        comment.id,
-                                                    ],
-                                                )}
-                                                class="mt-3 min-w-[min(32rem,70vw)] space-y-2"
-                                            >
-                                                {#snippet children({
-                                                    errors,
-                                                    processing,
-                                                })}
-                                                    <RichTextEditor
-                                                        id={`list-comment-edit-${comment.id}`}
-                                                        name="body"
-                                                        value={comment.body}
-                                                        required
-                                                        ariaLabel={t('Comment')}
-                                                        mentionables={members}
-                                                        attachmentUploadUrl={AttachmentController.uploadInline.url(
-                                                            projectRouteArguments,
-                                                        )}
-                                                    />
-                                                    <InputError
-                                                        message={errors.body}
-                                                    />
+                                    {#if editingCommentId === comment.id}
+                                        <Form
+                                            {...CommentController.updateList.form(
+                                                [
+                                                    currentTeam.slug,
+                                                    project.id,
+                                                    list.id,
+                                                    comment.id,
+                                                ],
+                                            )}
+                                            onSuccess={() =>
+                                                (editingCommentId = null)}
+                                            class="w-full space-y-2"
+                                        >
+                                            {#snippet children({
+                                                errors,
+                                                processing,
+                                            })}
+                                                <RichTextEditor
+                                                    id={`list-comment-edit-${comment.id}`}
+                                                    name="body"
+                                                    value={comment.body}
+                                                    required
+                                                    ariaLabel={t('Comment')}
+                                                    mentionables={members}
+                                                    attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                                        projectRouteArguments,
+                                                    )}
+                                                />
+                                                <InputError
+                                                    message={errors.body}
+                                                />
+                                                <div class="flex gap-2">
                                                     <Button
                                                         type="submit"
                                                         size="sm"
                                                         disabled={processing}
                                                         >{t('Save')}</Button
                                                     >
-                                                {/snippet}
-                                            </Form>
-                                        </details>
+                                                    <Button
+                                                        type="button"
+                                                        size="sm"
+                                                        variant="outline"
+                                                        disabled={processing}
+                                                        onclick={() =>
+                                                            (editingCommentId =
+                                                                null)}
+                                                        >{t('Cancel')}</Button
+                                                    >
+                                                </div>
+                                            {/snippet}
+                                        </Form>
+                                    {:else}
+                                        <RichTextContent
+                                            content={comment.body}
+                                        />
+                                        <p
+                                            class="mt-2 text-xs text-muted-foreground"
+                                        >
+                                            {comment.authorName ||
+                                                t('Deleted user')} · {formatDate(
+                                                comment.createdAt,
+                                            )}
+                                        </p>
+                                    {/if}
+                                </div>
+
+                                {#if comment.canDelete}
+                                    <div
+                                        class="flex shrink-0 items-start gap-1"
+                                    >
+                                        {#if editingCommentId !== comment.id}
+                                            <button
+                                                type="button"
+                                                aria-label={t('Edit')}
+                                                onclick={() =>
+                                                    (editingCommentId =
+                                                        comment.id)}
+                                                class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted"
+                                            >
+                                                <Pencil class="size-3.5" />
+                                            </button>
+                                        {/if}
                                         <Form
                                             {...CommentController.destroyList.form(
                                                 [

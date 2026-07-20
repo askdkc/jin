@@ -66,6 +66,7 @@
     import ChevronLeft from 'lucide-svelte/icons/chevron-left';
     import Pencil from 'lucide-svelte/icons/pencil';
     import Trash2 from 'lucide-svelte/icons/trash-2';
+    import { tick } from 'svelte';
     import AttachmentController from '@/actions/App/Http/Controllers/AttachmentController';
     import CommentController from '@/actions/App/Http/Controllers/CommentController';
     import ProjectFileController from '@/actions/App/Http/Controllers/ProjectFileController';
@@ -76,7 +77,6 @@
     import RichTextEditor from '@/components/RichTextEditor.svelte';
     import { Avatar, AvatarFallback } from '@/components/ui/avatar';
     import { Button } from '@/components/ui/button';
-    import { Label } from '@/components/ui/label';
     import { t } from '@/lib/i18n';
     import { getInitials } from '@/lib/initials';
     import type { MessageBoardPost, TodoMember } from '@/types';
@@ -116,6 +116,68 @@
     };
     const confirmDelete = (): boolean =>
         window.confirm(t('Are you sure you want to delete this?'));
+    const quickReactions = ['👍', '👏', '👋', '❤️', '😂', '😊', '🎉'];
+    const moreReactions = [
+        '🤩',
+        '🥳',
+        '😀',
+        '😅',
+        '😎',
+        '😉',
+        '😛',
+        '😬',
+        '😮',
+        '😳',
+        '🤔',
+        '😒',
+        '😢',
+        '😭',
+        '😱',
+        '🙌',
+        '🙏',
+        '💪',
+        '🤘',
+        '✊',
+        '👎',
+        '✌️',
+        '👉',
+        '☝️',
+        '✋',
+        '✨',
+        '💯',
+        '👀',
+        '💩',
+        '☀️',
+        '🌙',
+        '💥',
+        '🔥',
+        '🎂',
+        '🍴',
+        '💰',
+        '🥇',
+        '🚨',
+        '💡',
+        '🛠️',
+        '📈',
+        '✅',
+        '📣',
+    ];
+    let editingCommentId = $state<number | null>(null);
+    let commentComposerOpen = $state(false);
+    let reactionMenuOpen = $state(false);
+    let moreReactionsOpen = $state(false);
+    let customReactionOpen = $state(false);
+    let customReaction = $state('');
+    const closeReactionMenu = (): void => {
+        reactionMenuOpen = false;
+        moreReactionsOpen = false;
+        customReactionOpen = false;
+    };
+    const openCommentComposer = async (): Promise<void> => {
+        commentComposerOpen = true;
+        await tick();
+        document.getElementById(`message-comment-${post.id}`)?.focus();
+    };
 </script>
 
 <AppHead title={post.title} />
@@ -221,6 +283,217 @@
                         content={post.body}
                         class="text-[0.95rem] leading-7 text-slate-700 sm:text-base dark:text-slate-200"
                     />
+                    <div class="mt-7 flex flex-wrap items-center gap-2">
+                        {#each post.reactions as reaction (reaction.reaction)}
+                            <Form
+                                {...MessageBoardController.toggleReaction.form([
+                                    currentTeam.slug,
+                                    project.id,
+                                    post.id,
+                                ])}
+                            >
+                                {#snippet children({ processing })}
+                                    <input
+                                        type="hidden"
+                                        name="reaction"
+                                        value={reaction.reaction}
+                                    />
+                                    <button
+                                        type="submit"
+                                        disabled={processing}
+                                        aria-pressed={reaction.reacted}
+                                        title={reaction.names.join(', ')}
+                                        class={[
+                                            'inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-sm shadow-sm transition hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-50',
+                                            reaction.reacted
+                                                ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-700 dark:bg-emerald-950'
+                                                : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800',
+                                        ]}
+                                    >
+                                        <span>{reaction.reaction}</span>
+                                        {#if reaction.count > 1}
+                                            <span
+                                                class="text-xs font-semibold text-slate-500 dark:text-slate-400"
+                                                >{reaction.count}</span
+                                            >
+                                        {/if}
+                                    </button>
+                                {/snippet}
+                            </Form>
+                        {/each}
+
+                        <div class="relative">
+                            <button
+                                type="button"
+                                aria-label={t('Add a reaction')}
+                                aria-expanded={reactionMenuOpen}
+                                onclick={() =>
+                                    (reactionMenuOpen = !reactionMenuOpen)}
+                                class="flex size-8 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-base shadow-sm transition hover:-translate-y-0.5 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700"
+                            >
+                                <span aria-hidden="true">🚀</span>
+                            </button>
+
+                            {#if reactionMenuOpen}
+                                <div class="absolute top-full left-0 z-30 mt-2">
+                                    {#if customReactionOpen}
+                                        <Form
+                                            {...MessageBoardController.toggleReaction.form(
+                                                [
+                                                    currentTeam.slug,
+                                                    project.id,
+                                                    post.id,
+                                                ],
+                                            )}
+                                            onSuccess={() => {
+                                                customReaction = '';
+                                                closeReactionMenu();
+                                            }}
+                                            class="flex w-72 items-center gap-1 rounded-full border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-700 dark:bg-slate-800"
+                                        >
+                                            {#snippet children({
+                                                errors,
+                                                processing,
+                                            })}
+                                                <input
+                                                    name="reaction"
+                                                    maxlength={20}
+                                                    required
+                                                    bind:value={customReaction}
+                                                    aria-label={t(
+                                                        'Write a short reaction',
+                                                    )}
+                                                    placeholder={t(
+                                                        'Write a short reaction…',
+                                                    )}
+                                                    class="min-w-0 flex-1 bg-transparent px-2 text-sm outline-none placeholder:text-slate-400"
+                                                />
+                                                <button
+                                                    type="submit"
+                                                    disabled={processing}
+                                                    aria-label={t('Save')}
+                                                    class="flex size-7 items-center justify-center rounded-full text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:text-emerald-400 dark:hover:bg-emerald-950"
+                                                >
+                                                    ✓
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    aria-label={t('Cancel')}
+                                                    onclick={() =>
+                                                        (customReactionOpen = false)}
+                                                    class="flex size-7 items-center justify-center rounded-full text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
+                                                >
+                                                    ×
+                                                </button>
+                                                {#if errors.reaction}
+                                                    <span
+                                                        class="absolute top-full left-2 mt-1 text-xs text-destructive"
+                                                        >{errors.reaction}</span
+                                                    >
+                                                {/if}
+                                            {/snippet}
+                                        </Form>
+                                    {:else}
+                                        <div
+                                            class="flex items-center gap-0.5 rounded-full border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-700 dark:bg-slate-800"
+                                        >
+                                            <button
+                                                type="button"
+                                                aria-label={t(
+                                                    'Write a short reaction',
+                                                )}
+                                                onclick={() =>
+                                                    (customReactionOpen = true)}
+                                                class="flex size-8 items-center justify-center rounded-full text-lg hover:bg-slate-100 dark:hover:bg-slate-700"
+                                            >
+                                                <span aria-hidden="true"
+                                                    >💬</span
+                                                >
+                                            </button>
+                                            {#each quickReactions as reaction (reaction)}
+                                                <Form
+                                                    {...MessageBoardController.toggleReaction.form(
+                                                        [
+                                                            currentTeam.slug,
+                                                            project.id,
+                                                            post.id,
+                                                        ],
+                                                    )}
+                                                    onSuccess={closeReactionMenu}
+                                                >
+                                                    {#snippet children({
+                                                        processing,
+                                                    })}
+                                                        <input
+                                                            type="hidden"
+                                                            name="reaction"
+                                                            value={reaction}
+                                                        />
+                                                        <button
+                                                            type="submit"
+                                                            disabled={processing}
+                                                            aria-label={`${t('React with')} ${reaction}`}
+                                                            class="flex size-8 items-center justify-center rounded-full text-xl transition hover:scale-110 hover:bg-slate-100 disabled:opacity-50 dark:hover:bg-slate-700"
+                                                        >
+                                                            {reaction}
+                                                        </button>
+                                                    {/snippet}
+                                                </Form>
+                                            {/each}
+                                            <button
+                                                type="button"
+                                                aria-label={t('More reactions')}
+                                                aria-expanded={moreReactionsOpen}
+                                                onclick={() =>
+                                                    (moreReactionsOpen =
+                                                        !moreReactionsOpen)}
+                                                class="flex size-8 items-center justify-center rounded-full text-xl font-bold hover:bg-slate-100 dark:hover:bg-slate-700"
+                                            >
+                                                …
+                                            </button>
+                                        </div>
+
+                                        {#if moreReactionsOpen}
+                                            <div
+                                                class="mt-2 grid w-80 grid-cols-9 gap-1 rounded-xl border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-700 dark:bg-slate-800"
+                                            >
+                                                {#each moreReactions as reaction (reaction)}
+                                                    <Form
+                                                        {...MessageBoardController.toggleReaction.form(
+                                                            [
+                                                                currentTeam.slug,
+                                                                project.id,
+                                                                post.id,
+                                                            ],
+                                                        )}
+                                                        onSuccess={closeReactionMenu}
+                                                    >
+                                                        {#snippet children({
+                                                            processing,
+                                                        })}
+                                                            <input
+                                                                type="hidden"
+                                                                name="reaction"
+                                                                value={reaction}
+                                                            />
+                                                            <button
+                                                                type="submit"
+                                                                disabled={processing}
+                                                                aria-label={`${t('React with')} ${reaction}`}
+                                                                class="flex size-8 items-center justify-center rounded-md text-xl transition hover:scale-110 hover:bg-slate-100 disabled:opacity-50 dark:hover:bg-slate-700"
+                                                            >
+                                                                {reaction}
+                                                            </button>
+                                                        {/snippet}
+                                                    </Form>
+                                                {/each}
+                                            </div>
+                                        {/if}
+                                    {/if}
+                                </div>
+                            {/if}
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -291,55 +564,20 @@
                                             <div
                                                 class="flex shrink-0 items-center gap-0.5"
                                             >
-                                                <details>
-                                                    <summary
+                                                {#if editingCommentId !== comment.id}
+                                                    <button
+                                                        type="button"
                                                         aria-label={t('Edit')}
-                                                        class="[&::-webkit-details-marker]:hidden flex size-7 list-none cursor-pointer items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                                                        onclick={() =>
+                                                            (editingCommentId =
+                                                                comment.id)}
+                                                        class="flex size-7 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-100"
                                                     >
                                                         <Pencil
                                                             class="size-3.5"
                                                         />
-                                                    </summary>
-                                                    <Form
-                                                        {...CommentController.update.form(
-                                                            [
-                                                                currentTeam.slug,
-                                                                project.id,
-                                                                post.id,
-                                                                comment.id,
-                                                            ],
-                                                        )}
-                                                        class="mt-3 min-w-[min(34rem,70vw)] space-y-2"
-                                                    >
-                                                        {#snippet children({
-                                                            errors,
-                                                            processing,
-                                                        })}
-                                                            <RichTextEditor
-                                                                id={`message-comment-edit-${comment.id}`}
-                                                                name="body"
-                                                                value={comment.body}
-                                                                required
-                                                                ariaLabel={t(
-                                                                    'Comment',
-                                                                )}
-                                                                mentionables={members}
-                                                                {attachmentUploadUrl}
-                                                            />
-                                                            <InputError
-                                                                message={errors.body}
-                                                            />
-                                                            <Button
-                                                                type="submit"
-                                                                size="sm"
-                                                                disabled={processing}
-                                                                >{t(
-                                                                    'Save',
-                                                                )}</Button
-                                                            >
-                                                        {/snippet}
-                                                    </Form>
-                                                </details>
+                                                    </button>
+                                                {/if}
                                                 <Form
                                                     {...CommentController.destroy.form(
                                                         [
@@ -371,47 +609,121 @@
                                             </div>
                                         {/if}
                                     </div>
-                                    <RichTextContent
-                                        content={comment.body}
-                                        class="mt-1.5 text-sm leading-6 text-slate-700 dark:text-slate-200"
-                                    />
+                                    {#if editingCommentId === comment.id}
+                                        <Form
+                                            {...CommentController.update.form([
+                                                currentTeam.slug,
+                                                project.id,
+                                                post.id,
+                                                comment.id,
+                                            ])}
+                                            onSuccess={() =>
+                                                (editingCommentId = null)}
+                                            class="mt-3 w-full space-y-2"
+                                        >
+                                            {#snippet children({
+                                                errors,
+                                                processing,
+                                            })}
+                                                <RichTextEditor
+                                                    id={`message-comment-edit-${comment.id}`}
+                                                    name="body"
+                                                    value={comment.body}
+                                                    required
+                                                    ariaLabel={t('Comment')}
+                                                    mentionables={members}
+                                                    {attachmentUploadUrl}
+                                                />
+                                                <InputError
+                                                    message={errors.body}
+                                                />
+                                                <div class="flex gap-2">
+                                                    <Button
+                                                        type="submit"
+                                                        size="sm"
+                                                        disabled={processing}
+                                                        >{t('Save')}</Button
+                                                    >
+                                                    <Button
+                                                        type="button"
+                                                        size="sm"
+                                                        variant="outline"
+                                                        disabled={processing}
+                                                        onclick={() =>
+                                                            (editingCommentId =
+                                                                null)}
+                                                        >{t('Cancel')}</Button
+                                                    >
+                                                </div>
+                                            {/snippet}
+                                        </Form>
+                                    {:else}
+                                        <RichTextContent
+                                            content={comment.body}
+                                            class="mt-1.5 text-sm leading-6 text-slate-700 dark:text-slate-200"
+                                        />
+                                    {/if}
                                 </div>
                             </article>
                         {/each}
                     </div>
                 {/if}
 
-                <Form
-                    {...CommentController.store.form([
-                        currentTeam.slug,
-                        project.id,
-                        post.id,
-                    ])}
-                    resetOnSuccess
-                    class="space-y-3 border-t border-slate-200 py-6 dark:border-slate-700"
+                <div
+                    class="border-t border-slate-200 py-6 dark:border-slate-700"
                 >
-                    {#snippet children({ errors, processing })}
-                        <div class="min-w-0 flex-1">
-                            <Label
-                                for={`message-comment-${post.id}`}
-                                class="mb-2 block text-sm font-semibold"
-                                >{t('Add comment')}</Label
-                            >
-                            <RichTextEditor
-                                id={`message-comment-${post.id}`}
-                                name="body"
-                                required
-                                ariaLabel={t('Comment')}
-                                mentionables={members}
-                                {attachmentUploadUrl}
-                            />
-                            <InputError message={errors.body} />
-                        </div>
-                        <Button type="submit" disabled={processing}
-                            >{t('Add comment')}</Button
+                    {#if commentComposerOpen}
+                        <Form
+                            {...CommentController.store.form([
+                                currentTeam.slug,
+                                project.id,
+                                post.id,
+                            ])}
+                            resetOnSuccess
+                            onSuccess={() => (commentComposerOpen = false)}
+                            class="space-y-3"
                         >
-                    {/snippet}
-                </Form>
+                            {#snippet children({ errors, processing })}
+                                <div
+                                    class="min-w-0 flex-1 [&_textarea]:!min-h-56 [&_trix-editor.rich-text-editor]:!min-h-56"
+                                >
+                                    <RichTextEditor
+                                        id={`message-comment-${post.id}`}
+                                        name="body"
+                                        placeholder={t('Add your comment…')}
+                                        required
+                                        ariaLabel={t('Comment')}
+                                        mentionables={members}
+                                        {attachmentUploadUrl}
+                                    />
+                                    <InputError message={errors.body} />
+                                </div>
+                                <div class="flex flex-wrap gap-2">
+                                    <Button type="submit" disabled={processing}
+                                        >{t('Add comment')}</Button
+                                    >
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        disabled={processing}
+                                        onclick={() =>
+                                            (commentComposerOpen = false)}
+                                        >{t('Cancel')}</Button
+                                    >
+                                </div>
+                            {/snippet}
+                        </Form>
+                    {:else}
+                        <button
+                            type="button"
+                            aria-expanded="false"
+                            onclick={openCommentComposer}
+                            class="flex min-h-14 w-full items-center rounded-lg px-4 text-left text-base font-medium text-slate-400 outline-none hover:bg-slate-50 hover:text-slate-600 focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-slate-800/50 dark:hover:text-slate-200"
+                        >
+                            {t('Add your comment…')}
+                        </button>
+                    {/if}
+                </div>
             </section>
 
             <details

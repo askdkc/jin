@@ -555,7 +555,7 @@
                                 </div>
 
                                 <div
-                                    class="mt-4 grid gap-x-5 gap-y-4 pl-8 sm:grid-cols-[9rem_minmax(0,1fr)] sm:items-start"
+                                    class="mt-4 grid gap-x-5 gap-y-4 sm:grid-cols-[7rem_minmax(0,1fr)] sm:items-start"
                                 >
                                     <Label
                                         for={`new-todo-assignee-${list.id}`}
@@ -680,7 +680,7 @@
                                         errors.completion_notify_ids ||
                                         errors.subtasks}
                                 />
-                                <div class="mt-5 flex gap-2 pl-8">
+                                <div class="mt-5 flex gap-2">
                                     <Button
                                         type="submit"
                                         size="sm"

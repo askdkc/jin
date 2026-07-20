@@ -27,6 +27,7 @@ use Illuminate\Support\Carbon;
  * @property-read User|null $user
  * @property-read Collection<int, Comment> $comments
  * @property-read Collection<int, User> $subscribers
+ * @property-read Collection<int, User> $reactors
  * @property-read Collection<int, StoredFile> $attachments
  */
 #[Fillable(['project_id', 'user_id', 'title', 'body', 'published_at', 'pinned_at'])]
@@ -57,6 +58,14 @@ class MessageBoardPost extends Model
     public function subscribers(): BelongsToMany
     {
         return $this->belongsToMany(User::class)->withTimestamps();
+    }
+
+    /** @return BelongsToMany<User, $this> */
+    public function reactors(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'message_board_post_reactions')
+            ->withPivot('reaction')
+            ->withTimestamps();
     }
 
     /** @return MorphMany<StoredFile, $this> */

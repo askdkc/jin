@@ -243,6 +243,11 @@ test('project home summarizes the latest work', function () {
         'mime_type' => 'image/png',
         'size' => 2048,
     ]);
+    StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'path' => "projects/{$project->id}/attachments/pasted-image.png",
+        'original_name' => '貼り付け画像.png',
+        'mime_type' => 'image/png',
+    ]);
     $materialFolder = MaterialFolder::factory()
         ->for($project)
         ->for($owner, 'creator')
@@ -284,6 +289,7 @@ test('project home summarizes the latest work', function () {
                 $folder = $entries->firstWhere('type', 'folder');
 
                 return $entries->contains('title', '進行資料')
+                    && ! $entries->contains('title', '貼り付け画像.png')
                     && ! $entries->contains('title', 'フォルダー内.pdf')
                     && $rootFile['mimeType'] === 'image/png'
                     && $rootFile['size'] === 2048

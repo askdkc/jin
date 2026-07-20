@@ -287,7 +287,11 @@ class ProjectController extends Controller
             ->orderBy('position')
             ->first();
         $materialFolders = $project->materialFolders()
-            ->withCount(['documents', 'storedFiles', 'externalLinks'])
+            ->withCount([
+                'documents',
+                'storedFiles' => fn ($query) => $query->inMaterialLibrary(),
+                'externalLinks',
+            ])
             ->orderBy('position')
             ->orderBy('id')
             ->limit(5)
@@ -315,6 +319,7 @@ class ProjectController extends Controller
                 'updatedAt' => $document->updated_at?->toISOString(),
             ])
             ->concat($project->storedFiles()
+                ->inMaterialLibrary()
                 ->with('uploader:id,name')
                 ->whereNull('material_folder_id')
                 ->latest('updated_at')

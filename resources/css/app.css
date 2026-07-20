@@ -85,18 +85,143 @@ trix-toolbar .trix-button-group--file-tools {
     display: none;
 }
 
+.rich-text-editor-shell {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    overflow: hidden;
+    border: 1px solid var(--color-input);
+    border-radius: var(--radius-lg);
+    background: var(--color-card);
+}
+
+.rich-text-editor-shell:focus-within {
+    border-color: var(--color-ring);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-ring) 20%, transparent);
+}
+
+.rich-text-editor-shell > trix-toolbar {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    margin: 0;
+    border-bottom: 1px solid var(--color-border);
+    padding: 0.125rem 0.25rem;
+}
+
+.rich-text-editor-shell trix-toolbar .trix-button-row {
+    justify-content: flex-start;
+    overflow-x: auto;
+}
+
+.rich-text-editor-shell trix-toolbar .trix-button-group {
+    margin: 0;
+    border: 0;
+    background: transparent;
+}
+
+.rich-text-editor-shell trix-toolbar .trix-button-group + .trix-button-group {
+    margin-left: 0.125rem;
+    border-left: 1px solid var(--color-border);
+    padding-left: 0.125rem;
+}
+
+.rich-text-editor-shell trix-toolbar .trix-button,
+.rich-text-editor-shell trix-toolbar .trix-button:not(:first-child) {
+    width: 1.75rem;
+    height: 1.75rem;
+    border: 0;
+    border-radius: var(--radius-sm);
+}
+
+.rich-text-editor-insert-tools,
+.rich-text-editor-mode-tools {
+    display: flex;
+    grid-row: 1;
+    align-items: center;
+    border-bottom: 1px solid var(--color-border);
+    padding: 0.125rem 0.25rem;
+}
+
+.rich-text-editor-insert-tools {
+    grid-column: 1;
+    padding-left: 0.25rem;
+}
+
+.rich-text-editor-mode-tools {
+    grid-column: 3;
+    gap: 0.25rem;
+    justify-content: flex-end;
+    padding-right: 0.25rem;
+}
+
+.rich-text-editor-insert-tools button,
+.rich-text-editor-mode-tools > button {
+    display: inline-flex;
+    width: 1.75rem;
+    height: 1.75rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    color: var(--color-foreground);
+}
+
+.rich-text-editor-insert-tools button:hover,
+.rich-text-editor-mode-tools > button:hover,
+.rich-text-editor-shell trix-toolbar .trix-button:hover {
+    background: var(--color-accent);
+}
+
+.rich-text-editor-insert-tools button:focus-visible,
+.rich-text-editor-mode-tools > button:focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: -2px;
+}
+
+.rich-text-editor-insert-tools button:disabled,
+.rich-text-editor-mode-tools > button:disabled {
+    pointer-events: none;
+    opacity: 0.5;
+}
+
+.rich-text-editor-mode-tools select {
+    min-height: 1.5rem;
+    max-width: 9rem;
+    border: 1px solid var(--color-input);
+    border-radius: var(--radius-sm);
+    background: var(--color-background);
+    padding-inline: 0.375rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
 trix-editor.rich-text-editor {
+    grid-column: 1 / -1;
+    grid-row: 2;
     min-height: 8rem;
-    border-color: var(--color-input);
-    border-radius: var(--radius-md);
+    margin: 0;
+    border: 0;
+    border-radius: 0;
     background: var(--color-card);
     color: var(--color-foreground);
     font-size: 0.875rem;
 }
 
 trix-editor.rich-text-editor:focus {
-    border-color: var(--color-ring);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-ring) 35%, transparent);
+    box-shadow: none;
+}
+
+.rich-text-editor-markdown {
+    grid-column: 1 / -1;
+    grid-row: 2;
+}
+
+.rich-text-editor-shell[data-mode='markdown'] trix-toolbar,
+.rich-text-editor-shell[data-mode='markdown'] trix-editor {
+    display: none;
+}
+
+.rich-text-editor-shell[data-mode='markdown'] .rich-text-editor-mode-tools {
+    grid-column: 1 / -1;
 }
 
 trix-toolbar .trix-button-group {
@@ -145,6 +270,68 @@ trix-toolbar .trix-input--dialog {
     white-space: pre-wrap;
 }
 
+.rich-text-content h1,
+trix-editor.rich-text-editor h1 {
+    margin-block: 1.5rem 0.625rem;
+    font-size: 1.75rem;
+    line-height: 1.2;
+    font-weight: 750;
+}
+
+.rich-text-content h2,
+trix-editor.rich-text-editor h2 {
+    margin-block: 1.25rem 0.5rem;
+    font-size: 1.375rem;
+    line-height: 1.3;
+    font-weight: 700;
+}
+
+.rich-text-content h3,
+trix-editor.rich-text-editor h3 {
+    margin-block: 1rem 0.375rem;
+    font-size: 1.125rem;
+    line-height: 1.4;
+    font-weight: 700;
+}
+
+.rich-text-content h4,
+.rich-text-content h5,
+.rich-text-content h6,
+trix-editor.rich-text-editor h4,
+trix-editor.rich-text-editor h5,
+trix-editor.rich-text-editor h6 {
+    margin-block: 0.875rem 0.25rem;
+    line-height: 1.5;
+    font-weight: 700;
+}
+
+.rich-text-content :is(ul, ol),
+trix-editor.rich-text-editor :is(ul, ol) {
+    margin-block: 0.625rem;
+    padding-left: 1.5rem;
+    white-space: normal;
+}
+
+.rich-text-content ul,
+trix-editor.rich-text-editor ul {
+    list-style: disc;
+}
+
+.rich-text-content ol,
+trix-editor.rich-text-editor ol {
+    list-style: decimal;
+}
+
+.rich-text-content :is(ul, ol) :is(ul, ol),
+trix-editor.rich-text-editor :is(ul, ol) :is(ul, ol) {
+    margin-block: 0.25rem 0;
+}
+
+.rich-text-content li + li,
+trix-editor.rich-text-editor li + li {
+    margin-top: 0.25rem;
+}
+
 .rich-text-content a {
     color: var(--color-primary);
     text-decoration: underline;
@@ -158,6 +345,10 @@ trix-editor.rich-text-editor img {
     max-height: 20rem;
     border-radius: var(--radius-md);
     border: 1px solid var(--color-border);
+}
+
+trix-editor.rich-text-editor .attachment--preview .attachment__caption {
+    display: none;
 }
 
 .rich-text-content pre,
@@ -240,10 +431,42 @@ trix-editor.rich-text-editor th {
 }
 
 @media (max-width: 640px) {
+    .rich-text-editor-shell {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .rich-text-editor-shell > trix-toolbar {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        padding-inline: 0.5rem;
+    }
+
+    .rich-text-editor-insert-tools {
+        grid-column: 1;
+        grid-row: 1;
+    }
+
+    .rich-text-editor-mode-tools {
+        grid-column: 2;
+        grid-row: 1;
+    }
+
+    trix-editor.rich-text-editor,
+    .rich-text-editor-markdown {
+        grid-row: 3;
+    }
+
+    .rich-text-editor-shell[data-mode='markdown'] .rich-text-editor-mode-tools {
+        grid-column: 1 / -1;
+    }
+
+    .rich-text-editor-shell[data-mode='markdown'] .rich-text-editor-markdown {
+        grid-row: 2;
+    }
+
     trix-toolbar .trix-button-row {
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         justify-content: flex-start;
-        gap: 0.25rem;
     }
 
     trix-toolbar .trix-button-group {

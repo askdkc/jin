@@ -28,11 +28,13 @@ class SendTodoDueReminders extends Command
             ->each(function (Todo $todo) use (&$sent): void {
                 $assignee = $todo->assignee;
 
-                if (! $assignee || $assignee->notifications()
-                    ->where('data->type', TodoActivityNotification::Due)
-                    ->where('data->todoId', $todo->id)
-                    ->whereDate('created_at', today())
-                    ->exists()) {
+                if (! $assignee
+                    || $assignee->notificationChannels('assignment_reminder') === []
+                    || $assignee->notifications()
+                        ->where('data->type', TodoActivityNotification::Due)
+                        ->where('data->todoId', $todo->id)
+                        ->whereDate('created_at', today())
+                        ->exists()) {
                     return;
                 }
 

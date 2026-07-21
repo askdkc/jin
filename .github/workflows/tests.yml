@@ -70,6 +70,7 @@ jobs:
       APP_URL: http://127.0.0.1:8000
       DB_CONNECTION: sqlite
       DB_DATABASE: ${{ github.workspace }}/database/onlyoffice-ci.sqlite
+      IP_RESTRICTION_ENABLED: 'false'
       ONLYOFFICE_ENABLED: 'true'
       ONLYOFFICE_DOCUMENT_SERVER_URL: http://127.0.0.1:8081
       ONLYOFFICE_PUBLIC_URL: http://127.0.0.1:8081
@@ -81,6 +82,7 @@ jobs:
         env:
           JWT_ENABLED: 'true'
           JWT_SECRET: ci-onlyoffice-secret-not-for-production
+          # CI only: DocumentServer must fetch Jin through the isolated Docker bridge.
           ALLOW_PRIVATE_IP_ADDRESS: 'true'
           ALLOW_META_IP_ADDRESS: 'false'
           PLUGINS_ENABLED: 'false'

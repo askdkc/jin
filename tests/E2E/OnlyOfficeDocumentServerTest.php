@@ -18,10 +18,10 @@ test('OnlyOffice downloads the signed original and renders a real Office documen
     }
 
     $temporaryPath = tempnam(sys_get_temp_dir(), 'jin-onlyoffice-');
-    $zip = new \ZipArchive;
+    $zip = new ZipArchive;
 
     expect($temporaryPath)->not->toBeFalse()
-        ->and($zip->open($temporaryPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE))->toBeTrue();
+        ->and($zip->open($temporaryPath, ZipArchive::CREATE | ZipArchive::OVERWRITE))->toBeTrue();
 
     $zip->addFromString('[Content_Types].xml', <<<'XML'
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>

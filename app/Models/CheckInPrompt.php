@@ -5,9 +5,12 @@ namespace App\Models;
 use App\Casts\SanitizedRichText;
 use Database\Factories\CheckInPromptFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Support\Carbon;
 
 /**
@@ -22,6 +25,8 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $updated_at
  * @property-read CheckIn $checkIn
  * @property-read User|null $user
+ * @property-read Collection<int, Comment> $comments
+ * @property-read Collection<int, User> $reactors
  */
 #[Fillable(['check_in_id', 'user_id', 'scheduled_for', 'requested_at', 'answer', 'answered_at'])]
 class CheckInPrompt extends Model
@@ -39,6 +44,20 @@ class CheckInPrompt extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /** @return MorphMany<Comment, $this> */
+    public function comments(): MorphMany
+    {
+        return $this->morphMany(Comment::class, 'commentable');
+    }
+
+    /** @return BelongsToMany<User, $this> */
+    public function reactors(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'check_in_prompt_reactions')
+            ->withPivot('reaction')
+            ->withTimestamps();
     }
 
     /** @return array<string, string> */

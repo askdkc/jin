@@ -18,11 +18,6 @@ return [
         'key' => env('POSTMARK_API_KEY'),
     ],
 
-    'libreoffice' => [
-        'path' => env('LIBREOFFICE_PATH', 'soffice'),
-        'timeout' => (int) env('LIBREOFFICE_TIMEOUT', 120),
-    ],
-
     'imagemagick' => [
         'path' => env('IMAGEMAGICK_PATH', 'convert'),
         'timeout' => (int) env('IMAGEMAGICK_TIMEOUT', 45),

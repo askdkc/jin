@@ -42,6 +42,52 @@ test('project participants can create and view events for a selected month', fun
             ->where('events.0.startsAt', '2026-08-03T10:00'));
 });
 
+test('project participants can open an event detail and add comments and reactions', function () {
+    $owner = User::factory()->create();
+    $member = User::factory()->create();
+    $outsider = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $team->members()->attach($outsider, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($member);
+    $event = ScheduleEvent::factory()->for($project)->for($owner, 'creator')->create([
+        'title' => '予定の詳細',
+    ]);
+
+    $showUrl = route('projects.schedule.show', [$team, $project, $event]);
+    $commentUrl = route('projects.schedule.comments.store', [$team, $project, $event]);
+    $reactionUrl = route('projects.schedule.reaction.toggle', [$team, $project, $event]);
+
+    $this->actingAs($member)
+        ->get($showUrl)
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('projects/schedule/Show')
+            ->where('event.id', $event->id)
+            ->where('event.title', '予定の詳細')
+            ->has('event.reactions', 0)
+            ->has('event.comments', 0));
+
+    $this->actingAs($member)
+        ->post($commentUrl, ['body' => '<div>参加します</div>'])
+        ->assertRedirect();
+
+    expect($event->comments()->where('user_id', $member->id)->value('body'))
+        ->toContain('参加します');
+
+    $this->actingAs($member)->post($reactionUrl, ['reaction' => '👏'])->assertRedirect();
+    expect($event->reactors()->whereKey($member->id)->first()?->pivot?->reaction)->toBe('👏');
+
+    $this->actingAs($member)->post($reactionUrl, ['reaction' => '👏'])->assertRedirect();
+    expect($event->reactors()->whereKey($member->id)->exists())->toBeFalse();
+
+    $this->actingAs($outsider)->get($showUrl)->assertForbidden();
+    $this->actingAs($outsider)->post($commentUrl, ['body' => '不可'])->assertForbidden();
+    $this->actingAs($outsider)->post($reactionUrl, ['reaction' => '👏'])->assertForbidden();
+});
+
 test('the schedule index supports day, week, and gantt views scoped to their own date range', function () {
     $owner = User::factory()->create();
     $team = Team::factory()->create();

@@ -5,9 +5,12 @@ namespace App\Models;
 use App\Casts\SanitizedRichText;
 use Database\Factories\ScheduleEventFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Support\Carbon;
 
 /**
@@ -26,6 +29,8 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $updated_at
  * @property-read Project $project
  * @property-read User|null $creator
+ * @property-read Collection<int, Comment> $comments
+ * @property-read Collection<int, User> $reactors
  */
 #[Fillable(['project_id', 'created_by', 'title', 'details', 'meeting_url', 'starts_at', 'ends_at', 'all_day', 'recurrence', 'recurrence_group_id'])]
 class ScheduleEvent extends Model
@@ -46,6 +51,20 @@ class ScheduleEvent extends Model
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    /** @return MorphMany<Comment, $this> */
+    public function comments(): MorphMany
+    {
+        return $this->morphMany(Comment::class, 'commentable');
+    }
+
+    /** @return BelongsToMany<User, $this> */
+    public function reactors(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'schedule_event_reactions')
+            ->withPivot('reaction')
+            ->withTimestamps();
     }
 
     /** @return array<string, string> */

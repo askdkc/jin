@@ -33,17 +33,24 @@
 </script>
 
 <script lang="ts">
-    import { Form, Link } from '@inertiajs/svelte';
+    import { Form, Link, page } from '@inertiajs/svelte';
     import Bookmark from 'lucide-svelte/icons/bookmark';
     import Pause from 'lucide-svelte/icons/pause';
     import Pencil from 'lucide-svelte/icons/pencil';
     import Play from 'lucide-svelte/icons/play';
     import Trash2 from 'lucide-svelte/icons/trash-2';
     import AttachmentController from '@/actions/App/Http/Controllers/AttachmentController';
+    import CommentController from '@/actions/App/Http/Controllers/CommentController';
     import AppHead from '@/components/AppHead.svelte';
     import InputError from '@/components/InputError.svelte';
+    import ReactionPicker from '@/components/ReactionPicker.svelte';
     import RichTextContent from '@/components/RichTextContent.svelte';
     import RichTextEditor from '@/components/RichTextEditor.svelte';
+    import {
+        Avatar,
+        AvatarFallback,
+        AvatarImage,
+    } from '@/components/ui/avatar';
     import { Button } from '@/components/ui/button';
     import {
         Dialog,
@@ -55,10 +62,11 @@
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
     import { t } from '@/lib/i18n';
+    import { getInitials } from '@/lib/initials';
     import type {
         CheckInDetail,
         CheckInPrompt,
-        CheckInResponse,
+        CheckInResponseDetail,
         TodoMember,
     } from '@/types';
 
@@ -74,7 +82,7 @@
         project: ProjectTool;
         checkIn: CheckInDetail;
         pendingPrompt: CheckInPrompt | null;
-        responses: CheckInResponse[];
+        responses: CheckInResponseDetail[];
         members: TodoMember[];
     } = $props();
 
@@ -83,6 +91,24 @@
         project.id,
         checkIn.id,
     ] as [string, number, number]);
+    const answerForm = $derived(
+        pendingPrompt
+            ? CheckInController.answer.form([
+                  currentTeam.slug,
+                  project.id,
+                  checkIn.id,
+                  pendingPrompt.id,
+              ])
+            : CheckInController.respond.form(routeArguments),
+    );
+    const answerEditorId = $derived(
+        `check-in-answer-${pendingPrompt?.id ?? 'new'}`,
+    );
+    const authUser = $derived(page.props.auth.user);
+    let answerEditorOpen = $state(false);
+    let editingResponseId = $state<number | null>(null);
+    let discussingResponseId = $state<number | null>(null);
+    let commentingResponseId = $state<number | null>(null);
     let editDialogOpen = $state(false);
     let editFrequency = $state<CheckInDetail['frequency']>('weekly');
     const weekdayOptions = [
@@ -118,6 +144,11 @@
     const openEditDialog = (): void => {
         editFrequency = checkIn.frequency;
         editDialogOpen = true;
+    };
+    const toggleDiscussion = (responseId: number): void => {
+        discussingResponseId =
+            discussingResponseId === responseId ? null : responseId;
+        commentingResponseId = null;
     };
     const formatDate = (
         value: string | null,
@@ -301,51 +332,86 @@
                 {/if}
             </header>
 
-            {#if pendingPrompt}
+            {#if checkIn.canAnswer}
                 <section
                     class="mt-8 border-t pt-8"
                     aria-labelledby="check-in-answer"
                 >
-                    <h2 id="check-in-answer" class="text-lg font-bold">
+                    <h2 id="check-in-answer" class="sr-only">
                         {t('Your answer')}
                     </h2>
-                    <Form
-                        {...CheckInController.answer.form([
-                            currentTeam.slug,
-                            project.id,
-                            checkIn.id,
-                            pendingPrompt.id,
-                        ])}
-                        class="mt-4 grid gap-3"
-                    >
-                        {#snippet children({ errors, processing })}
-                            <Label
-                                for={`check-in-answer-${pendingPrompt.id}`}
-                                class="sr-only"
+                    {#if !answerEditorOpen}
+                        <button
+                            type="button"
+                            class="group flex w-full items-center gap-4 text-left"
+                            onclick={() => (answerEditorOpen = true)}
+                            aria-expanded="false"
+                            aria-controls="check-in-answer-form"
+                        >
+                            <Avatar class="size-12 border sm:size-14">
+                                {#if authUser.avatar}
+                                    <AvatarImage
+                                        src={authUser.avatar}
+                                        alt={authUser.name}
+                                    />
+                                {/if}
+                                <AvatarFallback class="font-bold">
+                                    {getInitials(authUser.name)}
+                                </AvatarFallback>
+                            </Avatar>
+                            <span
+                                class="text-lg text-muted-foreground group-hover:text-foreground"
                             >
-                                {t('Answer')}
-                            </Label>
-                            <RichTextEditor
-                                id={`check-in-answer-${pendingPrompt.id}`}
-                                name="answer"
-                                required
-                                placeholder={t('Write your answer')}
-                                ariaLabel={t('Answer')}
-                                attachmentUploadUrl={AttachmentController.uploadInline.url(
-                                    [currentTeam.slug, project.id],
-                                )}
-                            />
-                            <InputError message={errors.answer} />
-                            <Button
-                                type="submit"
-                                size="sm"
-                                class="justify-self-start"
-                                disabled={processing}
+                                {t('Add your answer...')}
+                            </span>
+                        </button>
+                    {:else}
+                        <div class="flex items-start gap-4">
+                            <Avatar class="size-12 border sm:size-14">
+                                {#if authUser.avatar}
+                                    <AvatarImage
+                                        src={authUser.avatar}
+                                        alt={authUser.name}
+                                    />
+                                {/if}
+                                <AvatarFallback class="font-bold">
+                                    {getInitials(authUser.name)}
+                                </AvatarFallback>
+                            </Avatar>
+                            <Form
+                                {...answerForm}
+                                id="check-in-answer-form"
+                                resetOnSuccess
+                                onSuccess={() => (answerEditorOpen = false)}
+                                class="grid min-w-0 flex-1 gap-3"
                             >
-                                {t('Submit answer')}
-                            </Button>
-                        {/snippet}
-                    </Form>
+                                {#snippet children({ errors, processing })}
+                                    <Label for={answerEditorId} class="sr-only">
+                                        {t('Answer')}
+                                    </Label>
+                                    <RichTextEditor
+                                        id={answerEditorId}
+                                        name="answer"
+                                        required
+                                        placeholder={t('Write your answer')}
+                                        ariaLabel={t('Answer')}
+                                        attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                            [currentTeam.slug, project.id],
+                                        )}
+                                    />
+                                    <InputError message={errors.answer} />
+                                    <Button
+                                        type="submit"
+                                        size="sm"
+                                        class="justify-self-start"
+                                        disabled={processing}
+                                    >
+                                        {t('Submit answer')}
+                                    </Button>
+                                {/snippet}
+                            </Form>
+                        </div>
+                    {/if}
                 </section>
             {/if}
 
@@ -372,23 +438,251 @@
                                     {memberInitial(response.userName)}
                                 </span>
                                 <div class="min-w-0 flex-1">
-                                    <p class="text-sm">
-                                        <span class="font-bold">
-                                            {response.userName ||
-                                                t('Deleted user')}
-                                        </span>
-                                        <span class="text-muted-foreground">
-                                            · {formatDate(response.answeredAt)}
-                                        </span>
-                                    </p>
                                     <div
-                                        class="mt-2 rounded-xl border bg-background/40 p-4"
+                                        class="flex items-start justify-between gap-3"
                                     >
-                                        <RichTextContent
-                                            content={response.answer}
-                                            class="break-words text-sm leading-6"
-                                        />
+                                        <p class="text-sm">
+                                            <span class="font-bold">
+                                                {response.userName ||
+                                                    t('Deleted user')}
+                                            </span>
+                                            <span class="text-muted-foreground">
+                                                · {formatDate(
+                                                    response.answeredAt,
+                                                )}
+                                            </span>
+                                        </p>
+                                        {#if response.canEdit && editingResponseId !== response.id}
+                                            <button
+                                                type="button"
+                                                aria-label={t('Edit')}
+                                                onclick={() =>
+                                                    (editingResponseId =
+                                                        response.id)}
+                                                class="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                                            >
+                                                <Pencil class="size-3.5" />
+                                            </button>
+                                        {/if}
                                     </div>
+                                    {#if editingResponseId === response.id}
+                                        <Form
+                                            {...CheckInController.updateAnswer.form(
+                                                [
+                                                    currentTeam.slug,
+                                                    project.id,
+                                                    checkIn.id,
+                                                    response.id,
+                                                ],
+                                            )}
+                                            onSuccess={() =>
+                                                (editingResponseId = null)}
+                                            class="mt-2 grid gap-3"
+                                        >
+                                            {#snippet children({
+                                                errors,
+                                                processing,
+                                            })}
+                                                <RichTextEditor
+                                                    id={`check-in-response-edit-${response.id}`}
+                                                    name="answer"
+                                                    value={response.answer}
+                                                    required
+                                                    ariaLabel={t('Answer')}
+                                                    attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                                        [
+                                                            currentTeam.slug,
+                                                            project.id,
+                                                        ],
+                                                    )}
+                                                />
+                                                <InputError
+                                                    message={errors.answer}
+                                                />
+                                                <div class="flex gap-2">
+                                                    <Button
+                                                        type="submit"
+                                                        size="sm"
+                                                        disabled={processing}
+                                                    >
+                                                        {t('Save')}
+                                                    </Button>
+                                                    <Button
+                                                        type="button"
+                                                        size="sm"
+                                                        variant="outline"
+                                                        disabled={processing}
+                                                        onclick={() =>
+                                                            (editingResponseId =
+                                                                null)}
+                                                    >
+                                                        {t('Cancel')}
+                                                    </Button>
+                                                </div>
+                                            {/snippet}
+                                        </Form>
+                                    {:else}
+                                        <div
+                                            class="mt-2 rounded-xl border bg-background/40 p-4"
+                                        >
+                                            <RichTextContent
+                                                content={response.answer}
+                                                class="break-words text-sm leading-6"
+                                            />
+                                        </div>
+                                    {/if}
+                                    {#if editingResponseId !== response.id}
+                                        <div
+                                            class="mt-3 flex flex-wrap items-center gap-2"
+                                        >
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                variant="outline"
+                                                onclick={() =>
+                                                    toggleDiscussion(
+                                                        response.id,
+                                                    )}
+                                                aria-expanded={discussingResponseId ===
+                                                    response.id}
+                                            >
+                                                {t('Discuss')}
+                                                {#if response.comments.length > 0}
+                                                    ({response.comments.length})
+                                                {/if}
+                                            </Button>
+
+                                            <ReactionPicker
+                                                action={CheckInController.toggleAnswerReaction.url(
+                                                    [
+                                                        currentTeam.slug,
+                                                        project.id,
+                                                        checkIn.id,
+                                                        response.id,
+                                                    ],
+                                                )}
+                                                reactions={response.reactions}
+                                            />
+                                        </div>
+                                    {/if}
+
+                                    {#if discussingResponseId === response.id}
+                                        <div
+                                            class="mt-4 grid gap-4 border-t pt-4"
+                                        >
+                                            {#each response.comments as comment (comment.id)}
+                                                <div class="text-sm">
+                                                    <div
+                                                        class="font-semibold text-foreground"
+                                                    >
+                                                        {comment.authorName ||
+                                                            t('Deleted user')}
+                                                        <span
+                                                            class="font-normal text-muted-foreground"
+                                                        >
+                                                            · {formatDate(
+                                                                comment.createdAt,
+                                                            )}
+                                                        </span>
+                                                    </div>
+                                                    <RichTextContent
+                                                        content={comment.body}
+                                                        class="mt-1 break-words leading-6"
+                                                    />
+                                                </div>
+                                            {/each}
+
+                                            {#if commentingResponseId === response.id}
+                                                <Form
+                                                    {...CommentController.storeCheckInAnswer.form(
+                                                        [
+                                                            currentTeam.slug,
+                                                            project.id,
+                                                            checkIn.id,
+                                                            response.id,
+                                                        ],
+                                                    )}
+                                                    id={'check-in-response-comment-form-' +
+                                                        response.id}
+                                                    resetOnSuccess
+                                                    onSuccess={() =>
+                                                        (commentingResponseId =
+                                                            null)}
+                                                    class="grid gap-2"
+                                                >
+                                                    {#snippet children({
+                                                        errors,
+                                                        processing,
+                                                    })}
+                                                        <Label
+                                                            for={'check-in-response-comment-' +
+                                                                response.id}
+                                                            class="sr-only"
+                                                        >
+                                                            {t('Comment')}
+                                                        </Label>
+                                                        <RichTextEditor
+                                                            id={'check-in-response-comment-' +
+                                                                response.id}
+                                                            name="body"
+                                                            required
+                                                            placeholder={t(
+                                                                'Add comment',
+                                                            )}
+                                                            ariaLabel={t(
+                                                                'Comment',
+                                                            )}
+                                                            mentionables={members}
+                                                            attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                                                [
+                                                                    currentTeam.slug,
+                                                                    project.id,
+                                                                ],
+                                                            )}
+                                                        />
+                                                        <InputError
+                                                            message={errors.body}
+                                                        />
+                                                        <div class="flex gap-2">
+                                                            <Button
+                                                                type="submit"
+                                                                size="sm"
+                                                                disabled={processing}
+                                                            >
+                                                                {t(
+                                                                    'Add comment',
+                                                                )}
+                                                            </Button>
+                                                            <Button
+                                                                type="button"
+                                                                size="sm"
+                                                                variant="outline"
+                                                                disabled={processing}
+                                                                onclick={() =>
+                                                                    (commentingResponseId =
+                                                                        null)}
+                                                            >
+                                                                {t('Cancel')}
+                                                            </Button>
+                                                        </div>
+                                                    {/snippet}
+                                                </Form>
+                                            {:else}
+                                                <button
+                                                    type="button"
+                                                    aria-expanded="false"
+                                                    aria-controls={'check-in-response-comment-form-' +
+                                                        response.id}
+                                                    onclick={() =>
+                                                        (commentingResponseId =
+                                                            response.id)}
+                                                    class="flex min-h-12 w-full items-center rounded-lg px-4 text-left font-medium text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                                                >
+                                                    {t('Comment on this')}
+                                                </button>
+                                            {/if}
+                                        </div>
+                                    {/if}
                                 </div>
                             </article>
                         {/each}

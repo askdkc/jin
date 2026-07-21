@@ -30,6 +30,7 @@ class StoredFileFactory extends Factory
             'original_name' => fake()->word().'.pdf',
             'mime_type' => 'application/pdf',
             'size' => fake()->numberBetween(1, 1024 * 1024),
+            'checksum' => hash('sha256', fake()->uuid()),
         ];
     }
 }

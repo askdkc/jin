@@ -26,14 +26,22 @@
 <script lang="ts">
     import { Form, Link, router } from '@inertiajs/svelte';
     import Check from 'lucide-svelte/icons/check';
+    import EllipsisVertical from 'lucide-svelte/icons/ellipsis-vertical';
     import GripVertical from 'lucide-svelte/icons/grip-vertical';
     import Plus from 'lucide-svelte/icons/plus';
-    import Trash2 from 'lucide-svelte/icons/trash-2';
     import AttachmentController from '@/actions/App/Http/Controllers/AttachmentController';
     import AppHead from '@/components/AppHead.svelte';
     import InputError from '@/components/InputError.svelte';
     import RichTextEditor from '@/components/RichTextEditor.svelte';
     import { Button } from '@/components/ui/button';
+    import {
+        DropdownMenu,
+        DropdownMenuContent,
+        DropdownMenuGroup,
+        DropdownMenuItem,
+        DropdownMenuSeparator,
+        DropdownMenuTrigger,
+    } from '@/components/ui/dropdown-menu';
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
     import { t } from '@/lib/i18n';
@@ -66,6 +74,7 @@
     let filter = $state('');
     let showCompleted = $state(false);
     let showListForm = $state(false);
+    let editingListId = $state<number | null>(null);
     let addFormListId = $state<number | null>(null);
     let newSubtasks = $state<string[]>([]);
     let draggedTodo = $state<{ listId: number; todoId: number } | null>(null);
@@ -252,49 +261,171 @@
                 >
                     {#if !list.isLoose}
                         <header
-                            class="mb-3 flex items-start justify-between gap-3"
+                            class="group/list relative mb-3 flex items-start gap-3 pl-8 sm:pl-0"
                         >
-                            <div class="flex min-w-0 items-center gap-3">
+                            <DropdownMenu
+                                class="absolute top-0 left-0 sm:right-full sm:left-auto sm:mr-1"
+                            >
+                                <DropdownMenuTrigger asChild>
+                                    {#snippet children(triggerProps)}
+                                        <button
+                                            type="button"
+                                            onclick={triggerProps.onclick}
+                                            aria-expanded={triggerProps[
+                                                'aria-expanded'
+                                            ]}
+                                            data-state={triggerProps[
+                                                'data-state'
+                                            ]}
+                                            aria-label={t('List actions')}
+                                            class="flex size-8 items-center justify-center rounded-md text-muted-foreground opacity-100 transition-opacity hover:bg-muted focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none data-[state=open]:opacity-100 sm:opacity-0 sm:group-hover/list:opacity-100"
+                                        >
+                                            <EllipsisVertical
+                                                class="size-5"
+                                                aria-hidden="true"
+                                            />
+                                        </button>
+                                    {/snippet}
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" sideOffset={4}>
+                                    <DropdownMenuGroup>
+                                        <DropdownMenuItem asChild>
+                                            {#snippet children(itemProps)}
+                                                <button
+                                                    type="button"
+                                                    class={itemProps.class}
+                                                    onclick={() => {
+                                                        itemProps.onClick?.();
+                                                        editingListId = list.id;
+                                                    }}
+                                                >
+                                                    {t('Edit')}
+                                                </button>
+                                            {/snippet}
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem asChild>
+                                            {#snippet children(itemProps)}
+                                                <button
+                                                    type="button"
+                                                    class={itemProps.class}
+                                                    onclick={() => {
+                                                        itemProps.onClick?.();
+                                                        openAddForm(list.id);
+                                                    }}
+                                                >
+                                                    {t('Add a to-do')}
+                                                </button>
+                                            {/snippet}
+                                        </DropdownMenuItem>
+                                    </DropdownMenuGroup>
+                                    {#if list.canDelete}
+                                        <DropdownMenuSeparator />
+                                        <DropdownMenuGroup>
+                                            <Form
+                                                {...ProjectTodoController.destroyList.form(
+                                                    [
+                                                        currentTeam.slug,
+                                                        project.id,
+                                                        list.id,
+                                                    ],
+                                                )}
+                                                onBefore={confirmDelete}
+                                            >
+                                                {#snippet children({
+                                                    processing,
+                                                })}
+                                                    <DropdownMenuItem asChild>
+                                                        {#snippet children(
+                                                            itemProps,
+                                                        )}
+                                                            <button
+                                                                type="submit"
+                                                                class={`${itemProps.class} text-destructive`}
+                                                                disabled={processing}
+                                                                onclick={() =>
+                                                                    itemProps.onClick?.()}
+                                                            >
+                                                                {t('Delete')}
+                                                            </button>
+                                                        {/snippet}
+                                                    </DropdownMenuItem>
+                                                {/snippet}
+                                            </Form>
+                                        </DropdownMenuGroup>
+                                    {/if}
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+
+                            <div class="flex min-w-0 flex-1 items-center gap-3">
                                 <span
                                     class="size-4 shrink-0 rounded-full bg-primary/40"
                                     aria-hidden="true"
                                 ></span>
-                                <h2
-                                    class="min-w-0 break-words text-xl font-semibold"
-                                >
-                                    <Link
-                                        href={ProjectTodoController.showList([
-                                            currentTeam.slug,
-                                            project.id,
-                                            list.id,
-                                        ])}
-                                        class="hover:text-primary hover:underline"
+                                {#if editingListId === list.id}
+                                    <Form
+                                        {...ProjectTodoController.updateList.form(
+                                            [
+                                                currentTeam.slug,
+                                                project.id,
+                                                list.id,
+                                            ],
+                                        )}
+                                        onSuccess={() => (editingListId = null)}
+                                        class="flex min-w-0 flex-1 items-center gap-2"
                                     >
-                                        {list.title}
-                                    </Link>
-                                </h2>
-                            </div>
-                            {#if list.canDelete}
-                                <Form
-                                    {...ProjectTodoController.destroyList.form([
-                                        currentTeam.slug,
-                                        project.id,
-                                        list.id,
-                                    ])}
-                                    onBefore={confirmDelete}
-                                >
-                                    {#snippet children({ processing })}
-                                        <button
-                                            type="submit"
-                                            disabled={processing}
-                                            aria-label={t('Delete')}
-                                            class="flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                                        {#snippet children({
+                                            errors,
+                                            processing,
+                                        })}
+                                            <div class="min-w-0 flex-1">
+                                                <Input
+                                                    name="title"
+                                                    value={list.title}
+                                                    maxlength={255}
+                                                    required
+                                                    autofocus
+                                                    aria-label={t('Edit')}
+                                                />
+                                                <InputError
+                                                    message={errors.title}
+                                                />
+                                            </div>
+                                            <Button
+                                                type="submit"
+                                                size="sm"
+                                                disabled={processing}
+                                                >{t('Save')}</Button
+                                            >
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                variant="outline"
+                                                disabled={processing}
+                                                onclick={() =>
+                                                    (editingListId = null)}
+                                                >{t('Cancel')}</Button
+                                            >
+                                        {/snippet}
+                                    </Form>
+                                {:else}
+                                    <h2
+                                        class="min-w-0 break-words text-xl font-semibold"
+                                    >
+                                        <Link
+                                            href={ProjectTodoController.showList(
+                                                [
+                                                    currentTeam.slug,
+                                                    project.id,
+                                                    list.id,
+                                                ],
+                                            )}
+                                            class="hover:text-primary hover:underline"
                                         >
-                                            <Trash2 class="size-4" />
-                                        </button>
-                                    {/snippet}
-                                </Form>
-                            {/if}
+                                            {list.title}
+                                        </Link>
+                                    </h2>
+                                {/if}
+                            </div>
                         </header>
                     {/if}
 
@@ -303,7 +434,7 @@
                             {@const position = todoPositions.get(todo.id) ?? 0}
                             <div
                                 role="listitem"
-                                class="group flex min-w-0 items-start gap-2 rounded-md px-1 py-1.5 hover:bg-muted/50"
+                                class="group flex min-w-0 items-start gap-2 rounded-md px-1 py-1.5 transition-colors hover:bg-primary/15 focus-within:bg-primary/15"
                                 ondragover={allowDrop}
                                 ondrop={(event) =>
                                     dropTodo(event, list.id, position)}

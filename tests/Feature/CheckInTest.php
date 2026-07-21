@@ -214,6 +214,7 @@ test('only the assigned user can answer a prompt and answers appear in project h
     expect($prompt->fresh())
         ->answer->toBe('レビュー待ちです。')
         ->answered_at->not->toBeNull();
+    $answeredAt = $prompt->fresh()->answered_at;
     expect(Activity::query()->where('type', ActivityType::CheckInAnswered)->exists())->toBeTrue();
 
     $this->get(route('projects.check-ins.index', [$team, $project]))
@@ -223,7 +224,53 @@ test('only the assigned user can answer a prompt and answers appear in project h
             ->where('responses.0.checkInId', $checkIn->id)
             ->where('responses.0.question', '困っていることは？')
             ->where('responses.0.answer', 'レビュー待ちです。')
-            ->where('responses.0.userName', '回答者'));
+            ->where('responses.0.userName', '回答者')
+            ->where('responses.0.canEdit', true));
+
+    $this->actingAs($other)
+        ->patch(route('projects.check-ins.answers.update', [$team, $project, $checkIn, $prompt]), [
+            'answer' => '他人の回答を編集',
+        ])
+        ->assertForbidden();
+
+    $this->actingAs($member)
+        ->patch(route('projects.check-ins.answers.update', [$team, $project, $checkIn, $prompt]), [
+            'answer' => '編集後の回答です。',
+        ])
+        ->assertRedirect();
+
+    expect($prompt->fresh()->answer)->toBe('編集後の回答です。')
+        ->and($prompt->fresh()->answered_at?->equalTo($answeredAt))->toBeTrue();
+
+    $this->post(route('projects.check-ins.comments.store', [$team, $project, $checkIn, $prompt]), [
+        'body' => '確認しました。',
+    ])->assertRedirect();
+
+    $this->actingAs($other)
+        ->post(route('projects.check-ins.reactions.toggle', [$team, $project, $checkIn, $prompt]), [
+            'reaction' => '🚀',
+        ])
+        ->assertRedirect();
+
+    $this->actingAs($member)
+        ->post(route('projects.check-ins.reactions.toggle', [$team, $project, $checkIn, $prompt]), [
+            'reaction' => '🚀',
+        ])
+        ->assertRedirect();
+
+    $this->get(route('projects.check-ins.show', [$team, $project, $checkIn]))
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('responses.0.comments.0.body', '確認しました。')
+            ->where('responses.0.comments.0.authorName', '回答者')
+            ->where('responses.0.reactions.0.reaction', '🚀')
+            ->where('responses.0.reactions.0.count', 2)
+            ->where('responses.0.reactions.0.reacted', true));
+
+    $this->post(route('projects.check-ins.reactions.toggle', [$team, $project, $checkIn, $prompt]), [
+        'reaction' => '🚀',
+    ])->assertRedirect();
+
+    expect($prompt->reactors()->count())->toBe(1);
 });
 
 test('project members can open a check-in detail but outsiders cannot', function () {
@@ -253,6 +300,7 @@ test('project members can open a check-in detail but outsiders cannot', function
             ->component('projects/check-ins/Show')
             ->where('checkIn.question', '何かに困っている？')
             ->where('checkIn.targetIds', [$member->id])
+            ->where('checkIn.canAnswer', true)
             ->where('checkIn.isBookmarked', false)
             ->where('pendingPrompt.id', $pendingPrompt->id)
             ->where('responses.0.answer', '確認待ちです。'));
@@ -260,6 +308,49 @@ test('project members can open a check-in detail but outsiders cannot', function
     $this->actingAs($outsider)
         ->get(route('projects.check-ins.show', [$team, $project, $checkIn]))
         ->assertForbidden();
+});
+
+test('assigned users can answer from check-in detail before a prompt is dispatched', function () {
+    $owner = User::factory()->create();
+    $member = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([$owner->id, $member->id]);
+    $checkIn = CheckIn::factory()->for($project)->for($owner, 'creator')->create();
+    $checkIn->targets()->attach($member);
+
+    $this->actingAs($member)
+        ->get(route('projects.check-ins.show', [$team, $project, $checkIn]))
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('checkIn.canAnswer', true)
+            ->where('pendingPrompt', null));
+
+    $this->post(route('projects.check-ins.respond', [$team, $project, $checkIn]), [
+        'answer' => '先に回答します。',
+    ])->assertRedirect();
+
+    expect($checkIn->prompts()->sole())
+        ->user_id->toBe($member->id)
+        ->answer->toBe('先に回答します。')
+        ->answered_at->not->toBeNull();
+
+    $this->get(route('projects.check-ins.show', [$team, $project, $checkIn]))
+        ->assertInertia(fn (Assert $page) => $page->where('checkIn.canAnswer', true));
+
+    $this->post(route('projects.check-ins.respond', [$team, $project, $checkIn]), [
+        'answer' => '追加の回答です。',
+    ])->assertRedirect();
+
+    expect($checkIn->prompts()->count())->toBe(2)
+        ->and($checkIn->prompts()->pluck('answer')->all())
+        ->toBe(['先に回答します。', '追加の回答です。']);
+
+    $this->actingAs($owner)
+        ->post(route('projects.check-ins.respond', [$team, $project, $checkIn]), [
+            'answer' => '対象外回答',
+        ])->assertForbidden();
 });
 
 test('check-in creators can update the question schedule and project targets', function () {
@@ -363,6 +454,18 @@ test('check-in routes scope schedules and prompts to their project', function ()
 
     $this->post(route('projects.check-ins.answer', [$team, $firstProject, $firstCheckIn, $prompt]), [
         'answer' => '別Project',
+    ])->assertNotFound();
+
+    $this->patch(route('projects.check-ins.answers.update', [$team, $firstProject, $firstCheckIn, $prompt]), [
+        'answer' => '別Projectから編集',
+    ])->assertNotFound();
+
+    $this->post(route('projects.check-ins.comments.store', [$team, $firstProject, $firstCheckIn, $prompt]), [
+        'body' => '別Projectからコメント',
+    ])->assertNotFound();
+
+    $this->post(route('projects.check-ins.reactions.toggle', [$team, $firstProject, $firstCheckIn, $prompt]), [
+        'reaction' => '🚀',
     ])->assertNotFound();
 });
 

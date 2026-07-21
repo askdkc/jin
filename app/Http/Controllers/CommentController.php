@@ -6,9 +6,12 @@ use App\Enums\ActivityType;
 use App\Enums\TeamRole;
 use App\Http\Requests\Phase3\SaveCommentRequest;
 use App\Models\Activity;
+use App\Models\CheckIn;
+use App\Models\CheckInPrompt;
 use App\Models\Comment;
 use App\Models\MessageBoardPost;
 use App\Models\Project;
+use App\Models\ScheduleEvent;
 use App\Models\StoredFile;
 use App\Models\Team;
 use App\Models\Todo;
@@ -28,6 +31,24 @@ use Inertia\Inertia;
 
 class CommentController extends Controller
 {
+    public function storeCheckInAnswer(
+        SaveCommentRequest $request,
+        Team $currentTeam,
+        Project $project,
+        CheckIn $checkIn,
+        CheckInPrompt $prompt,
+    ): RedirectResponse {
+        $comment = $prompt->comments()->create([
+            ...$request->validated(),
+            'project_id' => $project->id,
+            'user_id' => $request->user()->id,
+        ]);
+
+        InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
+
+        return back();
+    }
+
     public function store(
         SaveCommentRequest $request,
         Team $currentTeam,
@@ -330,6 +351,23 @@ class CommentController extends Controller
         );
 
         return back(fallback: route('projects.files.show', [$currentTeam, $project, $storedFile]));
+    }
+
+    public function storeScheduleEvent(
+        SaveCommentRequest $request,
+        Team $currentTeam,
+        Project $project,
+        ScheduleEvent $scheduleEvent,
+    ): RedirectResponse {
+        $comment = $scheduleEvent->comments()->create([
+            ...$request->validated(),
+            'project_id' => $project->id,
+            'user_id' => $request->user()->id,
+        ]);
+
+        InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
+
+        return back(fallback: route('projects.schedule.show', [$currentTeam, $project, $scheduleEvent]));
     }
 
     public function updateFile(

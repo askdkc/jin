@@ -28,6 +28,12 @@ test('project participants can create and complete assigned todos', function () 
     $list = TodoList::query()->firstOrFail();
 
     $this->actingAs($member)
+        ->patch(route('projects.todo-lists.update', [$team, $project, $list]), [
+            'title' => '公開準備リスト',
+        ])
+        ->assertRedirect();
+
+    $this->actingAs($member)
         ->post(route('projects.todos.store', [$team, $project, $list]), [
             'title' => '公開前チェックを行う',
             'details' => 'スマートフォンでも確認する',
@@ -47,7 +53,7 @@ test('project participants can create and complete assigned todos', function () 
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
             ->component('projects/todos/Index')
-            ->where('lists.0.title', '公開準備')
+            ->where('lists.0.title', '公開準備リスト')
             ->where('lists.0.todos.0.title', '公開前チェックを行う')
             ->where('lists.0.todos.0.completed', true)
             ->where('lists.0.todos.0.assigneeName', $member->name)
@@ -96,11 +102,22 @@ test('project participants can open todo details while outsiders cannot', functi
             ->where('todo.title', '表示を確認する')
             ->where('todo.assigneeName', $member->name)
             ->where('todo.creatorName', $owner->name)
+            ->has('todo.reactions', 0)
             ->where('todo.comments.0.body', '確認しました。'));
+
+    $reactionUrl = route('projects.todos.reaction.toggle', [$team, $project, $list, $todo]);
+
+    $this->actingAs($member)->post($reactionUrl, ['reaction' => '❤️'])->assertRedirect();
+    expect($todo->reactors()->whereKey($member->id)->first()?->pivot?->reaction)->toBe('❤️');
+
+    $this->actingAs($member)->post($reactionUrl, ['reaction' => '❤️'])->assertRedirect();
+    expect($todo->reactors()->whereKey($member->id)->exists())->toBeFalse();
 
     $this->actingAs($outsider)
         ->get(route('projects.todos.show', [$team, $project, $list, $todo]))
         ->assertForbidden();
+
+    $this->actingAs($outsider)->post($reactionUrl, ['reaction' => '❤️'])->assertForbidden();
 });
 
 test('todos can be created with subtasks and completion watchers in one request', function () {

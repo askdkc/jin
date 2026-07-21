@@ -3,9 +3,12 @@
 namespace App\Support;
 
 use App\Models\StoredFile;
+use App\Models\User;
+use DateTimeInterface;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
+use RuntimeException;
 use Throwable;
 
 class OnlyOfficeConfigService
@@ -18,19 +21,25 @@ class OnlyOfficeConfigService
 
     public function isConfigured(): bool
     {
-        return $this->isHttpUrl(config('onlyoffice.document_server_url'))
-            && $this->isHttpUrl(config('onlyoffice.public_url'))
-            && $this->isHttpUrl(config('onlyoffice.internal_url'))
-            && Str::length(trim((string) config('onlyoffice.jwt_secret', ''))) >= 32;
+        return $this->isHttpBaseUrl(config('onlyoffice.document_server_url'))
+            && $this->isHttpBaseUrl(config('onlyoffice.public_url'))
+            && $this->isHttpBaseUrl(config('onlyoffice.internal_url'))
+            && strlen(trim((string) config('onlyoffice.jwt_secret', ''))) >= 32
+            && preg_match('/\A[A-Za-z0-9._-]{1,64}\z/', (string) config('onlyoffice.instance_id')) === 1
+            && (int) config('onlyoffice.download_ttl') > 0
+            && (int) config('onlyoffice.healthcheck_timeout') > 0
+            && (int) config('onlyoffice.max_file_size') > 0;
     }
 
     public function isDocumentServerAvailable(): bool
     {
         try {
+            $timeout = (int) config('onlyoffice.healthcheck_timeout', 3);
             $response = Http::acceptJson()
-                ->connectTimeout(2)
-                ->timeout(3)
-                ->get(rtrim((string) config('onlyoffice.document_server_url'), '/').'/healthcheck');
+                ->withoutRedirecting()
+                ->connectTimeout($timeout)
+                ->timeout($timeout)
+                ->get($this->baseUrl('document_server_url').'/healthcheck');
 
             return $response->successful()
                 && in_array(Str::lower(trim($response->body())), ['true', 'ok'], true);
@@ -40,95 +49,115 @@ class OnlyOfficeConfigService
     }
 
     /** @return array<string, mixed> */
-    public function make(StoredFile $storedFile): array
+    public function make(StoredFile $storedFile, User $viewer): array
     {
         $resolved = $this->documentTypeResolver->resolve($storedFile);
+        throw_if($resolved === null, RuntimeException::class, 'Unsupported OnlyOffice document.');
         $version = $this->documentVersion->key($storedFile);
-        $fileType = $resolved['fileType'];
+        $issuedAt = now()->timestamp;
+        $expiresAt = now()->addSeconds($this->downloadTtl());
 
         $config = [
             'type' => 'embedded',
             'documentType' => $resolved['documentType'],
-            'width' => '100%',
             'height' => '100%',
+            'width' => '100%',
             'document' => [
-                'fileType' => $fileType,
+                'fileType' => $resolved['fileType'],
                 'key' => $version,
-                'title' => $this->safeTitle($storedFile->original_name, $fileType),
-                'url' => $this->downloadUrl($storedFile, $version),
+                'title' => $this->safeTitle($storedFile->original_name, $resolved['fileType']),
+                'url' => $this->downloadUrl($storedFile, $viewer, $version, $expiresAt),
                 'permissions' => [
-                    'edit' => false,
-                    'comment' => false,
-                    'review' => false,
-                    'fillForms' => false,
                     'chat' => false,
-                    'protect' => false,
-                    'modifyContentControl' => false,
-                    'download' => (bool) config('onlyoffice.allow_download', false),
-                    'print' => (bool) config('onlyoffice.allow_print', false),
+                    'comment' => false,
                     'copy' => (bool) config('onlyoffice.allow_copy', true),
+                    'download' => (bool) config('onlyoffice.allow_download', false),
+                    'edit' => false,
+                    'fillForms' => false,
+                    'modifyContentControl' => false,
+                    'modifyFilter' => false,
+                    'print' => (bool) config('onlyoffice.allow_print', false),
+                    'protect' => false,
+                    'review' => false,
                 ],
             ],
             'editorConfig' => [
                 'mode' => 'view',
                 'lang' => 'ja',
                 'region' => 'ja-JP',
-                'user' => [
-                    'id' => hash('sha256', "jin-onlyoffice-user-v1\0".(string) (auth()->id() ?? 'anonymous')),
-                    'name' => Str::limit((string) (auth()->user()->name ?? 'Viewer'), 128, ''),
-                ],
-                'customization' => [
-                    'integrationMode' => 'embed',
-                    'macros' => false,
-                    'macrosMode' => 'disable',
-                    'plugins' => false,
-                    'feedback' => false,
-                    'help' => false,
-                    'comments' => false,
-                    'forcesave' => false,
+                'coEditing' => [
+                    'mode' => 'strict',
+                    'change' => false,
                 ],
             ],
         ];
+        $payload = [
+            ...$config,
+            'iat' => $issuedAt,
+            'nbf' => $issuedAt,
+            'exp' => $expiresAt->timestamp,
+        ];
 
-        return [...$config, 'token' => $this->tokenService->encode($config)];
+        return [...$config, 'token' => $this->tokenService->encode($payload)];
     }
 
-    private function downloadUrl(StoredFile $storedFile, string $version): string
-    {
+    private function downloadUrl(
+        StoredFile $storedFile,
+        User $viewer,
+        string $version,
+        DateTimeInterface $expiresAt,
+    ): string {
         $relativeUrl = URL::temporarySignedRoute(
-            'onlyoffice.files.download',
-            $this->downloadTtl(),
-            ['stored_file' => $storedFile->getKey(), 'version' => $version],
+            'files.onlyoffice.internal-download',
+            $expiresAt,
+            [
+                'file' => $storedFile->getKey(),
+                'viewer' => $viewer->getKey(),
+                'version' => $version,
+            ],
             absolute: false,
         );
 
-        return rtrim((string) config('onlyoffice.internal_url'), '/').'/'.ltrim($relativeUrl, '/');
+        return $this->baseUrl('internal_url').'/'.ltrim($relativeUrl, '/');
     }
 
     private function downloadTtl(): int
     {
-        return min(max((int) config('onlyoffice.download_ttl', 300), 1), 3600);
+        return min((int) config('onlyoffice.download_ttl', 300), 3600);
     }
 
     private function safeTitle(?string $originalName, string $fileType): string
     {
-        $title = strip_tags(basename((string) $originalName));
-        $title = preg_replace('/[^\p{L}\p{N}\p{M}._()\- ]+/u', '_', $title) ?? '';
+        $title = basename(str_replace('\\', '/', (string) $originalName));
+        $title = preg_replace('/[\x00-\x1F\x7F]/u', '', $title) ?? '';
         $title = trim($title, " .\t\n\r\0\x0B");
 
         return Str::limit($title !== '' ? $title : "document.{$fileType}", 128, '');
     }
 
-    private function isHttpUrl(mixed $url): bool
+    private function baseUrl(string $key): string
     {
-        if (! is_string($url) || trim($url) === '') {
+        return rtrim((string) config("onlyoffice.{$key}"), '/');
+    }
+
+    private function isHttpBaseUrl(mixed $url): bool
+    {
+        if (! is_string($url) || trim($url) !== $url || $url === '') {
             return false;
         }
 
-        $parts = parse_url($url);
+        try {
+            $parts = parse_url($url);
+        } catch (\ValueError) {
+            return false;
+        }
 
         return is_array($parts)
             && in_array(Str::lower((string) ($parts['scheme'] ?? '')), ['http', 'https'], true)
-            && trim((string) ($parts['host'] ?? '')) !== '';
+            && trim((string) ($parts['host'] ?? '')) !== ''
+            && ! isset($parts['user'])
+            && ! isset($parts['pass'])
+            && ! array_key_exists('query', $parts)
+            && ! array_key_exists('fragment', $parts);
     }
 }

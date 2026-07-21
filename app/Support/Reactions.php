@@ -4,11 +4,17 @@ namespace App\Support;
 
 use App\Models\User;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\Pivot;
 
 class Reactions
 {
+    /**
+     * @template TDeclaringModel of Model
+     *
+     * @param  BelongsToMany<User, TDeclaringModel>  $reactors
+     */
     public static function toggle(BelongsToMany $reactors, int $userId, string $reaction): void
     {
         $current = $reactors->whereKey($userId)->first()?->pivot?->getAttribute('reaction');
@@ -28,20 +34,29 @@ class Reactions
      */
     public static function grouped(Collection $reactors, int $userId): array
     {
-        return $reactors
-            ->groupBy(function (User $user): string {
-                /** @var Pivot|null $pivot */
-                $pivot = $user->getRelation('pivot');
+        $grouped = [];
 
-                return (string) $pivot?->getAttribute('reaction');
-            })
-            ->map(fn ($users, string $reaction): array => [
+        foreach ($reactors as $user) {
+            $pivot = $user->getRelation('pivot');
+            $reaction = $pivot instanceof Pivot
+                ? (string) $pivot->getAttribute('reaction')
+                : '';
+
+            if ($reaction === '') {
+                continue;
+            }
+
+            $grouped[$reaction] ??= [
                 'reaction' => $reaction,
-                'count' => $users->count(),
-                'reacted' => $users->contains('id', $userId),
-                'names' => $users->pluck('name')->all(),
-            ])
-            ->values()
-            ->all();
+                'count' => 0,
+                'reacted' => false,
+                'names' => [],
+            ];
+            $grouped[$reaction]['count']++;
+            $grouped[$reaction]['reacted'] = $grouped[$reaction]['reacted'] || $user->id === $userId;
+            $grouped[$reaction]['names'][] = $user->name;
+        }
+
+        return array_values($grouped);
     }
 }

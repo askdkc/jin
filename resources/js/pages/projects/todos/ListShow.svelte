@@ -109,6 +109,7 @@
     let addingTodo = $state(false);
     let newSubtasks = $state<string[]>([]);
     let editingCommentId = $state<number | null>(null);
+    let commentComposerOpen = $state(false);
 
     const confirmDelete = (): boolean =>
         window.confirm(t('Are you sure you want to delete this?'));
@@ -701,29 +702,55 @@
                 </div>
             {/if}
 
-            <Form
-                {...CommentController.storeList.form(routeArguments)}
-                resetOnSuccess
-                class="mt-5 space-y-2"
-            >
-                {#snippet children({ errors, processing })}
-                    <Label for="list-comment">{t('Comment')}</Label>
-                    <RichTextEditor
-                        id="list-comment"
-                        name="body"
-                        required
-                        ariaLabel={t('Comment')}
-                        mentionables={members}
-                        attachmentUploadUrl={AttachmentController.uploadInline.url(
-                            projectRouteArguments,
-                        )}
-                    />
-                    <InputError message={errors.body} />
-                    <Button type="submit" disabled={processing}
-                        >{t('Add comment')}</Button
+            <div class="mt-5">
+                {#if commentComposerOpen}
+                    <Form
+                        {...CommentController.storeList.form(routeArguments)}
+                        id="list-comment-form"
+                        resetOnSuccess
+                        onSuccess={() => (commentComposerOpen = false)}
+                        class="space-y-2"
                     >
-                {/snippet}
-            </Form>
+                        {#snippet children({ errors, processing })}
+                            <Label for="list-comment">{t('Comment')}</Label>
+                            <RichTextEditor
+                                id="list-comment"
+                                name="body"
+                                required
+                                ariaLabel={t('Comment')}
+                                mentionables={members}
+                                attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                    projectRouteArguments,
+                                )}
+                            />
+                            <InputError message={errors.body} />
+                            <div class="flex gap-2">
+                                <Button type="submit" disabled={processing}
+                                    >{t('Add comment')}</Button
+                                >
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    disabled={processing}
+                                    onclick={() =>
+                                        (commentComposerOpen = false)}
+                                    >{t('Cancel')}</Button
+                                >
+                            </div>
+                        {/snippet}
+                    </Form>
+                {:else}
+                    <button
+                        type="button"
+                        aria-expanded="false"
+                        aria-controls="list-comment-form"
+                        onclick={() => (commentComposerOpen = true)}
+                        class="flex min-h-12 w-full items-center rounded-lg px-4 text-left font-medium text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                        {t('Comment on this')}
+                    </button>
+                {/if}
+            </div>
         </section>
     </article>
 </main>

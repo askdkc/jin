@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { Portal } from 'bits-ui';
     import { t } from '@/lib/i18n';
     import type { Snippet } from 'svelte';
     import { getContext } from 'svelte';
@@ -22,22 +23,24 @@
 <svelte:window onkeydown={handleKeydown} />
 
 {#if open()}
-    <div class="fixed inset-0 z-50 flex items-center justify-center">
-        <button
-            type="button"
-            class="fixed inset-0 bg-black/50"
-            aria-label={t('Close')}
-            onclick={close}
-        ></button>
-        <div
-            class={cn(
-                'relative z-10 w-full max-w-lg rounded-lg border bg-background p-6 shadow-lg',
-                className,
-            )}
-            role="dialog"
-            aria-modal="true"
-        >
-            {@render children?.()}
+    <Portal>
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <button
+                type="button"
+                class="fixed inset-0 bg-black/50"
+                aria-label={t('Close')}
+                onclick={close}
+            ></button>
+            <div
+                class={cn(
+                    'relative z-10 max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-lg border bg-background p-6 shadow-lg',
+                    className,
+                )}
+                role="dialog"
+                aria-modal="true"
+            >
+                {@render children?.()}
+            </div>
         </div>
-    </div>
+    </Portal>
 {/if}

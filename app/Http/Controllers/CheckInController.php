@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Enums\ActivityType;
+use App\Http\Requests\Phase3\SaveMessageBoardPostReactionRequest as SaveReactionRequest;
 use App\Http\Requests\Phase9\AnswerCheckInRequest;
 use App\Http\Requests\Phase9\StoreCheckInRequest;
 use App\Http\Requests\Phase9\UpdateCheckInRequest;
@@ -13,6 +14,7 @@ use App\Models\Project;
 use App\Models\Team;
 use App\Models\User;
 use App\Support\InlineAttachments;
+use App\Support\Reactions;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -81,6 +83,7 @@ class CheckInController extends Controller
                 'answer' => $prompt->answer,
                 'userName' => $prompt->user?->name,
                 'answeredAt' => $prompt->answered_at?->toISOString(),
+                'canEdit' => $prompt->user_id === $userId,
             ]);
 
         return Inertia::render('projects/check-ins/Index', [
@@ -143,9 +146,12 @@ class CheckInController extends Controller
             ->oldest('scheduled_for')
             ->first();
 
+        $canAnswer = $pendingPrompt !== null
+            || $checkIn->targets->contains('id', request()->user()->id);
+
         $responses = $checkIn->prompts()
             ->whereNotNull('answered_at')
-            ->with('user:id,name')
+            ->with(['user:id,name', 'comments.user:id,name', 'reactors:id,name'])
             ->latest('answered_at')
             ->limit(100)
             ->get()
@@ -156,6 +162,14 @@ class CheckInController extends Controller
                 'answer' => $prompt->answer,
                 'userName' => $prompt->user?->name,
                 'answeredAt' => $prompt->answered_at?->toISOString(),
+                'canEdit' => $prompt->user_id === request()->user()->id,
+                'comments' => $prompt->comments->map(fn ($comment): array => [
+                    'id' => $comment->id,
+                    'body' => $comment->body,
+                    'authorName' => $comment->user?->name,
+                    'createdAt' => $comment->created_at?->toISOString(),
+                ])->all(),
+                'reactions' => Reactions::grouped($prompt->reactors, request()->user()->id),
             ]);
 
         return Inertia::render('projects/check-ins/Show', [
@@ -179,6 +193,7 @@ class CheckInController extends Controller
                 'targetNames' => $checkIn->targets->pluck('name')->all(),
                 'canManage' => Gate::allows('update', $checkIn),
                 'canDelete' => Gate::allows('delete', $checkIn),
+                'canAnswer' => $canAnswer,
                 'isBookmarked' => request()->user()
                     ->bookmarkedCheckIns()
                     ->whereKey($checkIn->id)
@@ -267,6 +282,21 @@ class CheckInController extends Controller
         return to_route('projects.check-ins.index', [$currentTeam, $project]);
     }
 
+    public function respond(
+        AnswerCheckInRequest $request,
+        Team $currentTeam,
+        Project $project,
+        CheckIn $checkIn,
+    ): RedirectResponse {
+        $prompt = $checkIn->prompts()->create([
+            'user_id' => $request->user()->id,
+            'scheduled_for' => now(),
+            'requested_at' => now(),
+        ]);
+
+        return $this->answer($request, $currentTeam, $project, $checkIn, $prompt);
+    }
+
     public function answer(
         AnswerCheckInRequest $request,
         Team $currentTeam,
@@ -295,6 +325,45 @@ class CheckInController extends Controller
                 $prompt->checkIn->question,
             );
         });
+
+        return back();
+    }
+
+    public function updateAnswer(
+        AnswerCheckInRequest $request,
+        Team $currentTeam,
+        Project $project,
+        CheckIn $checkIn,
+        CheckInPrompt $prompt,
+    ): RedirectResponse {
+        DB::transaction(function () use ($request, $project, $prompt): void {
+            $prompt->update(['answer' => $request->validated('answer')]);
+
+            InlineAttachments::syncFromBody(
+                $prompt,
+                $project,
+                $request->user()->id,
+                $prompt->answer,
+            );
+        });
+
+        return back();
+    }
+
+    public function toggleAnswerReaction(
+        SaveReactionRequest $request,
+        Team $currentTeam,
+        Project $project,
+        CheckIn $checkIn,
+        CheckInPrompt $prompt,
+    ): RedirectResponse {
+        Gate::authorize('view', $checkIn);
+
+        Reactions::toggle(
+            $prompt->reactors(),
+            $request->user()->id,
+            (string) $request->validated('reaction'),
+        );
 
         return back();
     }

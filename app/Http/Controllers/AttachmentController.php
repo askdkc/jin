@@ -31,14 +31,20 @@ class AttachmentController extends Controller
         $path = $file->store("projects/{$project->id}/attachments", 'local');
         throw_if($path === false, RuntimeException::class, 'File storage failed.');
 
-        $storedFile = $project->storedFiles()->create([
-            'uploaded_by' => $request->user()->id,
-            'disk' => 'local',
-            'path' => $path,
-            'original_name' => $file->getClientOriginalName(),
-            'mime_type' => $file->getMimeType(),
-            'size' => $file->getSize(),
-        ]);
+        try {
+            $storedFile = $project->storedFiles()->create([
+                'uploaded_by' => $request->user()->id,
+                'disk' => 'local',
+                'path' => $path,
+                'original_name' => $file->getClientOriginalName(),
+                'mime_type' => $file->getMimeType(),
+                'size' => $file->getSize(),
+            ]);
+        } catch (Throwable $exception) {
+            Storage::disk('local')->delete($path);
+
+            throw $exception;
+        }
 
         return response()->json([
             'id' => $storedFile->id,

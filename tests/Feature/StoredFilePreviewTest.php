@@ -38,12 +38,19 @@ test('stored file creation schedules previews only for supported extensions', fu
 
     ['owner' => $owner, 'project' => $project] = storedFilePreviewProject();
 
-    foreach (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'xlsm', 'ods', 'odt', 'ppt', 'pptx', 'odp'] as $extension) {
+    $pdf = StoredFile::factory()->for($project)->create([
+        'original_name' => 'source.pdf',
+    ]);
+
+    expect($pdf->preview_status)->toBe('pending')
+        ->and($pdf->preview_path)->toBeNull();
+
+    foreach (['doc', 'docx', 'xls', 'xlsx', 'xlsm', 'ods', 'odt', 'ppt', 'pptx', 'odp'] as $extension) {
         $file = StoredFile::factory()->for($project)->create([
             'original_name' => "source.{$extension}",
         ]);
 
-        expect($file->preview_status)->toBe('pending')
+        expect($file->preview_status)->toBeNull()
             ->and($file->preview_path)->toBeNull();
     }
 
@@ -55,7 +62,7 @@ test('stored file creation schedules previews only for supported extensions', fu
     expect($unsupported->preview_status)->toBeNull()
         ->and($unsupported->preview_path)->toBeNull();
 
-    Queue::assertPushed(GenerateStoredFilePreview::class, 11);
+    Queue::assertPushed(GenerateStoredFilePreview::class, 1);
 });
 
 test('legacy preview backfill claims supported rows once and leaves unsupported rows untouched', function () {
@@ -134,7 +141,7 @@ test('preview backfill retries failed rows without duplicating pending rows', fu
     );
 });
 
-test('http uploads use the central stored file preview scheduling seam', function () {
+test('office uploads do not enter the generated preview queue', function () {
     Storage::fake('local');
     Queue::fake();
     ['owner' => $owner, 'team' => $team, 'project' => $project] = storedFilePreviewProject();
@@ -147,13 +154,8 @@ test('http uploads use the central stored file preview scheduling seam', functio
 
     $storedFile = StoredFile::query()->sole();
 
-    expect($storedFile->preview_status)->toBe('pending');
-    Queue::assertPushed(
-        GenerateStoredFilePreview::class,
-        fn (GenerateStoredFilePreview $job): bool => $job->storedFileId === $storedFile->id
-            && $job->sourcePath === $storedFile->path
-            && $job->afterCommit === true,
-    );
+    expect($storedFile->preview_status)->toBeNull();
+    Queue::assertNotPushed(GenerateStoredFilePreview::class);
 });
 
 test('a post-commit queue failure keeps the committed row and original blob', function () {
@@ -255,7 +257,7 @@ test('the preview generator converts page one to a source-versioned webp and mar
     Process::assertRanTimes(fn (PendingProcess $process) => $process->command[0] === config('services.imagemagick.path'));
 });
 
-test('office generation caches one pdf before rasterizing its first page', function () {
+test('office files are excluded from local preview generation', function () {
     Storage::fake('local');
     Queue::fake();
     ['owner' => $owner, 'project' => $project] = storedFilePreviewProject();
@@ -265,36 +267,15 @@ test('office generation caches one pdf before rasterizing its first page', funct
         'original_name' => 'report.docx',
     ]);
 
-    Process::fake(function (PendingProcess $process) {
-        $command = $process->command;
-        $binary = $command[0] ?? null;
+    Process::fake();
 
-        if ($binary === config('services.libreoffice.path')) {
-            $outputDirectory = $command[array_search('--outdir', $command, true) + 1];
-            $inputPath = $command[array_key_last($command)];
-            file_put_contents($outputDirectory.'/'.pathinfo($inputPath, PATHINFO_FILENAME).'.pdf', 'cached pdf bytes');
-        }
-
-        if ($binary === config('services.poppler.path')) {
-            file_put_contents($command[array_key_last($command)].'.png', 'png bytes');
-        }
-
-        if ($binary === config('services.imagemagick.path')) {
-            file_put_contents($command[array_key_last($command)], 'webp bytes');
-        }
-
-        return Process::result();
-    });
-
-    (new GenerateStoredFilePreview($file->id, $file->path))->handle(app(StoredFilePreviewGenerator::class));
-
-    expect($file->refresh()->preview_status)->toBe('ready');
-    expect(Storage::disk('local')->get(StoredFilePreviewGenerator::cachedPdfPath($file->id, $file->path)))->toBe('cached pdf bytes');
-    Storage::disk('local')->assertExists(StoredFilePreviewGenerator::webpPath($file->id, $file->path));
-    Process::assertRanTimes(fn (PendingProcess $process) => $process->command[0] === config('services.libreoffice.path'));
+    expect(StoredFilePreviewGenerator::supports($file))->toBeFalse()
+        ->and($file->preview_status)->toBeNull();
+    Queue::assertNotPushed(GenerateStoredFilePreview::class);
+    Process::assertNothingRan();
 });
 
-test('additional office formats use the existing pdf fallback preview', function (string $extension, string $mimeType) {
+test('the legacy preview endpoint streams office originals without conversion', function (string $extension, string $mimeType) {
     Storage::fake('local');
     Queue::fake();
     ['owner' => $owner, 'team' => $team, 'project' => $project] = storedFilePreviewProject();
@@ -306,23 +287,14 @@ test('additional office formats use the existing pdf fallback preview', function
         'mime_type' => $mimeType,
     ]);
 
-    Process::fake(function (PendingProcess $process): object {
-        $command = $process->command;
-
-        if (($command[0] ?? null) === config('services.libreoffice.path')) {
-            $outputDirectory = $command[array_search('--outdir', $command, true) + 1];
-            $inputPath = $command[array_key_last($command)];
-            file_put_contents($outputDirectory.'/'.pathinfo($inputPath, PATHINFO_FILENAME).'.pdf', 'converted pdf content');
-        }
-
-        return Process::result();
-    });
+    Process::fake();
 
     $this->actingAs($owner)
         ->get(route('projects.files.preview', [$team, $project, $file]))
         ->assertOk()
-        ->assertHeader('content-type', 'application/pdf')
-        ->assertContent('converted pdf content');
+        ->assertHeader('content-type', $mimeType)
+        ->assertStreamedContent('office bytes');
+    Process::assertNothingRan();
 })->with([
     ['xlsm', 'application/vnd.ms-excel.sheet.macroEnabled.12'],
     ['ods', 'application/vnd.oasis.opendocument.spreadsheet'],
@@ -400,13 +372,13 @@ test('a stale job during replacement cannot publish or update the new generation
     Storage::fake('local');
     Queue::fake();
     ['owner' => $owner, 'project' => $project] = storedFilePreviewProject();
-    $oldPath = 'projects/test/old-report.docx';
-    $newPath = 'projects/test/new-report.docx';
-    Storage::disk('local')->put($oldPath, 'old office bytes');
-    Storage::disk('local')->put($newPath, 'new office bytes');
+    $oldPath = 'projects/test/old-report.pdf';
+    $newPath = 'projects/test/new-report.pdf';
+    Storage::disk('local')->put($oldPath, 'old pdf bytes');
+    Storage::disk('local')->put($newPath, 'new pdf bytes');
     $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
         'path' => $oldPath,
-        'original_name' => 'report.docx',
+        'original_name' => 'report.pdf',
     ]);
 
     $generator = new class($file, $newPath) extends StoredFilePreviewGenerator
@@ -521,7 +493,6 @@ test('preview queue budgets leave the retry window longer than the job timeout',
         ->and($middleware->releaseAfter)->toBeGreaterThan(0)
         ->and($middleware->expiresAfter)->toBeGreaterThan($job->timeout)
         ->and($job->tries * $middleware->releaseAfter)->toBeGreaterThan($middleware->expiresAfter)
-        ->and(config('services.libreoffice.timeout'))->toBe(120)
         ->and(config('services.poppler.timeout'))->toBe(45)
         ->and(config('services.imagemagick.timeout'))->toBe(45)
         ->and(config('queue.connections.database.retry_after'))->toBeGreaterThan($job->timeout)
@@ -671,7 +642,7 @@ test('file detail separates lightweight webp from explicit whole-document previe
         ->toContain("{t('Preview')}");
 });
 
-test('full office preview reads an existing cached pdf without running LibreOffice', function () {
+test('office preview ignores an obsolete converted pdf cache', function () {
     Storage::fake('local');
     Queue::fake();
     ['owner' => $owner, 'team' => $team, 'project' => $project] = storedFilePreviewProject();
@@ -690,13 +661,13 @@ test('full office preview reads an existing cached pdf without running LibreOffi
     $this->actingAs($owner)
         ->get(route('projects.files.preview', [$team, $project, $file]))
         ->assertOk()
-        ->assertHeader('content-type', 'application/pdf')
-        ->assertContent('cached pdf bytes');
+        ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+        ->assertStreamedContent('office bytes');
 
-    Process::assertNotRan(fn (PendingProcess $process) => $process->command[0] === config('services.libreoffice.path'));
+    Process::assertNothingRan();
 });
 
-test('full office preview never trusts an old id-only pdf cache for the current source', function () {
+test('office preview ignores an obsolete id-only pdf cache', function () {
     Storage::fake('local');
     Queue::fake();
     ['owner' => $owner, 'team' => $team, 'project' => $project] = storedFilePreviewProject();
@@ -709,58 +680,22 @@ test('full office preview never trusts an old id-only pdf cache for the current 
     ]);
     Storage::disk('local')->put(StoredFilePreviewGenerator::legacyPdfPath($file->id), 'old cached pdf bytes');
 
-    Process::fake(function (PendingProcess $process): object {
-        $command = $process->command;
-
-        if (($command[0] ?? null) === config('services.libreoffice.path')) {
-            $outputDirectory = $command[array_search('--outdir', $command, true) + 1];
-            $inputPath = $command[array_key_last($command)];
-            file_put_contents($outputDirectory.'/'.pathinfo($inputPath, PATHINFO_FILENAME).'.pdf', 'current cached pdf bytes');
-        }
-
-        return Process::result();
-    });
+    Process::fake();
 
     $this->actingAs($owner)
         ->get(route('projects.files.preview', [$team, $project, $file]))
         ->assertOk()
-        ->assertHeader('content-type', 'application/pdf')
-        ->assertContent('current cached pdf bytes');
+        ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+        ->assertStreamedContent('office bytes');
 
-    Process::assertRan(fn (PendingProcess $process) => $process->command[0] === config('services.libreoffice.path'));
+    Process::assertNothingRan();
 });
 
-test('full office preview does not publish a cache after the source changes during conversion', function () {
-    Storage::fake('local');
-    Queue::fake();
-    ['owner' => $owner, 'project' => $project] = storedFilePreviewProject();
-    $oldPath = 'projects/test/old-report.docx';
-    $newPath = 'projects/test/new-report.docx';
-    Storage::disk('local')->put($oldPath, 'old office bytes');
-    Storage::disk('local')->put($newPath, 'new office bytes');
-    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
-        'path' => $oldPath,
-        'original_name' => 'report.docx',
-    ]);
-
-    Process::fake(function (PendingProcess $process) use ($file, $newPath): object {
-        $command = $process->command;
-
-        if (($command[0] ?? null) === config('services.libreoffice.path')) {
-            StoredFile::query()->whereKey($file->id)->update([
-                'path' => $newPath,
-                'preview_status' => 'pending',
-            ]);
-            $outputDirectory = $command[array_search('--outdir', $command, true) + 1];
-            $inputPath = $command[array_key_last($command)];
-            file_put_contents($outputDirectory.'/'.pathinfo($inputPath, PATHINFO_FILENAME).'.pdf', 'stale pdf bytes');
-        }
-
-        return Process::result();
-    });
-
-    expect(app(StoredFilePreviewGenerator::class)->officePreviewPdf($file))->toBeNull();
-    Storage::disk('local')->assertMissing(
-        StoredFilePreviewGenerator::cachedPdfPath($file->id, $oldPath),
-    );
+test('the local preview pipeline contains no office converter integration', function () {
+    expect(file_get_contents(app_path('Support/StoredFilePreviewGenerator.php')))
+        ->not->toContain('soffice')
+        ->not->toContain('libreoffice')
+        ->not->toContain('officePreviewPdf')
+        ->and(file_get_contents(config_path('services.php')))
+        ->not->toContain('libreoffice');
 });

@@ -138,14 +138,12 @@
         project,
         file,
         configUrl,
-        onFallback,
         open = $bindable(false),
     }: {
         currentTeam: Team;
         project: ProjectTool;
         file: PreviewFile | null;
         configUrl: string;
-        onFallback: () => void;
         open?: boolean;
     } = $props();
 
@@ -320,13 +318,6 @@
         }
     };
 
-    const handleFallback = (): void => {
-        cleanupPreview();
-        previewError = '';
-        open = false;
-        onFallback();
-    };
-
     $effect(() => {
         if (open && file && loadedFileId !== file.id) {
             void loadPreview(file);
@@ -413,14 +404,9 @@
                         />
                         <p class="mt-3 font-semibold">{previewError}</p>
                         <p class="mt-1 text-sm text-muted-foreground">
-                            {t(
-                                'You can use the existing preview or download the file.',
-                            )}
+                            {t('Download the file to open it locally.')}
                         </p>
                         <div class="mt-4 flex flex-wrap justify-center gap-2">
-                            <Button type="button" onclick={handleFallback}>
-                                {t('Open existing preview')}
-                            </Button>
                             {#if file}
                                 <Button variant="outline" asChild>
                                     {#snippet children(buttonProps)}

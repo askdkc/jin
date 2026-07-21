@@ -47,6 +47,7 @@
     import AppHead from '@/components/AppHead.svelte';
     import FileDropzone from '@/components/FileDropzone.svelte';
     import InputError from '@/components/InputError.svelte';
+    import ReactionPicker from '@/components/ReactionPicker.svelte';
     import RichTextContent from '@/components/RichTextContent.svelte';
     import RichTextEditor from '@/components/RichTextEditor.svelte';
     import StoredFilePreviewDialog, {
@@ -89,7 +90,9 @@
     let previewOpen = $state(false);
     let previewFile = $state<ProjectTodo['attachments'][number] | null>(null);
     let showAttachmentUpload = $state(false);
+    let subtaskComposerOpen = $state(false);
     let editingCommentId = $state<number | null>(null);
+    let commentComposerOpen = $state(false);
 
     type EditableField = 'title' | 'assignee' | 'due' | 'notify' | 'notes';
     let editingField = $state<EditableField | null>(null);
@@ -181,9 +184,9 @@
 
 <AppHead title={todo.title} />
 
-<main class="mx-auto w-full max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
+<main class="mx-auto w-full max-w-5xl px-4 py-4 sm:px-6 sm:py-6">
     <article class="overflow-hidden rounded-xl border bg-card">
-        <header class="px-5 pt-5 pb-6 sm:px-8">
+        <header class="px-5 pt-4 pb-4 sm:px-8 sm:pt-6">
             <div class="flex items-center justify-between gap-4">
                 <nav
                     class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted-foreground"
@@ -231,7 +234,7 @@
                 {/if}
             </div>
 
-            <div class="mt-4">
+            <div class="mt-3">
                 {#if editingField === 'title'}
                     <!-- svelte-ignore a11y_autofocus -->
                     <input
@@ -270,7 +273,7 @@
                 {/if}
             </div>
 
-            <div class="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
                 <Form
                     {...ProjectTodoController.toggleTodo.form(routeArguments)}
                 >
@@ -304,9 +307,9 @@
             </div>
         </header>
 
-        <section class="px-5 pt-2 pb-4 sm:px-8">
+        <section class="px-5 pb-3 sm:px-8">
             <dl
-                class="grid gap-x-8 gap-y-4 text-sm sm:grid-cols-[10rem_minmax(0,1fr)] sm:items-start"
+                class="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-start"
             >
                 <dt class="font-semibold sm:pt-1.5 sm:text-right">
                     {t('Assignee')}
@@ -552,9 +555,9 @@
             </dl>
         </section>
 
-        <section class="px-5 pb-4 sm:px-8" aria-label={t('Subtasks')}>
+        <section class="px-5 pb-3 sm:px-8" aria-label={t('Subtasks')}>
             <div
-                class="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-[10rem_minmax(0,1fr)] sm:items-start"
+                class="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-start"
             >
                 <p class="font-semibold sm:pt-1 sm:text-right">
                     {t('Subtasks')} ({todo.subtasks.length})
@@ -625,44 +628,71 @@
                         </div>
                     {/if}
 
-                    <Form
-                        {...ProjectTodoController.storeSubtask.form(
-                            routeArguments,
-                        )}
-                        resetOnSuccess
-                        class="flex flex-col gap-2 sm:flex-row {todo.subtasks
-                            .length > 0
-                            ? 'mt-3'
-                            : ''}"
-                    >
-                        {#snippet children({ errors, processing })}
-                            <div class="min-w-0 flex-1">
-                                <Label for="new-subtask" class="sr-only"
-                                    >{t('Subtask title')}</Label
-                                >
-                                <Input
-                                    id="new-subtask"
-                                    name="title"
-                                    maxlength={255}
-                                    required
-                                    placeholder={t('Subtask title')}
-                                />
-                                <InputError message={errors.title} />
-                            </div>
-                            <Button
-                                type="submit"
-                                size="sm"
-                                disabled={processing}>{t('Add subtask')}</Button
-                            >
-                        {/snippet}
-                    </Form>
+                    {#if subtaskComposerOpen}
+                        <Form
+                            {...ProjectTodoController.storeSubtask.form(
+                                routeArguments,
+                            )}
+                            resetOnSuccess
+                            onSuccess={() => (subtaskComposerOpen = false)}
+                            class="flex flex-col gap-2 sm:flex-row {todo
+                                .subtasks.length > 0
+                                ? 'mt-3'
+                                : ''}"
+                        >
+                            {#snippet children({ errors, processing })}
+                                <div class="min-w-0 flex-1">
+                                    <Label for="new-subtask" class="sr-only"
+                                        >{t('Subtask title')}</Label
+                                    >
+                                    <Input
+                                        id="new-subtask"
+                                        name="title"
+                                        maxlength={255}
+                                        required
+                                        autofocus
+                                        placeholder={t('Subtask title')}
+                                    />
+                                    <InputError message={errors.title} />
+                                </div>
+                                <div class="flex gap-2">
+                                    <Button
+                                        type="submit"
+                                        size="sm"
+                                        disabled={processing}
+                                        >{t('Add subtask')}</Button
+                                    >
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={processing}
+                                        onclick={() =>
+                                            (subtaskComposerOpen = false)}
+                                        >{t('Cancel')}</Button
+                                    >
+                                </div>
+                            {/snippet}
+                        </Form>
+                    {:else}
+                        <button
+                            type="button"
+                            onclick={() => (subtaskComposerOpen = true)}
+                            class="block w-full rounded-md px-2 py-1 text-left text-muted-foreground transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {todo
+                                .subtasks.length > 0
+                                ? 'mt-3'
+                                : ''}"
+                        >
+                            {t('Add subtask')}
+                        </button>
+                    {/if}
                 </div>
             </div>
         </section>
 
-        <section class="px-5 pb-6 sm:px-8" aria-label={t('Attachments')}>
+        <section class="px-5 pb-3 sm:px-8" aria-label={t('Attachments')}>
             <div
-                class="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-[10rem_minmax(0,1fr)] sm:items-start"
+                class="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-start"
             >
                 <p class="font-semibold sm:pt-1 sm:text-right">
                     {t('Attachments')} ({todo.attachments.length})
@@ -813,17 +843,23 @@
             </div>
         </section>
 
-        <section class="border-t px-5 py-6 sm:px-8" aria-label={t('Comments')}>
-            <h2 class="text-base font-semibold">
-                {t('Comments')} ({todo.comments.length})
-            </h2>
+        <section class="px-5 pb-4 sm:px-8" aria-label={t('Add a reaction')}>
+            <div class="sm:ml-[9.5rem]">
+                <ReactionPicker
+                    action={ProjectTodoController.toggleReaction.url(
+                        routeArguments,
+                    )}
+                    reactions={todo.reactions}
+                />
+            </div>
+        </section>
 
-            {#if todo.comments.length === 0}
-                <p class="mt-3 text-sm text-muted-foreground">
-                    {t('No comments yet')}
-                </p>
-            {:else}
-                <div class="mt-4 space-y-4">
+        <section class="border-t px-5 py-4 sm:px-8" aria-label={t('Comments')}>
+            {#if todo.comments.length > 0}
+                <h2 class="text-base font-semibold">
+                    {t('Comments')} ({todo.comments.length})
+                </h2>
+                <div class="mt-3 space-y-3">
                     {#each todo.comments as comment (comment.id)}
                         <div class="rounded-lg border bg-background p-4">
                             <div class="flex items-start justify-between gap-3">
@@ -941,27 +977,53 @@
                 </div>
             {/if}
 
-            <Form
-                {...CommentController.storeTodo.form(routeArguments)}
-                resetOnSuccess
-                class="mt-5 space-y-2"
-            >
-                {#snippet children({ errors, processing })}
-                    <Label for="todo-comment">{t('Comment')}</Label>
-                    <RichTextEditor
-                        id="todo-comment"
-                        name="body"
-                        required
-                        ariaLabel={t('Comment')}
-                        mentionables={members}
-                        {attachmentUploadUrl}
-                    />
-                    <InputError message={errors.body} />
-                    <Button type="submit" disabled={processing}
-                        >{t('Add comment')}</Button
+            <div class={todo.comments.length > 0 ? 'mt-4' : ''}>
+                {#if commentComposerOpen}
+                    <Form
+                        {...CommentController.storeTodo.form(routeArguments)}
+                        id="todo-comment-form"
+                        resetOnSuccess
+                        onSuccess={() => (commentComposerOpen = false)}
+                        class="space-y-2"
                     >
-                {/snippet}
-            </Form>
+                        {#snippet children({ errors, processing })}
+                            <Label for="todo-comment">{t('Comment')}</Label>
+                            <RichTextEditor
+                                id="todo-comment"
+                                name="body"
+                                required
+                                ariaLabel={t('Comment')}
+                                mentionables={members}
+                                {attachmentUploadUrl}
+                            />
+                            <InputError message={errors.body} />
+                            <div class="flex gap-2">
+                                <Button type="submit" disabled={processing}
+                                    >{t('Add comment')}</Button
+                                >
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    disabled={processing}
+                                    onclick={() =>
+                                        (commentComposerOpen = false)}
+                                    >{t('Cancel')}</Button
+                                >
+                            </div>
+                        {/snippet}
+                    </Form>
+                {:else}
+                    <button
+                        type="button"
+                        aria-expanded="false"
+                        aria-controls="todo-comment-form"
+                        onclick={() => (commentComposerOpen = true)}
+                        class="flex min-h-12 w-full items-center rounded-lg px-4 text-left font-medium text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                        {t('Comment on this')}
+                    </button>
+                {/if}
+            </div>
         </section>
     </article>
 </main>

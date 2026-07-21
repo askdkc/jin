@@ -6,14 +6,12 @@ use App\Models\StoredFile;
 
 class OnlyOfficeDocumentVersion
 {
-    private const NAMESPACE = 'jin-onlyoffice-document-v1';
-
     public function key(StoredFile $storedFile): string
     {
-        return hash('sha256', implode("\0", [
-            self::NAMESPACE,
+        return hash('sha256', implode(':', [
+            (string) config('onlyoffice.instance_id'),
             (string) $storedFile->getKey(),
-            $storedFile->path,
+            strtolower((string) $storedFile->checksum),
             (string) $storedFile->size,
         ]));
     }

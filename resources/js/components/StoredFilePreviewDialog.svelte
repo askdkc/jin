@@ -1,16 +1,6 @@
 <script module lang="ts">
-    const previewableExtensions = new Set([
+    const localPreviewableExtensions = new Set([
         'pdf',
-        'doc',
-        'docx',
-        'odt',
-        'xls',
-        'xlsx',
-        'xlsm',
-        'ods',
-        'ppt',
-        'pptx',
-        'odp',
         'csv',
         'jpg',
         'jpeg',
@@ -21,11 +11,28 @@
         'mov',
         'm4v',
     ]);
+    const onlyOfficeExtensions = new Set([
+        'doc',
+        'docx',
+        'odt',
+        'xls',
+        'xlsx',
+        'xlsm',
+        'ods',
+        'ppt',
+        'pptx',
+        'odp',
+    ]);
+
+    const extensionOf = (name: string): string =>
+        name.split('.').pop()?.toLocaleLowerCase('en-US') ?? '';
+
+    export const isOnlyOfficeStoredFile = (name: string): boolean =>
+        onlyOfficeExtensions.has(extensionOf(name));
 
     export const canPreviewStoredFile = (name: string): boolean =>
-        previewableExtensions.has(
-            name.split('.').pop()?.toLocaleLowerCase('en-US') ?? '',
-        );
+        localPreviewableExtensions.has(extensionOf(name)) ||
+        isOnlyOfficeStoredFile(name);
 </script>
 
 <script lang="ts">
@@ -35,7 +42,9 @@
     import LoaderCircle from 'lucide-svelte/icons/loader-circle';
     import X from 'lucide-svelte/icons/x';
     import { onDestroy, tick } from 'svelte';
+    import OnlyOfficePreviewController from '@/actions/App/Http/Controllers/OnlyOfficePreviewController';
     import ProjectFileController from '@/actions/App/Http/Controllers/ProjectFileController';
+    import OnlyOfficePreviewDialog from '@/components/OnlyOfficePreviewDialog.svelte';
     import { Button } from '@/components/ui/button';
     import {
         Dialog,
@@ -72,6 +81,9 @@
     let nativePreviewUrl = $state<string | null>(null);
     let nativePreviewKind = $state<'image' | 'video' | null>(null);
     let loadedFileId: number | null = null;
+    const usesOnlyOffice = $derived(
+        file !== null && isOnlyOfficeStoredFile(file.name),
+    );
 
     const cleanupPreview = (): void => {
         previewRequest?.abort();
@@ -219,6 +231,12 @@
     };
 
     $effect(() => {
+        if (usesOnlyOffice) {
+            cleanupPreview();
+
+            return;
+        }
+
         if (open && file && loadedFileId !== file.id) {
             void loadPreview(file);
         }
@@ -227,115 +245,131 @@
     onDestroy(cleanupPreview);
 </script>
 
-<Dialog {open} onOpenChange={handleOpenChange}>
-    <DialogContent
-        class="flex h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-[96rem] flex-col gap-0 overflow-hidden rounded-2xl p-0 sm:h-[calc(100dvh-3rem)] sm:w-[calc(100vw-3rem)]"
-    >
-        <header class="flex items-start gap-3 border-b px-4 py-3 sm:px-5">
-            <div class="min-w-0 flex-1">
-                <DialogTitle class="truncate text-base sm:text-lg">
-                    {file?.name ?? t('Preview')}
-                </DialogTitle>
-                <DialogDescription class="mt-1 text-xs sm:text-sm">
-                    {t(
-                        'PDF, Office and CSV files are shown here without downloading.',
-                    )}
-                </DialogDescription>
-            </div>
-            <div class="flex shrink-0 items-center gap-1">
-                {#if file}
+{#if file && usesOnlyOffice}
+    <OnlyOfficePreviewDialog
+        {currentTeam}
+        {project}
+        {file}
+        configUrl={OnlyOfficePreviewController.url([
+            currentTeam.slug,
+            project.id,
+            file.id,
+        ])}
+        bind:open
+    />
+{:else}
+    <Dialog {open} onOpenChange={handleOpenChange}>
+        <DialogContent
+            class="flex h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-[96rem] flex-col gap-0 overflow-hidden rounded-2xl p-0 sm:h-[calc(100dvh-3rem)] sm:w-[calc(100vw-3rem)]"
+        >
+            <header class="flex items-start gap-3 border-b px-4 py-3 sm:px-5">
+                <div class="min-w-0 flex-1">
+                    <DialogTitle class="truncate text-base sm:text-lg">
+                        {file?.name ?? t('Preview')}
+                    </DialogTitle>
+                    <DialogDescription class="mt-1 text-xs sm:text-sm">
+                        {t(
+                            'PDF and CSV files are shown here without downloading.',
+                        )}
+                    </DialogDescription>
+                </div>
+                <div class="flex shrink-0 items-center gap-1">
+                    {#if file}
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={t('Download')}
+                            asChild
+                        >
+                            {#snippet children(buttonProps)}
+                                <a
+                                    {...buttonProps}
+                                    href={ProjectFileController.download.url([
+                                        currentTeam.slug,
+                                        project.id,
+                                        file.id,
+                                    ])}
+                                    class={buttonProps.class}
+                                >
+                                    <Download class="size-5" />
+                                </a>
+                            {/snippet}
+                        </Button>
+                    {/if}
                     <Button
+                        type="button"
                         variant="ghost"
                         size="icon"
-                        aria-label={t('Download')}
-                        asChild
+                        aria-label={t('Close')}
+                        onclick={() => handleOpenChange(false)}
                     >
-                        {#snippet children(buttonProps)}
-                            <a
-                                {...buttonProps}
-                                href={ProjectFileController.download.url([
-                                    currentTeam.slug,
-                                    project.id,
-                                    file.id,
-                                ])}
-                                class={buttonProps.class}
-                            >
-                                <Download class="size-5" />
-                            </a>
-                        {/snippet}
+                        <X class="size-5" />
                     </Button>
-                {/if}
-                <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label={t('Close')}
-                    onclick={() => handleOpenChange(false)}
-                >
-                    <X class="size-5" />
-                </Button>
-            </div>
-        </header>
-
-        <div class="relative min-h-0 flex-1 overflow-hidden bg-slate-100">
-            {#if previewLoading}
-                <div
-                    class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background"
-                    role="status"
-                >
-                    <LoaderCircle class="size-8 animate-spin text-primary" />
-                    <p class="text-sm font-medium">
-                        {t('Preparing preview...')}
-                    </p>
                 </div>
-            {:else if previewError}
-                <div
-                    class="absolute inset-0 z-10 flex items-center justify-center bg-background p-6 text-center"
-                    role="alert"
-                >
-                    <div>
-                        <FileText
-                            class="mx-auto size-10 text-muted-foreground"
+            </header>
+
+            <div class="relative min-h-0 flex-1 overflow-hidden bg-slate-100">
+                {#if previewLoading}
+                    <div
+                        class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background"
+                        role="status"
+                    >
+                        <LoaderCircle
+                            class="size-8 animate-spin text-primary"
                         />
-                        <p class="mt-3 font-semibold">{previewError}</p>
-                        <p class="mt-1 text-sm text-muted-foreground">
-                            {t(
-                                'Use the download button if the file is damaged.',
-                            )}
+                        <p class="text-sm font-medium">
+                            {t('Preparing preview...')}
                         </p>
                     </div>
-                </div>
-            {/if}
-
-            {#if nativePreviewKind === 'image' && nativePreviewUrl}
-                <div
-                    class="flex h-full items-center justify-center overflow-auto p-4"
-                >
-                    <img
-                        src={nativePreviewUrl}
-                        alt={file?.name ?? t('Image preview')}
-                        class="max-h-full max-w-full object-contain"
-                    />
-                </div>
-            {:else if nativePreviewKind === 'video' && nativePreviewUrl}
-                <div
-                    class="flex h-full items-center justify-center bg-black p-2"
-                >
-                    <video
-                        src={nativePreviewUrl}
-                        controls
-                        class="max-h-full max-w-full"
+                {:else if previewError}
+                    <div
+                        class="absolute inset-0 z-10 flex items-center justify-center bg-background p-6 text-center"
+                        role="alert"
                     >
-                        <track kind="captions" />
-                    </video>
-                </div>
-            {:else}
-                <div
-                    bind:this={previewHost}
-                    class="h-full w-full"
-                    aria-label={t('Document preview')}
-                ></div>
-            {/if}
-        </div>
-    </DialogContent>
-</Dialog>
+                        <div>
+                            <FileText
+                                class="mx-auto size-10 text-muted-foreground"
+                            />
+                            <p class="mt-3 font-semibold">{previewError}</p>
+                            <p class="mt-1 text-sm text-muted-foreground">
+                                {t(
+                                    'Use the download button if the file is damaged.',
+                                )}
+                            </p>
+                        </div>
+                    </div>
+                {/if}
+
+                {#if nativePreviewKind === 'image' && nativePreviewUrl}
+                    <div
+                        class="flex h-full items-center justify-center overflow-auto p-4"
+                    >
+                        <img
+                            src={nativePreviewUrl}
+                            alt={file?.name ?? t('Image preview')}
+                            class="max-h-full max-w-full object-contain"
+                        />
+                    </div>
+                {:else if nativePreviewKind === 'video' && nativePreviewUrl}
+                    <div
+                        class="flex h-full items-center justify-center bg-black p-2"
+                    >
+                        <video
+                            src={nativePreviewUrl}
+                            controls
+                            class="max-h-full max-w-full"
+                        >
+                            <track kind="captions" />
+                        </video>
+                    </div>
+                {:else}
+                    <div
+                        bind:this={previewHost}
+                        class="h-full w-full"
+                        aria-label={t('Document preview')}
+                    ></div>
+                {/if}
+            </div>
+        </DialogContent>
+    </Dialog>
+{/if}

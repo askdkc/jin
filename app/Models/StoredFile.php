@@ -14,7 +14,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Storage;
+use RuntimeException;
 
 /**
  * @property int $id
@@ -28,6 +31,7 @@ use Illuminate\Support\Carbon;
  * @property string $original_name
  * @property string|null $mime_type
  * @property int $size
+ * @property string|null $checksum
  * @property string|null $preview_path
  * @property string|null $preview_status
  * @property Carbon|null $created_at
@@ -39,7 +43,7 @@ use Illuminate\Support\Carbon;
  * @property-read Collection<int, Comment> $comments
  * @property-read Collection<int, User> $reactors
  */
-#[Fillable(['project_id', 'material_folder_id', 'uploaded_by', 'attachable_type', 'attachable_id', 'disk', 'path', 'original_name', 'mime_type', 'size', 'preview_path', 'preview_status'])]
+#[Fillable(['project_id', 'material_folder_id', 'uploaded_by', 'attachable_type', 'attachable_id', 'disk', 'path', 'original_name', 'mime_type', 'size', 'checksum', 'preview_path', 'preview_status'])]
 class StoredFile extends Model
 {
     /** @use HasFactory<StoredFileFactory> */
@@ -51,6 +55,15 @@ class StoredFile extends Model
     protected static function booted(): void
     {
         static::creating(function (StoredFile $storedFile): void {
+            if ($storedFile->checksum === null) {
+                $disk = Storage::disk($storedFile->disk);
+
+                if ($disk->exists($storedFile->path)) {
+                    $storedFile->checksum = self::checksumFor($disk, $storedFile->path);
+                    $storedFile->size = $disk->size($storedFile->path);
+                }
+            }
+
             if (StoredFilePreviewGenerator::supports($storedFile->original_name)) {
                 $storedFile->preview_path = null;
                 $storedFile->preview_status = 'pending';
@@ -66,6 +79,24 @@ class StoredFile extends Model
                     ->dispatchAfterCommit($storedFile->id, $storedFile->path);
             }
         });
+    }
+
+    public static function checksumFor(FilesystemAdapter $disk, string $path): string
+    {
+        $stream = $disk->readStream($path);
+
+        if (! is_resource($stream)) {
+            throw new RuntimeException('File checksum could not be calculated.');
+        }
+
+        try {
+            $context = hash_init('sha256');
+            hash_update_stream($context, $stream);
+
+            return hash_final($context);
+        } finally {
+            fclose($stream);
+        }
     }
 
     /**
@@ -110,6 +141,8 @@ class StoredFile extends Model
     /** @return BelongsToMany<User, $this> */
     public function reactors(): BelongsToMany
     {
-        return $this->belongsToMany(User::class, 'stored_file_reactions')->withTimestamps();
+        return $this->belongsToMany(User::class, 'stored_file_reactions')
+            ->withPivot('reaction')
+            ->withTimestamps();
     }
 }

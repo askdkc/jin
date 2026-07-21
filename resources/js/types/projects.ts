@@ -298,6 +298,7 @@ export type CheckInSchedule = {
 export type CheckInDetail = CheckInSchedule & {
     nextRunAtLocal: string;
     targetIds: number[];
+    canAnswer: boolean;
     isBookmarked: boolean;
 };
 
@@ -315,6 +316,17 @@ export type CheckInResponse = {
     answer: string | null;
     userName: string | null;
     answeredAt: string | null;
+    canEdit: boolean;
+};
+
+export type CheckInResponseDetail = CheckInResponse & {
+    comments: {
+        id: number;
+        body: string;
+        authorName: string | null;
+        createdAt: string | null;
+    }[];
+    reactions: ProjectReaction[];
 };
 
 export type ProjectCard = {
@@ -440,6 +452,13 @@ export type MessageComment = {
     canDelete: boolean;
 };
 
+export type ProjectReaction = {
+    reaction: string;
+    count: number;
+    reacted: boolean;
+    names: string[];
+};
+
 export type MessageBoardPost = {
     id: number;
     title: string;
@@ -450,12 +469,7 @@ export type MessageBoardPost = {
     subscribed: boolean;
     notifyCount: number;
     canEdit: boolean;
-    reactions: {
-        reaction: string;
-        count: number;
-        reacted: boolean;
-        names: string[];
-    }[];
+    reactions: ProjectReaction[];
     attachments: ProjectStoredFile[];
     comments: MessageComment[];
 };
@@ -520,6 +534,7 @@ export type ProjectTodo = {
     creatorName: string | null;
     createdAt: string | null;
     canEdit: boolean;
+    reactions: ProjectReaction[];
     attachments: ProjectStoredFile[];
     subtasks: ProjectSubtask[];
     comments: MessageComment[];
@@ -544,6 +559,11 @@ export type ProjectScheduleEvent = {
     recurrence: 'daily' | 'weekly' | 'monthly' | null;
     creatorName: string | null;
     canEdit: boolean;
+};
+
+export type ProjectScheduleEventDetail = ProjectScheduleEvent & {
+    reactions: ProjectReaction[];
+    comments: MessageComment[];
 };
 
 export type ScheduleGridDay = {

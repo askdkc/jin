@@ -12,7 +12,7 @@ class OnlyOfficeTokenService
     {
         $secret = trim((string) config('onlyoffice.jwt_secret', ''));
 
-        if ($secret === '') {
+        if (strlen($secret) < 32) {
             throw new RuntimeException('ONLYOFFICE JWT secret is not configured.');
         }
 

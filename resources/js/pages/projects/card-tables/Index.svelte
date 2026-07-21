@@ -139,8 +139,10 @@
         null,
     );
     let closeCreateAfterSuccess = $state(true);
+    let createDescriptionOpen = $state(false);
     let editDialogOpen = $state(false);
     let editTarget = $state<CardTarget | null>(null);
+    let editDescriptionOpen = $state(false);
     let renameColumnDialogOpen = $state(false);
     let renameColumnTarget = $state<ColumnTarget | null>(null);
     let newColumnDialogOpen = $state(false);
@@ -158,6 +160,7 @@
     const openCreateCard = (tableId: number, columnId: number): void => {
         createTarget = { tableId, columnId };
         closeCreateAfterSuccess = true;
+        createDescriptionOpen = false;
         createDialogOpen = true;
     };
     const openEditCard = (
@@ -166,6 +169,7 @@
         card: ProjectCard,
     ): void => {
         editTarget = { tableId, columnId, card };
+        editDescriptionOpen = Boolean(card.description?.trim());
         editDialogOpen = true;
     };
     const openRenameColumn = (
@@ -1233,20 +1237,32 @@
                             <InputError message={errors.due_on} />
                         </div>
                     </div>
-                    <div class="flex flex-col gap-2">
-                        <Label for="new-card-description">
-                            {t('Description')}
-                        </Label>
-                        <RichTextEditor
-                            id="new-card-description"
-                            name="description"
-                            ariaLabel={t('Description')}
-                            attachmentUploadUrl={AttachmentController.uploadInline.url(
-                                routeArguments,
-                            )}
-                        />
-                        <InputError message={errors.description} />
-                    </div>
+                    {#if createDescriptionOpen}
+                        <div class="flex flex-col gap-2">
+                            <Label for="new-card-description">
+                                {t('Description')}
+                            </Label>
+                            <RichTextEditor
+                                id="new-card-description"
+                                name="description"
+                                ariaLabel={t('Description')}
+                                attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                    routeArguments,
+                                )}
+                            />
+                            <InputError message={errors.description} />
+                        </div>
+                    {:else}
+                        <Button
+                            type="button"
+                            variant="outline"
+                            class="self-start"
+                            onclick={() => (createDescriptionOpen = true)}
+                        >
+                            <Plus data-icon="inline-start" />
+                            {t('Add description')}
+                        </Button>
+                    {/if}
                     <DialogFooter>
                         <DialogClose>
                             <Button type="button" variant="outline">
@@ -1347,22 +1363,34 @@
                                 <InputError message={errors.due_on} />
                             </div>
                         </div>
-                        <div class="flex flex-col gap-2">
-                            <Label for="edit-card-description">
-                                {t('Description')}
-                            </Label>
-                            <RichTextEditor
-                                id="edit-card-description"
-                                name="description"
-                                value={target.card.description}
-                                ariaLabel={t('Description')}
-                                attachmentUploadUrl={AttachmentController.uploadInline.url(
-                                    routeArguments,
-                                )}
-                            />
-                            <InputError message={errors.description} />
-                            <InputError message={errors.version} />
-                        </div>
+                        {#if editDescriptionOpen}
+                            <div class="flex flex-col gap-2">
+                                <Label for="edit-card-description">
+                                    {t('Description')}
+                                </Label>
+                                <RichTextEditor
+                                    id="edit-card-description"
+                                    name="description"
+                                    value={target.card.description}
+                                    ariaLabel={t('Description')}
+                                    attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                        routeArguments,
+                                    )}
+                                />
+                                <InputError message={errors.description} />
+                            </div>
+                        {:else}
+                            <Button
+                                type="button"
+                                variant="outline"
+                                class="self-start"
+                                onclick={() => (editDescriptionOpen = true)}
+                            >
+                                <Plus data-icon="inline-start" />
+                                {t('Add description')}
+                            </Button>
+                        {/if}
+                        <InputError message={errors.version} />
                         <DialogFooter>
                             {#if target.card.canDelete}
                                 <Button

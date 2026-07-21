@@ -5,12 +5,28 @@ use App\Models\Project;
 use App\Models\StoredFile;
 use App\Models\Team;
 use App\Models\User;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 
-test('Laravel accepts a config only when the real OnlyOffice server is available', function () {
+test('Laravel accepts a config when the OnlyOffice healthcheck succeeds', function () {
     Storage::fake('local');
     Queue::fake();
+    Http::preventStrayRequests();
+    Http::fake([
+        'http://onlyoffice-documentserver/healthcheck' => Http::response('true'),
+    ]);
+    config([
+        'onlyoffice.enabled' => true,
+        'onlyoffice.document_server_url' => 'http://onlyoffice-documentserver',
+        'onlyoffice.public_url' => 'https://office.example.com',
+        'onlyoffice.internal_url' => 'http://app.internal.test',
+        'onlyoffice.jwt_secret' => 'test-onlyoffice-secret-0123456789012345',
+        'onlyoffice.instance_id' => 'jin-integration-test',
+        'onlyoffice.download_ttl' => 300,
+        'onlyoffice.healthcheck_timeout' => 3,
+        'onlyoffice.max_file_size' => 26214400,
+    ]);
 
     $owner = User::factory()->create();
     $team = Team::factory()->create();
@@ -21,6 +37,7 @@ test('Laravel accepts a config only when the real OnlyOffice server is available
         'original_name' => 'integration.docx',
         'mime_type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'size' => 12,
+        'checksum' => hash('sha256', 'office bytes'),
     ]);
     Storage::disk('local')->put($file->path, 'office bytes');
 

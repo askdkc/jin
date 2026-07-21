@@ -19,11 +19,18 @@ class AnswerCheckInRequest extends FormRequest
         $checkIn = $this->route('check_in');
         $prompt = $this->route('prompt');
 
-        return $checkIn instanceof CheckIn
-            && $prompt instanceof CheckInPrompt
-            && $prompt->user_id === $this->user()->id
-            && $prompt->answered_at === null
-            && Gate::allows('view', $checkIn);
+        if (! $checkIn instanceof CheckIn || ! Gate::allows('view', $checkIn)) {
+            return false;
+        }
+
+        if ($prompt instanceof CheckInPrompt) {
+            return $prompt->user_id === $this->user()->id
+                && ($this->isMethod('patch')
+                    ? $prompt->answered_at !== null
+                    : $prompt->answered_at === null);
+        }
+
+        return $checkIn->targets()->whereKey($this->user()->id)->exists();
     }
 
     /**

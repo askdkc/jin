@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Enums\ActivityType;
 use App\Http\Requests\Phase3\MoveTodoRequest;
+use App\Http\Requests\Phase3\SaveMessageBoardPostReactionRequest as SaveReactionRequest;
 use App\Http\Requests\Phase3\SaveTodoListRequest;
 use App\Http\Requests\Phase3\SaveTodoRequest;
 use App\Http\Requests\Phase3\StoreSubtaskRequest;
@@ -19,6 +20,7 @@ use App\Notifications\MentionNotification;
 use App\Notifications\TodoActivityNotification;
 use App\Support\InlineAttachments;
 use App\Support\Mentions;
+use App\Support\Reactions;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -86,6 +88,7 @@ class ProjectTodoController extends Controller
             'comments' => fn ($query) => $query->with('user:id,name')->oldest(),
             'subtasks' => fn ($query) => $query->orderBy('position'),
             'attachments' => fn ($query) => $query->with('uploader:id,name')->oldest(),
+            'reactors:id,name',
         ]);
 
         return Inertia::render('projects/todos/Show', [
@@ -172,6 +175,17 @@ class ProjectTodoController extends Controller
             ...$request->validated(),
             'position' => ((int) $project->todoLists()->max('position')) + 1,
         ]);
+
+        return back(fallback: route('projects.todos.index', [$currentTeam, $project]));
+    }
+
+    public function updateList(
+        SaveTodoListRequest $request,
+        Team $currentTeam,
+        Project $project,
+        TodoList $todoList,
+    ): RedirectResponse {
+        $todoList->update($request->validated());
 
         return back(fallback: route('projects.todos.index', [$currentTeam, $project]));
     }
@@ -387,6 +401,24 @@ class ProjectTodoController extends Controller
         return to_route('projects.todos.index', [$currentTeam, $project]);
     }
 
+    public function toggleReaction(
+        SaveReactionRequest $request,
+        Team $currentTeam,
+        Project $project,
+        TodoList $todoList,
+        Todo $todo,
+    ): RedirectResponse {
+        Gate::authorize('view', $project);
+
+        Reactions::toggle(
+            $todo->reactors(),
+            $request->user()->id,
+            (string) $request->validated('reaction'),
+        );
+
+        return back(fallback: route('projects.todos.show', [$currentTeam, $project, $todoList, $todo]));
+    }
+
     public function destroyTodo(
         Team $currentTeam,
         Project $project,
@@ -446,6 +478,7 @@ class ProjectTodoController extends Controller
             'creatorName' => $todo->creator?->name,
             'createdAt' => $todo->created_at?->toISOString(),
             'canEdit' => $canManageProject || $todo->created_by === $userId,
+            'reactions' => Reactions::grouped($todo->reactors, $userId),
             'attachments' => $todo->attachments->map(fn (StoredFile $file): array => [
                 'id' => $file->id,
                 'name' => $file->original_name,

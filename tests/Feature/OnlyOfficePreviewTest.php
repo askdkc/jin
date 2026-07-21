@@ -8,6 +8,8 @@ use App\Models\User;
 use App\Support\OnlyOfficeDocumentVersion;
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
@@ -24,13 +26,12 @@ function onlyOfficePreviewProject(): array
     return compact('owner', 'team', 'project');
 }
 
-function configureOnlyOffice(bool $documentServerAvailable = true): void
+function configureOnlyOffice(mixed $healthResponse = null): void
 {
+    Http::preventStrayRequests();
     Http::fake([
-        'http://onlyoffice-documentserver/healthcheck' => Http::response(
-            $documentServerAvailable ? 'true' : 'false',
-            $documentServerAvailable ? 200 : 503,
-        ),
+        'http://onlyoffice-documentserver/healthcheck' => $healthResponse
+            ?? Http::response('true'),
     ]);
     config([
         'onlyoffice.enabled' => true,
@@ -38,346 +39,377 @@ function configureOnlyOffice(bool $documentServerAvailable = true): void
         'onlyoffice.public_url' => 'https://office.example.com',
         'onlyoffice.internal_url' => 'http://app.internal.test',
         'onlyoffice.jwt_secret' => 'test-onlyoffice-secret-0123456789012345',
+        'onlyoffice.instance_id' => 'jin-test',
         'onlyoffice.download_ttl' => 300,
+        'onlyoffice.healthcheck_timeout' => 3,
+        'onlyoffice.max_file_size' => 26214400,
         'onlyoffice.allow_download' => false,
         'onlyoffice.allow_print' => false,
         'onlyoffice.allow_copy' => true,
+        'inertia.ssr.enabled' => false,
     ]);
 }
 
-test('authorized office config supports cell word and slide document types', function (string $extension, string $mimeType, string $documentType) {
+function createOfficeFile(
+    Project $project,
+    User $owner,
+    string $extension = 'docx',
+    string $mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    string $contents = 'office bytes',
+    ?string $originalName = null,
+): StoredFile {
+    $path = "projects/{$project->id}/office-".uniqid().".{$extension}";
+    Storage::disk('local')->put($path, $contents);
+
+    return StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'path' => $path,
+        'original_name' => $originalName ?? "source.{$extension}",
+        'mime_type' => $mimeType,
+        'size' => strlen($contents),
+        'checksum' => hash('sha256', $contents),
+    ]);
+}
+
+test('authorized office config supports word cell and slide documents', function (string $extension, string $mimeType, string $documentType) {
     Storage::fake('local');
     Queue::fake();
     configureOnlyOffice();
     ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
-    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
-        'path' => "projects/{$project->id}/source.{$extension}",
-        'original_name' => "source.{$extension}",
-        'mime_type' => $mimeType,
-        'size' => 123,
-    ]);
-    Storage::disk('local')->put($file->path, 'office bytes');
+    $file = createOfficeFile($project, $owner, $extension, $mimeType);
 
     $response = $this->actingAs($owner)
-        ->get(route('projects.files.onlyoffice.config', [$team, $project, $file]))
+        ->getJson(route('projects.files.onlyoffice.config', [$team, $project, $file]))
         ->assertOk();
 
-    expect($response->headers->get('cache-control'))
-        ->toContain('private')
-        ->toContain('no-store');
-
-    $config = $response->json('config');
-    $documentVersion = app(OnlyOfficeDocumentVersion::class)->key($file);
-    parse_str((string) parse_url($config['document']['url'], PHP_URL_QUERY), $query);
-
-    expect($response->json('documentServerUrl'))->toBe('https://office.example.com')
-        ->and($config['type'])->toBe('embedded')
-        ->and($config['documentType'])->toBe($documentType)
-        ->and($config['width'])->toBe('100%')
-        ->and($config['height'])->toBe('100%')
-        ->and($config['document']['fileType'])->toBe($extension)
-        ->and($config['document']['key'])->toBe($documentVersion)
-        ->and($config['document']['url'])->toStartWith('http://app.internal.test/internal/onlyoffice/files/'.$file->id.'?')
-        ->and($config['document']['url'])->toContain('version='.$documentVersion)
-        ->and($query)->toHaveKeys(['expires', 'signature', 'version'])
-        ->and((int) $query['expires'])->toBeGreaterThanOrEqual(now()->timestamp)
-        ->and((int) $query['expires'])->toBeLessThanOrEqual(now()->timestamp + 301)
-        ->and($config['document']['title'])->toBe('source.'.$extension)
-        ->and($config['editorConfig']['mode'])->toBe('view')
-        ->and($config['editorConfig']['lang'])->toBe('ja')
-        ->and($config['editorConfig']['region'])->toBe('ja-JP');
+    expect($response->headers->get('cache-control'))->toContain('private')->toContain('no-store')
+        ->and($response->json('documentServerUrl'))->toBe('https://office.example.com')
+        ->and($response->json('config.type'))->toBe('embedded')
+        ->and($response->json('config.documentType'))->toBe($documentType)
+        ->and($response->json('config.document.fileType'))->toBe($extension)
+        ->and($response->json('config.document.key'))->toHaveLength(64)
+        ->and($response->json('config.editorConfig.mode'))->toBe('view');
 })->with([
-    ['xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'cell'],
     ['docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'word'],
+    ['xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'cell'],
     ['pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'slide'],
 ]);
 
-test('office config is exactly read only and is signed without the root token', function () {
+test('the complete read only config and expiry claims are signed with HS256', function () {
     Storage::fake('local');
     Queue::fake();
     configureOnlyOffice();
     ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
-    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
-        'path' => "projects/{$project->id}/report.xlsx",
-        'original_name' => str_repeat('report-', 30).'<script>.xlsx',
-        'mime_type' => 'application/octet-stream',
-        'size' => 123,
-    ]);
-    Storage::disk('local')->put($file->path, 'office bytes');
-
-    $response = $this->actingAs($owner)
-        ->get(route('projects.files.onlyoffice.config', [$team, $project, $file]))
-        ->assertOk();
-    $config = $response->json('config');
-    $token = $config['token'];
-    unset($config['token']);
-
-    $decoded = json_decode(
-        json_encode(JWT::decode($token, new Key('test-onlyoffice-secret-0123456789012345', 'HS256'))),
-        true,
-        flags: JSON_THROW_ON_ERROR,
+    $file = createOfficeFile(
+        $project,
+        $owner,
+        originalName: "../folder/\x01quarterly report.docx",
     );
 
-    expect((array) $decoded)->toBe($config)
+    $response = $this->actingAs($owner)
+        ->getJson(route('projects.files.onlyoffice.config', [$team, $project, $file]))
+        ->assertOk();
+    $config = $response->json('config');
+    $decoded = json_decode(json_encode(JWT::decode(
+        $config['token'],
+        new Key('test-onlyoffice-secret-0123456789012345', 'HS256'),
+    )), true, flags: JSON_THROW_ON_ERROR);
+    parse_str((string) parse_url($config['document']['url'], PHP_URL_QUERY), $query);
+
+    expect(Arr::except($decoded, ['iat', 'nbf', 'exp']))->toBe(Arr::except($config, ['token']))
+        ->and($decoded)->toHaveKeys(['iat', 'nbf', 'exp'])
+        ->and($decoded['iat'])->toBe($decoded['nbf'])
+        ->and($decoded['exp'])->toBe((int) $query['expires'])
         ->and($config['document']['permissions'])->toBe([
-            'edit' => false,
-            'comment' => false,
-            'review' => false,
-            'fillForms' => false,
             'chat' => false,
-            'protect' => false,
-            'modifyContentControl' => false,
-            'download' => false,
-            'print' => false,
+            'comment' => false,
             'copy' => true,
+            'download' => false,
+            'edit' => false,
+            'fillForms' => false,
+            'modifyContentControl' => false,
+            'modifyFilter' => false,
+            'print' => false,
+            'protect' => false,
+            'review' => false,
         ])
-        ->and($config['editorConfig']['user']['id'])->toBe(hash(
-            'sha256',
-            "jin-onlyoffice-user-v1\0{$owner->id}",
-        ))
-        ->and($config['editorConfig']['customization'])->toBe([
-            'integrationMode' => 'embed',
-            'macros' => false,
-            'macrosMode' => 'disable',
-            'plugins' => false,
-            'feedback' => false,
-            'help' => false,
-            'comments' => false,
-            'forcesave' => false,
-        ])
+        ->and($config['editorConfig']['coEditing'])->toBe(['mode' => 'strict', 'change' => false])
+        ->and($config['editorConfig'])->not->toHaveKey('user')
         ->and($config)->not->toHaveKey('callbackUrl')
-        ->and($config['document']['title'])->not->toContain('<')
-        ->and($config['document']['title'])->toHaveLength(128);
+        ->and($config['document']['title'])->toBe('quarterly report.docx')
+        ->and($query)->toHaveKeys(['expires', 'viewer', 'version', 'signature'])
+        ->and(parse_url($config['document']['url'], PHP_URL_PATH))->toEndWith('/'.$file->id)
+        ->and((int) $query['viewer'])->toBe($owner->id);
 
     expect($response->getContent())
         ->not->toContain('test-onlyoffice-secret-0123456789012345')
         ->not->toContain('http://onlyoffice-documentserver');
 });
 
-test('disabled onlyoffice config returns a distinct fallback status', function () {
-    Storage::fake('local');
-    Queue::fake();
-    config(['onlyoffice.enabled' => false]);
-    ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
-    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
-        'original_name' => 'report.xlsx',
-        'mime_type' => 'application/octet-stream',
-    ]);
-
-    $this->actingAs($owner)
-        ->get(route('projects.files.onlyoffice.config', [$team, $project, $file]))
-        ->assertNotFound();
-});
-
-test('enabled but misconfigured onlyoffice returns generic service unavailable', function () {
-    Storage::fake('local');
-    Queue::fake();
-    config([
-        'onlyoffice.enabled' => true,
-        'onlyoffice.document_server_url' => 'not-a-url',
-        'onlyoffice.public_url' => 'https://office.example.com',
-        'onlyoffice.internal_url' => 'http://app.internal.test',
-        'onlyoffice.jwt_secret' => '',
-    ]);
-    ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
-    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
-        'original_name' => 'report.xlsx',
-        'mime_type' => 'application/octet-stream',
-    ]);
-
-    $this->actingAs($owner)
-        ->get(route('projects.files.onlyoffice.config', [$team, $project, $file]))
-        ->assertStatus(503)
-        ->assertJson(['message' => 'OnlyOffice preview is unavailable.']);
-});
-
-test('an unreachable internal document server returns a generic service unavailable error', function () {
-    Storage::fake('local');
-    Queue::fake();
-    configureOnlyOffice(false);
-    ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
-    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
-        'path' => "projects/{$project->id}/report.xlsx",
-        'original_name' => 'report.xlsx',
-        'mime_type' => 'application/octet-stream',
-    ]);
-    Storage::disk('local')->put($file->path, 'office bytes');
-
-    $this->actingAs($owner)
-        ->get(route('projects.files.onlyoffice.config', [$team, $project, $file]))
-        ->assertStatus(503)
-        ->assertJson([
-            'message' => 'OnlyOffice preview is unavailable.',
-            'code' => 'document_server_unavailable',
-        ]);
-
-    Http::assertSentCount(1);
-    Http::assertSent(fn ($request) => $request->url() === 'http://onlyoffice-documentserver/healthcheck');
-});
-
-test('unsupported onlyoffice files return unprocessable entity', function () {
+test('config endpoint requires authentication and current project access', function () {
     Storage::fake('local');
     Queue::fake();
     configureOnlyOffice();
     ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
-    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
-        'original_name' => 'photo.jpg',
-        'mime_type' => 'image/jpeg',
-    ]);
-
-    $this->actingAs($owner)
-        ->get(route('projects.files.onlyoffice.config', [$team, $project, $file]))
-        ->assertStatus(422);
-});
-
-test('only project participants may request an office config', function () {
-    Storage::fake('local');
-    Queue::fake();
-    configureOnlyOffice();
-    ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
+    $file = createOfficeFile($project, $owner);
     $outsider = User::factory()->create();
     $team->members()->attach($outsider, ['role' => TeamRole::Member->value]);
-    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
-        'original_name' => 'report.xlsx',
-        'mime_type' => 'application/octet-stream',
-    ]);
 
+    $this->getJson(route('projects.files.onlyoffice.config', [$team, $project, $file]))
+        ->assertUnauthorized();
     $this->actingAs($outsider)
-        ->get(route('projects.files.onlyoffice.config', [$team, $project, $file]))
+        ->getJson(route('projects.files.onlyoffice.config', [$team, $project, $file]))
         ->assertForbidden();
 });
 
-test('config route explicitly scopes files to the requested project', function () {
+test('config endpoint does not expose absent database records', function () {
+    configureOnlyOffice();
+    ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
+
+    $this->actingAs($owner)
+        ->getJson(route('projects.files.onlyoffice.config', [$team, $project, 999999]))
+        ->assertNotFound();
+});
+
+test('config endpoint rejects extension mime mismatches', function () {
     Storage::fake('local');
     Queue::fake();
     configureOnlyOffice();
     ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
-    $otherProject = Project::factory()->for($team)->for($owner, 'creator')->create();
-    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
-        'original_name' => 'report.xlsx',
-        'mime_type' => 'application/octet-stream',
-    ]);
+    $file = createOfficeFile($project, $owner, 'xlsx', 'application/octet-stream');
 
     $this->actingAs($owner)
-        ->get(route('projects.files.onlyoffice.config', [$team, $otherProject, $file]))
-        ->assertNotFound();
-
-    $this->actingAs($owner)
-        ->get(route('projects.files.onlyoffice.config', [$team, $project, 999999]))
-        ->assertNotFound();
+        ->getJson(route('projects.files.onlyoffice.config', [$team, $project, $file]))
+        ->assertUnprocessable();
+    Http::assertNothingSent();
 });
 
-test('a valid relative signature streams an office file without authentication', function () {
+test('config endpoint rejects files over the configured size', function () {
+    Storage::fake('local');
+    Queue::fake();
+    configureOnlyOffice();
+    config(['onlyoffice.max_file_size' => 5]);
+    ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
+    $file = createOfficeFile($project, $owner, contents: '123456');
+
+    $this->actingAs($owner)
+        ->getJson(route('projects.files.onlyoffice.config', [$team, $project, $file]))
+        ->assertStatus(413);
+    Http::assertNothingSent();
+});
+
+test('config endpoint rejects a missing storage object', function () {
     Storage::fake('local');
     Queue::fake();
     configureOnlyOffice();
     ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
     $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
-        'path' => "projects/{$project->id}/report.xlsx",
-        'original_name' => '確認資料.xlsx',
-        'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'original_name' => 'source.docx',
+        'mime_type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     ]);
-    Storage::disk('local')->put($file->path, 'office bytes');
 
-    $configResponse = $this->actingAs($owner)
-        ->get(route('projects.files.onlyoffice.config', [$team, $project, $file]))
-        ->assertOk();
-    $downloadUrl = $configResponse->json('config.document.url');
-
-    $response = $this->get($downloadUrl)
-        ->assertOk()
-        ->assertHeader('content-type', $file->mime_type)
-        ->assertHeader('x-content-type-options', 'nosniff')
-        ->assertStreamedContent('office bytes');
-
-    expect($response->headers->get('cache-control'))
-        ->toContain('private')
-        ->toContain('no-store')
-        ->and($response->headers->get('content-length'))->toBe('12')
-        ->and($response->headers->get('content-disposition'))
-        ->toStartWith('inline;')
-        ->toContain("filename*=utf-8''".rawurlencode('確認資料.xlsx'));
+    $this->actingAs($owner)
+        ->getJson(route('projects.files.onlyoffice.config', [$team, $project, $file]))
+        ->assertNotFound();
+    Http::assertNothingSent();
 });
 
-test('disabling onlyoffice revokes an already issued signed download', function () {
+test('disabled invalid or incomplete onlyoffice configuration returns service unavailable', function (array $override) {
     Storage::fake('local');
     Queue::fake();
     configureOnlyOffice();
+    config($override);
+    ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
+    $file = createOfficeFile($project, $owner);
+
+    $this->actingAs($owner)
+        ->getJson(route('projects.files.onlyoffice.config', [$team, $project, $file]))
+        ->assertServiceUnavailable()
+        ->assertJson(['message' => 'OnlyOffice preview is unavailable.']);
+    Http::assertNothingSent();
+})->with([
+    [['onlyoffice.enabled' => false]],
+    [['onlyoffice.jwt_secret' => 'too-short']],
+    [['onlyoffice.internal_url' => 'http://user@app.internal.test']],
+    [['onlyoffice.public_url' => 'https://office.example.com?redirect=1']],
+    [['onlyoffice.document_server_url' => 'file:///tmp/document-server']],
+    [['onlyoffice.document_server_url' => 'http://onlyoffice-documentserver:99999']],
+]);
+
+test('the checksum backfill streams existing files and reports missing files', function () {
+    Storage::fake('local');
+    Queue::fake();
     ['owner' => $owner, 'project' => $project] = onlyOfficePreviewProject();
-    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
-        'path' => "projects/{$project->id}/report.xlsx",
-        'original_name' => 'report.xlsx',
-        'mime_type' => 'application/octet-stream',
-    ]);
-    Storage::disk('local')->put($file->path, 'office bytes');
-    $downloadUrl = URL::temporarySignedRoute(
-        'onlyoffice.files.download',
-        now()->addMinute(),
-        [
-            'stored_file' => $file,
-            'version' => app(OnlyOfficeDocumentVersion::class)->key($file),
-        ],
-        absolute: false,
-    );
+    $available = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($project)
+        ->for($owner, 'uploader')
+        ->create([
+            'path' => 'projects/test/available.docx',
+            'original_name' => 'available.docx',
+            'checksum' => null,
+            'size' => 999,
+        ]));
+    $missing = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($project)
+        ->for($owner, 'uploader')
+        ->create([
+            'path' => 'projects/test/missing.docx',
+            'original_name' => 'missing.docx',
+            'checksum' => null,
+        ]));
+    Storage::disk('local')->put($available->path, 'existing office bytes');
 
+    $this->artisan('stored-files:backfill-checksums', ['--chunk' => 1])
+        ->expectsOutputToContain('Updated 1 stored file checksums; skipped 1')
+        ->assertExitCode(1);
+
+    expect($available->refresh()->checksum)->toBe(hash('sha256', 'existing office bytes'))
+        ->and($available->size)->toBe(strlen('existing office bytes'))
+        ->and($missing->refresh()->checksum)->toBeNull();
+});
+
+test('document server health failures redirects and timeouts return service unavailable', function (string $failure) {
+    Storage::fake('local');
+    Queue::fake();
+    $healthResponse = match ($failure) {
+        'failure' => Http::response('false', 503),
+        'redirect' => Http::response('', 302, ['Location' => 'http://redirect.invalid/healthcheck']),
+        'timeout' => fn () => throw new ConnectionException('timeout'),
+    };
+    configureOnlyOffice($healthResponse);
+    ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
+    $file = createOfficeFile($project, $owner);
+
+    $this->actingAs($owner)
+        ->getJson(route('projects.files.onlyoffice.config', [$team, $project, $file]))
+        ->assertServiceUnavailable();
+    Http::assertSentCount($failure === 'timeout' ? 0 : 1);
+})->with([
+    'failure',
+    'redirect',
+    'timeout',
+]);
+
+test('a signed internal URL streams the original without changing it', function () {
+    Storage::fake('local');
+    Queue::fake();
+    configureOnlyOffice();
+    ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
+    $file = createOfficeFile($project, $owner, contents: 'immutable office bytes', originalName: '確認資料.docx');
+    $url = $this->actingAs($owner)
+        ->getJson(route('projects.files.onlyoffice.config', [$team, $project, $file]))
+        ->json('config.document.url');
+
+    $response = $this->get($url)
+        ->assertOk()
+        ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+        ->assertHeader('x-content-type-options', 'nosniff')
+        ->assertStreamedContent('immutable office bytes');
+
+    expect($response->headers->get('cache-control'))->toContain('private')->toContain('no-store')
+        ->and($response->headers->get('content-disposition'))->toContain("filename*=utf-8''".rawurlencode('確認資料.docx'))
+        ->and(Storage::disk('local')->get($file->path))->toBe('immutable office bytes');
+});
+
+test('an issued URL is revoked when project access is removed', function () {
+    Storage::fake('local');
+    Queue::fake();
+    configureOnlyOffice();
+    ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
+    $viewer = User::factory()->create();
+    $team->members()->attach($viewer, ['role' => TeamRole::Member->value]);
+    $project->members()->attach($viewer);
+    $file = createOfficeFile($project, $owner);
+    $url = $this->actingAs($viewer)
+        ->getJson(route('projects.files.onlyoffice.config', [$team, $project, $file]))
+        ->json('config.document.url');
+    $project->members()->detach($viewer);
+
+    $this->get($url)->assertForbidden();
+});
+
+test('an issued URL is revoked after the binary version changes', function () {
+    Storage::fake('local');
+    Queue::fake();
+    configureOnlyOffice();
+    ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
+    $file = createOfficeFile($project, $owner);
+    $url = $this->actingAs($owner)
+        ->getJson(route('projects.files.onlyoffice.config', [$team, $project, $file]))
+        ->json('config.document.url');
+    Storage::disk('local')->put($file->path, 'new binary');
+    $file->update(['size' => 10, 'checksum' => hash('sha256', 'new binary')]);
+
+    $this->get($url)->assertStatus(410);
+});
+
+test('an issued URL is revoked by the kill switch', function () {
+    Storage::fake('local');
+    Queue::fake();
+    configureOnlyOffice();
+    ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
+    $file = createOfficeFile($project, $owner);
+    $url = $this->actingAs($owner)
+        ->getJson(route('projects.files.onlyoffice.config', [$team, $project, $file]))
+        ->json('config.document.url');
     config(['onlyoffice.enabled' => false]);
 
-    $this->get($downloadUrl)->assertNotFound();
+    $this->get($url)->assertServiceUnavailable();
 });
 
-test('expired signed downloads return forbidden', function () {
-    Storage::fake('local');
-    Queue::fake();
-    ['owner' => $owner, 'project' => $project] = onlyOfficePreviewProject();
-    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
-        'original_name' => 'report.xlsx',
-        'mime_type' => 'application/octet-stream',
-    ]);
-    $expiredUrl = URL::temporarySignedRoute(
-        'onlyoffice.files.download',
-        now()->subMinute(),
-        [
-            'stored_file' => $file,
-            'version' => app(OnlyOfficeDocumentVersion::class)->key($file),
-        ],
-        absolute: false,
-    );
-
-    $this->get($expiredUrl)->assertForbidden();
-});
-
-test('a valid signed download rejects a stale document version', function () {
-    Storage::fake('local');
-    Queue::fake();
+test('expired tampered and unsigned internal URLs are rejected before file lookup', function () {
     configureOnlyOffice();
     ['owner' => $owner, 'project' => $project] = onlyOfficePreviewProject();
     $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
-        'path' => "projects/{$project->id}/report.xlsx",
-        'original_name' => 'report.xlsx',
-        'mime_type' => 'application/octet-stream',
+        'original_name' => 'source.docx',
+        'mime_type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     ]);
-    Storage::disk('local')->put($file->path, 'office bytes');
-    $staleUrl = URL::temporarySignedRoute(
-        'onlyoffice.files.download',
+    $parameters = [
+        'file' => $file->id,
+        'viewer' => $owner->id,
+        'version' => app(OnlyOfficeDocumentVersion::class)->key($file),
+    ];
+    $expired = URL::temporarySignedRoute(
+        'files.onlyoffice.internal-download',
+        now()->subMinute(),
+        $parameters,
+        absolute: false,
+    );
+    $valid = URL::temporarySignedRoute(
+        'files.onlyoffice.internal-download',
         now()->addMinute(),
-        ['stored_file' => $file, 'version' => str_repeat('a', 64)],
+        $parameters,
         absolute: false,
     );
 
-    $this->get($staleUrl)->assertStatus(410);
+    $this->get($expired)->assertForbidden();
+    $this->get($valid.'&version='.str_repeat('b', 64))->assertForbidden();
+    $this->get('/internal/onlyoffice/files/'.$file->id)->assertForbidden();
+    $this->get('/internal/onlyoffice/files/999999')->assertForbidden();
 });
 
-test('file detail exposes onlyoffice capability without loading a viewer on the server', function () {
+test('a valid signature with an obsolete content key is rejected', function () {
+    configureOnlyOffice();
+    ['owner' => $owner, 'project' => $project] = onlyOfficePreviewProject();
+    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'original_name' => 'source.docx',
+        'mime_type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    ]);
+    $url = URL::temporarySignedRoute(
+        'files.onlyoffice.internal-download',
+        now()->addMinute(),
+        ['file' => $file->id, 'viewer' => $owner->id, 'version' => str_repeat('b', 64)],
+        absolute: false,
+    );
+
+    $this->get($url)->assertStatus(410);
+});
+
+test('file detail exposes onlyoffice without initializing it on the server', function () {
     Storage::fake('local');
     Queue::fake();
     configureOnlyOffice();
     ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
-    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
-        'path' => "projects/{$project->id}/report.xlsx",
-        'original_name' => 'report.xlsx',
-        'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    ]);
-    Storage::disk('local')->put($file->path, 'office bytes');
+    $file = createOfficeFile($project, $owner);
 
     $this->actingAs($owner)
         ->get(route('projects.files.show', [$team, $project, $file]))
@@ -386,46 +418,38 @@ test('file detail exposes onlyoffice capability without loading a viewer on the 
             ->component('projects/files/Show')
             ->where('onlyOffice.enabled', true)
             ->where('onlyOffice.supported', true)
-            ->where(
-                'onlyOffice.configUrl',
-                route('projects.files.onlyoffice.config', [$team, $project, $file], absolute: false),
-            ));
+            ->where('onlyOffice.configUrl', route(
+                'projects.files.onlyoffice.config',
+                [$team, $project, $file],
+                absolute: false,
+            )));
 });
 
-test('onlyoffice frontend loads the api lazily and provides cleanup and fallback', function () {
-    $componentPath = resource_path('js/components/OnlyOfficePreviewDialog.svelte');
-
-    expect(file_exists($componentPath))->toBeTrue();
-
-    $component = file_get_contents($componentPath);
+test('onlyoffice frontend loads once lazily cleans up and has a download fallback', function () {
+    $component = file_get_contents(resource_path('js/components/OnlyOfficePreviewDialog.svelte'));
+    $storedFileDialog = file_get_contents(resource_path('js/components/StoredFilePreviewDialog.svelte'));
     $show = file_get_contents(resource_path('js/pages/projects/files/Show.svelte'));
-    $materials = file_get_contents(resource_path('js/pages/projects/materials/Index.svelte'));
 
     expect($component)
         ->toContain('web-apps/apps/api/documents/api.js')
-        ->toContain("document.createElement('script')")
-        ->toContain('script.dataset.onlyofficeApi === source')
-        ->toContain('script.remove()')
-        ->toContain("typeof window !== 'undefined'")
+        ->toContain('onlyOfficeApiPromise')
         ->toContain('DocsAPI.DocEditor')
         ->toContain('destroyEditor()')
-        ->toContain('onDestroy')
+        ->toContain('onDestroy(cleanupPreview)')
         ->toContain('fetch(configUrl')
         ->toContain('min-h-[70dvh]')
         ->toContain('role="alert"')
-        ->toContain('onFallback')
-        ->and($show)
-        ->toContain('OnlyOfficePreviewDialog')
-        ->toContain('onlyOffice.supported')
-        ->toContain('onlyOffice.enabled')
-        ->and($materials)
-        ->not->toContain('OnlyOfficePreviewDialog')
-        ->not->toContain('web-apps/apps/api/documents/api.js');
+        ->toContain('ProjectFileController.download.url')
+        ->and($storedFileDialog)
+        ->toContain('isOnlyOfficeStoredFile')
+        ->toContain('<OnlyOfficePreviewDialog')
+        ->toContain('OnlyOfficePreviewController.url')
+        ->and($show)->toContain('onlyOffice.enabled')->toContain('onlyOffice.supported');
 });
 
-test('the signed download route has no arbitrary path parameter', function () {
-    $route = app('router')->getRoutes()->getByName('onlyoffice.files.download');
+test('the internal route has only an unbound file identifier', function () {
+    $route = app('router')->getRoutes()->getByName('files.onlyoffice.internal-download');
 
     expect($route)->not->toBeNull()
-        ->and($route->parameterNames())->toBe(['stored_file']);
+        ->and($route->parameterNames())->toBe(['file']);
 });

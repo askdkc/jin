@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Support\Carbon;
@@ -36,6 +37,7 @@ use Illuminate\Support\Carbon;
  * @property-read User|null $completer
  * @property-read Collection<int, Comment> $comments
  * @property-read Collection<int, StoredFile> $attachments
+ * @property-read Collection<int, User> $reactors
  */
 #[Fillable(['todo_list_id', 'parent_id', 'assignee_id', 'completion_notify_ids', 'created_by', 'title', 'details', 'due_on', 'completed_at', 'completed_by', 'position'])]
 class Todo extends Model
@@ -89,6 +91,14 @@ class Todo extends Model
     public function attachments(): MorphMany
     {
         return $this->morphMany(StoredFile::class, 'attachable');
+    }
+
+    /** @return BelongsToMany<User, $this> */
+    public function reactors(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'todo_reactions')
+            ->withPivot('reaction')
+            ->withTimestamps();
     }
 
     /** @return array<string, string> */

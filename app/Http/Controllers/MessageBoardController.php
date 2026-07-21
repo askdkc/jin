@@ -14,8 +14,8 @@ use App\Models\User;
 use App\Notifications\MentionNotification;
 use App\Support\InlineAttachments;
 use App\Support\Mentions;
+use App\Support\Reactions;
 use App\Support\RichText;
-use Illuminate\Database\Eloquent\Relations\Pivot;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -221,19 +221,11 @@ class MessageBoardController extends Controller
     ): RedirectResponse {
         Gate::authorize('view', $project);
 
-        $userId = $request->user()->id;
-        $reaction = (string) $request->validated('reaction');
-        $current = $messageBoardPost->reactors()
-            ->whereKey($userId)
-            ->first()?->pivot?->getAttribute('reaction');
-
-        if ($current === $reaction) {
-            $messageBoardPost->reactors()->detach($userId);
-        } else {
-            $messageBoardPost->reactors()->syncWithoutDetaching([
-                $userId => ['reaction' => $reaction],
-            ]);
-        }
+        Reactions::toggle(
+            $messageBoardPost->reactors(),
+            $request->user()->id,
+            (string) $request->validated('reaction'),
+        );
 
         return back();
     }
@@ -253,21 +245,7 @@ class MessageBoardController extends Controller
             'subscribed' => $post->subscribers->isNotEmpty(),
             'notifyCount' => $post->subscribers()->count(),
             'canEdit' => $canManageProject || $post->user_id === $userId,
-            'reactions' => $post->reactors
-                ->groupBy(function (User $user): string {
-                    /** @var Pivot|null $pivot */
-                    $pivot = $user->getRelation('pivot');
-
-                    return (string) $pivot?->getAttribute('reaction');
-                })
-                ->map(fn ($users, string $reaction): array => [
-                    'reaction' => $reaction,
-                    'count' => $users->count(),
-                    'reacted' => $users->contains('id', $userId),
-                    'names' => $users->pluck('name')->all(),
-                ])
-                ->values()
-                ->all(),
+            'reactions' => Reactions::grouped($post->reactors, $userId),
             'attachments' => $post->attachments->map(fn (StoredFile $file): array => [
                 'id' => $file->id,
                 'name' => $file->original_name,

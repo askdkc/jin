@@ -3,12 +3,16 @@
 namespace App\Http\Controllers;
 
 use App\Enums\ActivityType;
+use App\Http\Requests\Phase3\SaveMessageBoardPostReactionRequest as SaveReactionRequest;
 use App\Http\Requests\Phase3\SaveScheduleEventRequest;
 use App\Models\Activity;
+use App\Models\Comment;
 use App\Models\Project;
 use App\Models\ScheduleEvent;
 use App\Models\Team;
+use App\Models\User;
 use App\Support\InlineAttachments;
+use App\Support\Reactions;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -24,6 +28,51 @@ class ScheduleEventController extends Controller
     // ponytail: caps how far a recurring series is materialized up front; raise or move
     // to a background job if projects need recurrences spanning further than this.
     private const MAX_RECURRING_OCCURRENCES = 60;
+
+    public function show(
+        Request $request,
+        Team $currentTeam,
+        Project $project,
+        ScheduleEvent $scheduleEvent,
+    ): Response {
+        Gate::authorize('view', $project);
+
+        $userId = $request->user()->id;
+        $canManageProject = Gate::allows('update', $project);
+        $scheduleEvent->load([
+            'creator:id,name',
+            'comments' => fn ($query) => $query->with('user:id,name')->oldest(),
+            'reactors:id,name',
+        ]);
+
+        return Inertia::render('projects/schedule/Show', [
+            'project' => ['id' => $project->id, 'name' => $project->name],
+            'event' => [
+                'id' => $scheduleEvent->id,
+                'title' => $scheduleEvent->title,
+                'details' => $scheduleEvent->details,
+                'meetingUrl' => $scheduleEvent->meeting_url,
+                'startsAt' => $scheduleEvent->starts_at->toISOString(),
+                'endsAt' => $scheduleEvent->ends_at->toISOString(),
+                'allDay' => $scheduleEvent->all_day,
+                'recurrence' => $scheduleEvent->recurrence,
+                'creatorName' => $scheduleEvent->creator?->name,
+                'canEdit' => $canManageProject || $scheduleEvent->created_by === $userId,
+                'reactions' => Reactions::grouped($scheduleEvent->reactors, $userId),
+                'comments' => $scheduleEvent->comments->map(fn (Comment $comment): array => [
+                    'id' => $comment->id,
+                    'body' => $comment->body,
+                    'authorName' => $comment->user?->name,
+                    'createdAt' => $comment->created_at?->toISOString(),
+                    'canDelete' => $canManageProject || $comment->user_id === $userId,
+                ])->all(),
+            ],
+            'members' => $project->members()
+                ->orderBy('name')
+                ->get(['users.id', 'users.name'])
+                ->map(fn (User $user): array => ['id' => $user->id, 'name' => $user->name]),
+        ]);
+    }
 
     public function index(Request $request, Team $currentTeam, Project $project): Response
     {
@@ -207,6 +256,23 @@ class ScheduleEventController extends Controller
         return to_route('projects.schedule.index', [$currentTeam, $project, 'month' => $event->starts_at->format('Y-m')]);
     }
 
+    public function toggleReaction(
+        SaveReactionRequest $request,
+        Team $currentTeam,
+        Project $project,
+        ScheduleEvent $scheduleEvent,
+    ): RedirectResponse {
+        Gate::authorize('view', $project);
+
+        Reactions::toggle(
+            $scheduleEvent->reactors(),
+            $request->user()->id,
+            (string) $request->validated('reaction'),
+        );
+
+        return back(fallback: route('projects.schedule.show', [$currentTeam, $project, $scheduleEvent]));
+    }
+
     /** @param  array<string, mixed>  $data */
     private function createRecurringOccurrences(
         Project $project,
@@ -267,6 +333,7 @@ class ScheduleEventController extends Controller
         abort_unless($scheduleEvent->created_by === request()->user()->id || Gate::allows('update', $project), 403);
 
         $month = $scheduleEvent->starts_at->format('Y-m');
+        $scheduleEvent->comments()->delete();
         $scheduleEvent->delete();
 
         return to_route('projects.schedule.index', [$currentTeam, $project, 'month' => $month]);

@@ -36,6 +36,7 @@ use App\Http\Controllers\Teams\TeamInvitationController;
 use App\Http\Controllers\WorkspaceCalendarController;
 use App\Http\Middleware\EnsureProjectToolIsEnabled;
 use App\Http\Middleware\EnsureTeamMembership;
+use Illuminate\Routing\Middleware\ValidateSignature;
 use Illuminate\Support\Facades\Route;
 
 Route::inertia('/', 'Welcome')->name('home');
@@ -107,6 +108,7 @@ Route::prefix('{current_team}')
             Route::get('projects/{project}/todos', [ProjectTodoController::class, 'index'])->name('projects.todos.index');
             Route::post('projects/{project}/todo-lists', [ProjectTodoController::class, 'storeList'])->name('projects.todo-lists.store');
             Route::get('projects/{project}/todo-lists/{todo_list}', [ProjectTodoController::class, 'showList'])->name('projects.todo-lists.show');
+            Route::patch('projects/{project}/todo-lists/{todo_list}', [ProjectTodoController::class, 'updateList'])->name('projects.todo-lists.update');
             Route::delete('projects/{project}/todo-lists/{todo_list}', [ProjectTodoController::class, 'destroyList'])->name('projects.todo-lists.destroy');
             Route::patch('projects/{project}/todo-lists/{todo_list}/subscription', [ProjectTodoController::class, 'toggleListSubscription'])->name('projects.todo-lists.subscription.toggle');
             Route::post('projects/{project}/todo-lists/{todo_list}/comments', [CommentController::class, 'storeList'])->name('projects.todo-lists.comments.store');
@@ -118,6 +120,7 @@ Route::prefix('{current_team}')
             Route::post('projects/{project}/todo-lists/{todo_list}/todos/{todo}/attachments', [AttachmentController::class, 'storeTodo'])->name('projects.todos.attachments.store');
             Route::patch('projects/{project}/todo-lists/{todo_list}/todos/{todo}', [ProjectTodoController::class, 'updateTodo'])->name('projects.todos.update');
             Route::patch('projects/{project}/todo-lists/{todo_list}/todos/{todo}/toggle', [ProjectTodoController::class, 'toggleTodo'])->name('projects.todos.toggle');
+            Route::post('projects/{project}/todo-lists/{todo_list}/todos/{todo}/reaction', [ProjectTodoController::class, 'toggleReaction'])->name('projects.todos.reaction.toggle');
             Route::patch('projects/{project}/todo-lists/{todo_list}/todos/{todo}/move', [ProjectTodoController::class, 'moveTodo'])->name('projects.todos.move');
             Route::delete('projects/{project}/todo-lists/{todo_list}/todos/{todo}', [ProjectTodoController::class, 'destroyTodo'])->name('projects.todos.destroy');
             Route::post('projects/{project}/todo-lists/{todo_list}/todos/{todo}/comments', [CommentController::class, 'storeTodo'])->name('projects.todos.comments.store');
@@ -126,6 +129,9 @@ Route::prefix('{current_team}')
 
             Route::get('projects/{project}/schedule', [ScheduleEventController::class, 'index'])->name('projects.schedule.index');
             Route::post('projects/{project}/schedule', [ScheduleEventController::class, 'store'])->name('projects.schedule.store');
+            Route::get('projects/{project}/schedule/{schedule_event}', [ScheduleEventController::class, 'show'])->name('projects.schedule.show');
+            Route::post('projects/{project}/schedule/{schedule_event}/reaction', [ScheduleEventController::class, 'toggleReaction'])->name('projects.schedule.reaction.toggle');
+            Route::post('projects/{project}/schedule/{schedule_event}/comments', [CommentController::class, 'storeScheduleEvent'])->name('projects.schedule.comments.store');
             Route::patch('projects/{project}/schedule/{schedule_event}', [ScheduleEventController::class, 'update'])->name('projects.schedule.update');
             Route::delete('projects/{project}/schedule/{schedule_event}', [ScheduleEventController::class, 'destroy'])->name('projects.schedule.destroy');
 
@@ -172,7 +178,11 @@ Route::prefix('{current_team}')
             Route::patch('projects/{project}/check-ins/{check_in}/pause', [CheckInController::class, 'togglePause'])->name('projects.check-ins.pause');
             Route::patch('projects/{project}/check-ins/{check_in}/bookmark', [CheckInController::class, 'toggleBookmark'])->name('projects.check-ins.bookmark');
             Route::delete('projects/{project}/check-ins/{check_in}', [CheckInController::class, 'destroy'])->name('projects.check-ins.destroy');
+            Route::post('projects/{project}/check-ins/{check_in}/answer', [CheckInController::class, 'respond'])->name('projects.check-ins.respond');
             Route::post('projects/{project}/check-ins/{check_in}/prompts/{prompt}/answer', [CheckInController::class, 'answer'])->name('projects.check-ins.answer');
+            Route::patch('projects/{project}/check-ins/{check_in}/prompts/{prompt}/answer', [CheckInController::class, 'updateAnswer'])->name('projects.check-ins.answers.update');
+            Route::post('projects/{project}/check-ins/{check_in}/prompts/{prompt}/comments', [CommentController::class, 'storeCheckInAnswer'])->name('projects.check-ins.comments.store');
+            Route::post('projects/{project}/check-ins/{check_in}/prompts/{prompt}/reaction', [CheckInController::class, 'toggleAnswerReaction'])->name('projects.check-ins.reactions.toggle');
 
             Route::post('projects/{project}/material-folders', [ProjectMaterialController::class, 'storeFolder'])->name('projects.material-folders.store');
             Route::delete('projects/{project}/material-folders/{material_folder}', [ProjectMaterialController::class, 'destroyFolder'])->name('projects.material-folders.destroy');
@@ -184,9 +194,9 @@ Route::prefix('{current_team}')
         });
     });
 
-Route::get('internal/onlyoffice/files/{stored_file}', OnlyOfficeFileController::class)
-    ->middleware('signed:relative')
-    ->name('onlyoffice.files.download');
+Route::get('internal/onlyoffice/files/{file}', OnlyOfficeFileController::class)
+    ->middleware(ValidateSignature::relative())
+    ->name('files.onlyoffice.internal-download');
 
 Route::middleware(['auth'])->group(function () {
     Route::get('invitations/{invitation}/accept', [TeamInvitationController::class, 'accept'])->name('invitations.accept');

@@ -46,6 +46,7 @@
     import FileDropzone from '@/components/FileDropzone.svelte';
     import InputError from '@/components/InputError.svelte';
     import OnlyOfficePreviewDialog from '@/components/OnlyOfficePreviewDialog.svelte';
+    import ReactionPicker from '@/components/ReactionPicker.svelte';
     import RichTextContent from '@/components/RichTextContent.svelte';
     import RichTextEditor from '@/components/RichTextEditor.svelte';
     import StoredFilePreviewDialog, {
@@ -55,7 +56,7 @@
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
     import { t } from '@/lib/i18n';
-    import type { TodoMember } from '@/types';
+    import type { ProjectReaction, TodoMember } from '@/types';
 
     type FileComment = {
         id: number;
@@ -70,7 +71,7 @@
         project,
         file,
         onlyOffice,
-        reaction,
+        reactions,
         comments,
         members,
     }: {
@@ -92,11 +93,7 @@
             createdAt: string | null;
             canManage: boolean;
         };
-        reaction: {
-            count: number;
-            reacted: boolean;
-            names: string[];
-        };
+        reactions: ProjectReaction[];
         comments: FileComment[];
         members: TodoMember[];
     } = $props();
@@ -109,19 +106,7 @@
     const extension = $derived(
         file.name.split('.').pop()?.toLocaleLowerCase('en-US') ?? '',
     );
-    const generatedPreviewExtensions = [
-        'pdf',
-        'doc',
-        'docx',
-        'xls',
-        'xlsx',
-        'xlsm',
-        'ods',
-        'odt',
-        'ppt',
-        'pptx',
-        'odp',
-    ];
+    const generatedPreviewExtensions = ['pdf'];
     const usesGeneratedPreview = $derived(
         generatedPreviewExtensions.includes(extension),
     );
@@ -143,11 +128,18 @@
             file.id,
         ]),
     );
+    const canOpenPreview = $derived(
+        canPreviewStoredFile(file.name) ||
+            (onlyOffice.enabled &&
+                onlyOffice.supported &&
+                onlyOffice.configUrl !== null),
+    );
     let previewOpen = $state(false);
     let onlyOfficeOpen = $state(false);
     let showRename = $state(false);
     let showReplace = $state(false);
     let editingCommentId = $state<number | null>(null);
+    let commentComposerOpen = $state(false);
 
     const confirmDelete = (): boolean =>
         window.confirm(t('Are you sure you want to delete this?'));
@@ -162,10 +154,6 @@
             return;
         }
 
-        previewOpen = true;
-    };
-    const openFallbackPreview = (): void => {
-        onlyOfficeOpen = false;
         previewOpen = true;
     };
     const formatDate = (value: string | null): string =>
@@ -354,7 +342,7 @@
             </div>
 
             <div class="mt-4 flex flex-wrap items-center gap-2">
-                {#if canPreviewStoredFile(file.name)}
+                {#if canOpenPreview}
                     <Button
                         type="button"
                         variant="outline"
@@ -381,30 +369,12 @@
                     {/snippet}
                 </Button>
 
-                <Form
-                    {...ProjectFileController.toggleReaction.form(
+                <ReactionPicker
+                    action={ProjectFileController.toggleReaction.url(
                         routeArguments,
                     )}
-                >
-                    {#snippet children({ processing })}
-                        <Button
-                            type="submit"
-                            variant={reaction.reacted ? 'secondary' : 'outline'}
-                            size="sm"
-                            disabled={processing}
-                            aria-pressed={reaction.reacted}
-                            aria-label={t('React with rocket')}
-                            title={reaction.names.length > 0
-                                ? reaction.names.join(', ')
-                                : t('React with rocket')}
-                        >
-                            <span aria-hidden="true">🚀</span>
-                            {#if reaction.count > 0}
-                                <span>{reaction.count}</span>
-                            {/if}
-                        </Button>
-                    {/snippet}
-                </Form>
+                    {reactions}
+                />
 
                 {#if file.canManage && !showReplace}
                     <Button
@@ -592,29 +562,55 @@
                 </div>
             {/if}
 
-            <Form
-                {...CommentController.storeFile.form(routeArguments)}
-                resetOnSuccess
-                class="mt-5 space-y-2"
-            >
-                {#snippet children({ errors, processing })}
-                    <Label for="file-comment">{t('Comment')}</Label>
-                    <RichTextEditor
-                        id="file-comment"
-                        name="body"
-                        required
-                        ariaLabel={t('Comment')}
-                        mentionables={members}
-                        attachmentUploadUrl={AttachmentController.uploadInline.url(
-                            [currentTeam.slug, project.id],
-                        )}
-                    />
-                    <InputError message={errors.body} />
-                    <Button type="submit" disabled={processing}
-                        >{t('Add comment')}</Button
+            <div class="mt-5">
+                {#if commentComposerOpen}
+                    <Form
+                        {...CommentController.storeFile.form(routeArguments)}
+                        id="file-comment-form"
+                        resetOnSuccess
+                        onSuccess={() => (commentComposerOpen = false)}
+                        class="space-y-2"
                     >
-                {/snippet}
-            </Form>
+                        {#snippet children({ errors, processing })}
+                            <Label for="file-comment">{t('Comment')}</Label>
+                            <RichTextEditor
+                                id="file-comment"
+                                name="body"
+                                required
+                                ariaLabel={t('Comment')}
+                                mentionables={members}
+                                attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                    [currentTeam.slug, project.id],
+                                )}
+                            />
+                            <InputError message={errors.body} />
+                            <div class="flex gap-2">
+                                <Button type="submit" disabled={processing}
+                                    >{t('Add comment')}</Button
+                                >
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    disabled={processing}
+                                    onclick={() =>
+                                        (commentComposerOpen = false)}
+                                    >{t('Cancel')}</Button
+                                >
+                            </div>
+                        {/snippet}
+                    </Form>
+                {:else}
+                    <button
+                        type="button"
+                        aria-expanded="false"
+                        aria-controls="file-comment-form"
+                        onclick={() => (commentComposerOpen = true)}
+                        class="flex min-h-12 w-full items-center rounded-lg px-4 text-left font-medium text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                        {t('Comment on this')}
+                    </button>
+                {/if}
+            </div>
         </section>
     </article>
 </main>
@@ -625,7 +621,6 @@
         {project}
         {file}
         configUrl={onlyOffice.configUrl}
-        onFallback={openFallbackPreview}
         bind:open={onlyOfficeOpen}
     />
 {/if}

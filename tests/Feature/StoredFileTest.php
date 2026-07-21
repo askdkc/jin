@@ -102,10 +102,12 @@ test('project participants can upload and download private files', function () {
     expect($download->headers->get('content-disposition'))
         ->toContain("filename*=utf-8''".rawurlencode('運用資料.pdf'))
         ->and($storedFile->uploaded_by)->toBe($member->id)
-        ->and($storedFile->path)->not->toContain('運用資料.pdf');
+        ->and($storedFile->path)->not->toContain('運用資料.pdf')
+        ->and($storedFile->checksum)->toBe(StoredFile::checksumFor(Storage::disk('local'), $storedFile->path))
+        ->and($storedFile->size)->toBe(Storage::disk('local')->size($storedFile->path));
 });
 
-test('additional office formats validate and enqueue their previews', function () {
+test('additional office formats validate without entering the local preview queue', function () {
     Storage::fake('local');
     Queue::fake();
 
@@ -130,8 +132,8 @@ test('additional office formats validate and enqueue their previews', function (
     }
 
     expect(StoredFile::query()->count())->toBe(4)
-        ->and(StoredFile::query()->where('preview_status', 'pending')->count())->toBe(4);
-    Queue::assertPushed(GenerateStoredFilePreview::class, 4);
+        ->and(StoredFile::query()->whereNotNull('preview_status')->count())->toBe(0);
+    Queue::assertNotPushed(GenerateStoredFilePreview::class);
 });
 
 test('folder uploads create or reuse a material folder for every uploaded file', function () {
@@ -205,7 +207,7 @@ test('project participants can preview private office files inline', function ()
         ->not->toContain('attachment');
 });
 
-test('office previews are served from the cached pdf conversion', function () {
+test('office originals are streamed without consulting old conversion caches', function () {
     Storage::fake('local');
 
     $owner = User::factory()->create();
@@ -224,17 +226,17 @@ test('office previews are served from the cached pdf conversion', function () {
         'converted pdf content',
     );
 
-    $this->actingAs($owner)
+    $response = $this->actingAs($owner)
         ->get(route('projects.files.preview', [$team, $project, $storedFile]))
         ->assertOk()
-        ->assertHeader('content-type', 'application/pdf')
-        ->assertHeader('content-disposition', 'inline')
-        ->assertContent('converted pdf content');
+        ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+        ->assertStreamedContent('raw docx content');
+
+    expect($response->headers->get('content-disposition'))->toStartWith('inline;');
 });
 
-test('office previews fall back to the original file when conversion is unavailable', function () {
+test('office preview endpoint does not depend on a local converter', function () {
     Storage::fake('local');
-    config(['services.libreoffice.path' => '/nonexistent/soffice']);
 
     $owner = User::factory()->create();
     $team = Team::factory()->create();
@@ -582,9 +584,10 @@ test('a project member can open a file detail page with its comments while outsi
             ->where('file.name', '仕様書.pdf')
             ->where('file.size', 4096)
             ->where('file.uploaderName', $owner->name)
-            ->where('reaction.count', 1)
-            ->where('reaction.reacted', true)
-            ->where('reaction.names.0', $member->name)
+            ->where('reactions.0.reaction', '🚀')
+            ->where('reactions.0.count', 1)
+            ->where('reactions.0.reacted', true)
+            ->where('reactions.0.names.0', $member->name)
             ->where('comments.0.body', '確認しました。'));
 
     $this->actingAs($outsider)
@@ -592,7 +595,7 @@ test('a project member can open a file detail page with its comments while outsi
         ->assertForbidden();
 });
 
-test('project members can toggle a rocket reaction on a file', function () {
+test('project members can toggle a reaction on a file', function () {
     $owner = User::factory()->create();
     $member = User::factory()->create();
     $outsider = User::factory()->create();
@@ -605,13 +608,13 @@ test('project members can toggle a rocket reaction on a file', function () {
     $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create();
     $reactionUrl = route('projects.files.reaction.toggle', [$team, $project, $file]);
 
-    $this->actingAs($member)->post($reactionUrl)->assertRedirect();
-    expect($file->reactors()->whereKey($member->id)->exists())->toBeTrue();
+    $this->actingAs($member)->post($reactionUrl, ['reaction' => '👍'])->assertRedirect();
+    expect($file->reactors()->whereKey($member->id)->first()?->pivot?->reaction)->toBe('👍');
 
-    $this->actingAs($member)->post($reactionUrl)->assertRedirect();
+    $this->actingAs($member)->post($reactionUrl, ['reaction' => '👍'])->assertRedirect();
     expect($file->reactors()->whereKey($member->id)->exists())->toBeFalse();
 
-    $this->actingAs($outsider)->post($reactionUrl)->assertForbidden();
+    $this->actingAs($outsider)->post($reactionUrl, ['reaction' => '👍'])->assertForbidden();
 });
 
 test('project members can comment on a file', function () {
@@ -721,8 +724,10 @@ test('same-extension replacement supports macro-enabled workbooks', function () 
 
     expect($file->path)->not->toBe($oldPath)
         ->and($file->original_name)->toBe('report.xlsm')
-        ->and($file->preview_status)->toBe('pending');
-    Queue::assertPushed(GenerateStoredFilePreview::class, 2);
+        ->and($file->preview_status)->toBeNull()
+        ->and($file->checksum)->toBe(StoredFile::checksumFor(Storage::disk('local'), $file->path))
+        ->and($file->size)->toBe(Storage::disk('local')->size($file->path));
+    Queue::assertNotPushed(GenerateStoredFilePreview::class);
 });
 
 test('a failed replacement update removes the newly stored blob', function () {

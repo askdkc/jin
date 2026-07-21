@@ -2,6 +2,9 @@
 
 use App\Models\StoredFile;
 use App\Support\OnlyOfficeDocumentVersion;
+use Tests\TestCase;
+
+uses(TestCase::class);
 
 test('document versions are stable across rename and use only official key characters', function () {
     $file = (new StoredFile)->setRawAttributes([
@@ -9,6 +12,7 @@ test('document versions are stable across rename and use only official key chara
         'path' => 'projects/42/random/report.xlsx',
         'original_name' => 'report.xlsx',
         'size' => 1234,
+        'checksum' => str_repeat('a', 64),
     ]);
 
     $versionService = app(OnlyOfficeDocumentVersion::class);
@@ -22,23 +26,27 @@ test('document versions are stable across rename and use only official key chara
         ->and($versionService->key($file))->toBe($originalVersion);
 });
 
-test('document versions change when the immutable source path or size changes', function () {
+test('document versions change when the checksum size or instance changes', function () {
     $file = (new StoredFile)->setRawAttributes([
         'id' => 42,
         'path' => 'projects/42/random/report.xlsx',
         'original_name' => 'report.xlsx',
         'size' => 1234,
+        'checksum' => str_repeat('a', 64),
     ]);
     $versionService = app(OnlyOfficeDocumentVersion::class);
     $originalVersion = $versionService->key($file);
 
-    $file->path = 'projects/42/random/replacement.xlsx';
-    $pathVersion = $versionService->key($file);
-    $file->path = 'projects/42/random/report.xlsx';
+    $file->checksum = str_repeat('b', 64);
+    $checksumVersion = $versionService->key($file);
+    $file->checksum = str_repeat('a', 64);
     $file->size = 1235;
     $sizeVersion = $versionService->key($file);
+    $file->size = 1234;
+    config(['onlyoffice.instance_id' => 'another-instance']);
+    $instanceVersion = $versionService->key($file);
 
-    expect($pathVersion)->not->toBe($originalVersion)
+    expect($checksumVersion)->not->toBe($originalVersion)
         ->and($sizeVersion)->not->toBe($originalVersion)
-        ->and($sizeVersion)->not->toBe($pathVersion);
+        ->and($instanceVersion)->not->toBe($originalVersion);
 });

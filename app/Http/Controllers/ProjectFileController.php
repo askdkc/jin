@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Enums\ActivityType;
+use App\Http\Requests\Phase3\SaveMessageBoardPostReactionRequest as SaveReactionRequest;
 use App\Http\Requests\Phase4\ReplaceProjectFileRequest;
 use App\Http\Requests\Phase4\StoreProjectFileRequest;
 use App\Http\Requests\Phase4\UpdateProjectFileRequest;
@@ -14,10 +15,10 @@ use App\Models\Team;
 use App\Models\User;
 use App\Support\InlineAttachments;
 use App\Support\OnlyOfficeDocumentTypeResolver;
+use App\Support\Reactions;
 use App\Support\StoredFilePreviewDispatcher;
 use App\Support\StoredFilePreviewGenerator;
 use Illuminate\Http\RedirectResponse;
-use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
@@ -141,11 +142,7 @@ class ProjectFileController extends Controller
                 'createdAt' => $storedFile->created_at?->toISOString(),
                 'canManage' => $canManageProject || $storedFile->uploaded_by === $userId,
             ],
-            'reaction' => [
-                'count' => $storedFile->reactors->count(),
-                'reacted' => $storedFile->reactors->contains('id', $userId),
-                'names' => $storedFile->reactors->pluck('name')->all(),
-            ],
+            'reactions' => Reactions::grouped($storedFile->reactors, $userId),
             'comments' => $storedFile->comments->map(fn (Comment $comment): array => [
                 'id' => $comment->id,
                 'body' => $comment->body,
@@ -182,7 +179,9 @@ class ProjectFileController extends Controller
         $disk = Storage::disk($storedFile->disk);
 
         try {
-            $replacement = DB::transaction(function () use ($storedFile, $expectedOldPath, $newPath, $file): ?array {
+            $newChecksum = StoredFile::checksumFor($disk, $newPath);
+            $newSize = $disk->size($newPath);
+            $replacement = DB::transaction(function () use ($storedFile, $expectedOldPath, $newPath, $file, $newChecksum, $newSize): ?array {
                 $current = StoredFile::query()
                     ->whereKey($storedFile->id)
                     ->lockForUpdate()
@@ -202,7 +201,8 @@ class ProjectFileController extends Controller
                 throw_unless($current->update([
                     'path' => $newPath,
                     'mime_type' => $file->getMimeType(),
-                    'size' => $file->getSize(),
+                    'size' => $newSize,
+                    'checksum' => $newChecksum,
                     'preview_path' => null,
                     'preview_status' => $previewStatus,
                 ]), RuntimeException::class, 'File replacement failed.');
@@ -260,7 +260,6 @@ class ProjectFileController extends Controller
         Team $currentTeam,
         Project $project,
         StoredFile $storedFile,
-        StoredFilePreviewGenerator $previewGenerator,
     ): Response {
         Gate::authorize('view', $project);
 
@@ -280,18 +279,6 @@ class ProjectFileController extends Controller
                 'Content-Disposition' => 'inline',
                 'Content-Type' => 'text/csv; charset=UTF-8',
             ]);
-        }
-
-        if (in_array($extension, ['doc', 'docx', 'xls', 'xlsx', 'xlsm', 'ods', 'odt', 'ppt', 'pptx', 'odp'], true)) {
-            $pdf = $previewGenerator->officePreviewPdf($storedFile);
-
-            if ($pdf !== null) {
-                return response($pdf, 200, [
-                    ...$headers,
-                    'Content-Disposition' => 'inline',
-                    'Content-Type' => 'application/pdf',
-                ]);
-            }
         }
 
         if ($storedFile->mime_type !== null) {
@@ -346,7 +333,7 @@ class ProjectFileController extends Controller
     }
 
     public function toggleReaction(
-        Request $request,
+        SaveReactionRequest $request,
         Team $currentTeam,
         Project $project,
         StoredFile $storedFile,
@@ -354,7 +341,11 @@ class ProjectFileController extends Controller
         Gate::authorize('view', $project);
         abort_unless($storedFile->project_id === $project->id, 404);
 
-        $storedFile->reactors()->toggle($request->user()->id);
+        Reactions::toggle(
+            $storedFile->reactors(),
+            $request->user()->id,
+            (string) $request->validated('reaction'),
+        );
 
         return back();
     }

@@ -26,6 +26,7 @@
 <script lang="ts">
     import { Form, Link } from '@inertiajs/svelte';
     import Video from 'lucide-svelte/icons/video';
+    import { onMount } from 'svelte';
     import AttachmentController from '@/actions/App/Http/Controllers/AttachmentController';
     import AppHead from '@/components/AppHead.svelte';
     import InputError from '@/components/InputError.svelte';
@@ -39,11 +40,15 @@
         DialogContent,
         DialogFooter,
         DialogTitle,
-        DialogTrigger,
     } from '@/components/ui/dialog';
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
     import { t } from '@/lib/i18n';
+    import {
+        defaultScheduleEventTimes,
+        halfHourOptions,
+        scheduleEventEnd,
+    } from '@/lib/schedule-event-time';
     import type { ProjectScheduleEvent, ScheduleGridDay } from '@/types';
 
     type ScheduleView = 'day' | 'week' | 'month' | 'gantt';
@@ -145,6 +150,9 @@
             return { date: dateKey, events: eventsForDate(dateKey) };
         }),
     );
+    const timelineDays = $derived(
+        view === 'day' ? [{ date, events: eventsForDate(date) }] : weekDays,
+    );
     const ganttDayCount = $derived(
         epochDay(rangeEnd) - epochDay(rangeStart) + 1,
     );
@@ -212,13 +220,6 @@
         return `${firstDay + 1} / ${lastDay + 2}`;
     };
 
-    const scrollToEvent = (id: number): void => {
-        requestAnimationFrame(() => {
-            document
-                .getElementById(`event-${id}`)
-                ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
-    };
     const formatEventDate = (value: string, allDay: boolean): string =>
         new Intl.DateTimeFormat(
             'ja-JP',
@@ -246,9 +247,49 @@
 
     let newEventOpen = $state(false);
     let newEventFormKey = $state(0);
+    let newEventStartDate = $state('');
+    let newEventStartTime = $state('');
+    let newEventEndDate = $state('');
+    let newEventEndTime = $state('');
     let showLinkField = $state(false);
     let showRepeatField = $state(false);
     let showNotesField = $state(false);
+    const setNewEventEndFromStart = (): void => {
+        if (!newEventStartDate || !newEventStartTime) {
+            return;
+        }
+
+        const end = scheduleEventEnd(newEventStartDate, newEventStartTime);
+
+        if (!end) {
+            return;
+        }
+
+        newEventEndDate = end.endDate;
+        newEventEndTime = end.endTime;
+    };
+    const openNewEventForDate = (selectedDate: string): void => {
+        const times = defaultScheduleEventTimes(selectedDate);
+
+        newEventStartDate = times.startDate;
+        newEventStartTime = times.startTime;
+        newEventEndDate = times.endDate;
+        newEventEndTime = times.endTime;
+        newEventOpen = true;
+    };
+    const openNewEventAt = (selectedDate: string, startTime: string): void => {
+        const end = scheduleEventEnd(selectedDate, startTime);
+
+        if (!end) {
+            return;
+        }
+
+        newEventStartDate = selectedDate;
+        newEventStartTime = startTime;
+        newEventEndDate = end.endDate;
+        newEventEndTime = end.endTime;
+        newEventOpen = true;
+    };
     const handleNewEventOpenChange = (value: boolean): void => {
         newEventOpen = value;
 
@@ -276,13 +317,79 @@
         new Intl.DateTimeFormat('ja-JP', { weekday: 'short' }).format(
             new Date(value),
         );
-    const todayKey = (() => {
-        const now = new Date();
+    const hourHeight = 64;
+    const timelineHeight = hourHeight * 24;
+    let currentNow = $state(new Date());
+    const currentDateKey = $derived(
+        `${currentNow.getFullYear()}-${String(currentNow.getMonth() + 1).padStart(2, '0')}-${String(currentNow.getDate()).padStart(2, '0')}`,
+    );
+    const currentMinute = $derived(
+        currentNow.getHours() * 60 +
+            currentNow.getMinutes() +
+            currentNow.getSeconds() / 60,
+    );
+    const currentTimeTop = $derived((currentMinute / 60) * hourHeight);
+    const currentTimeLabel = $derived(
+        `${String(currentNow.getHours()).padStart(2, '0')}:${String(currentNow.getMinutes()).padStart(2, '0')}`,
+    );
+    const eventStartMinute = (event: ProjectScheduleEvent): number => {
+        const start = new Date(event.startsAt);
 
-        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    })();
+        return start.getHours() * 60 + start.getMinutes();
+    };
+    const eventStyle = (event: ProjectScheduleEvent): string => {
+        const startsAt = new Date(event.startsAt);
+        const endsAt = new Date(event.endsAt);
+        const startMinute = eventStartMinute(event);
+        const duration = Math.max(
+            30,
+            (endsAt.getTime() - startsAt.getTime()) / 60_000,
+        );
+        const visibleDuration = Math.min(duration, 24 * 60 - startMinute);
+
+        return `top: ${(startMinute / 60) * hourHeight}px; height: ${Math.max(24, (visibleDuration / 60) * hourHeight)}px;`;
+    };
+    const scrollTimelineToCurrentTime = (
+        node: HTMLElement,
+        rangeKey: string,
+    ) => {
+        let activeRangeKey = rangeKey;
+        const scroll = (): void => {
+            requestAnimationFrame(() => {
+                const now = new Date();
+                const minutes =
+                    now.getHours() * 60 +
+                    now.getMinutes() +
+                    now.getSeconds() / 60;
+
+                node.scrollTop = Math.max(0, (minutes / 60) * hourHeight - 12);
+            });
+        };
+
+        scroll();
+
+        return {
+            update(nextRangeKey: string): void {
+                if (nextRangeKey === activeRangeKey) {
+                    return;
+                }
+
+                activeRangeKey = nextRangeKey;
+                scroll();
+            },
+        };
+    };
+
+    onMount(() => {
+        const timer = window.setInterval(() => {
+            currentNow = new Date();
+        }, 60_000);
+
+        return () => window.clearInterval(timer);
+    });
+
     const isEventToday = (value: string): boolean =>
-        value.slice(0, 10) === todayKey;
+        value.slice(0, 10) === currentDateKey;
 
     const periodTitle = $derived(
         view === 'day'
@@ -326,20 +433,17 @@
                     open={newEventOpen}
                     onOpenChange={handleNewEventOpenChange}
                 >
-                    <DialogTrigger asChild>
-                        {#snippet children(triggerProps)}
-                            <Button onclick={triggerProps.onClick}
-                                >+ {t('New event')}</Button
-                            >
-                        {/snippet}
-                    </DialogTrigger>
+                    <Button onclick={() => openNewEventForDate(date)}
+                        >+ {t('New event')}</Button
+                    >
                     <DialogContent class="max-w-xl">
                         {#key newEventFormKey}
                             <Form
                                 {...ScheduleEventController.store.form(
                                     routeArguments,
                                 )}
-                                onSuccess={() => (newEventOpen = false)}
+                                onSuccess={() =>
+                                    handleNewEventOpenChange(false)}
                                 class="space-y-4"
                             >
                                 {#snippet children({ errors, processing })}
@@ -361,33 +465,80 @@
                                     </div>
                                     <div class="grid gap-4 sm:grid-cols-2">
                                         <div class="grid gap-2">
-                                            <Label for="event-start"
+                                            <Label for="event-start-date"
                                                 >{t('Starts at')}</Label
                                             >
-                                            <Input
-                                                id="event-start"
-                                                type="datetime-local"
+                                            <input
                                                 name="starts_at"
-                                                required
+                                                type="hidden"
+                                                value={`${newEventStartDate}T${newEventStartTime}`}
                                             />
+                                            <div
+                                                class="grid grid-cols-[minmax(0,1fr)_7rem] gap-2"
+                                            >
+                                                <Input
+                                                    id="event-start-date"
+                                                    type="date"
+                                                    bind:value={
+                                                        newEventStartDate
+                                                    }
+                                                    onchange={setNewEventEndFromStart}
+                                                    required
+                                                />
+                                                <Input
+                                                    id="event-start-time"
+                                                    type="time"
+                                                    list="schedule-half-hour-options"
+                                                    bind:value={
+                                                        newEventStartTime
+                                                    }
+                                                    onchange={setNewEventEndFromStart}
+                                                    aria-label={t('Starts at')}
+                                                    required
+                                                />
+                                            </div>
                                             <InputError
                                                 message={errors.starts_at}
                                             />
                                         </div>
                                         <div class="grid gap-2">
-                                            <Label for="event-end"
+                                            <Label for="event-end-date"
                                                 >{t('Ends at')}</Label
                                             >
-                                            <Input
-                                                id="event-end"
-                                                type="datetime-local"
+                                            <input
                                                 name="ends_at"
-                                                required
+                                                type="hidden"
+                                                value={`${newEventEndDate}T${newEventEndTime}`}
                                             />
+                                            <div
+                                                class="grid grid-cols-[minmax(0,1fr)_7rem] gap-2"
+                                            >
+                                                <Input
+                                                    id="event-end-date"
+                                                    type="date"
+                                                    bind:value={newEventEndDate}
+                                                    required
+                                                />
+                                                <Input
+                                                    id="event-end-time"
+                                                    type="time"
+                                                    list="schedule-half-hour-options"
+                                                    bind:value={newEventEndTime}
+                                                    aria-label={t('Ends at')}
+                                                    required
+                                                />
+                                            </div>
                                             <InputError
                                                 message={errors.ends_at}
                                             />
                                         </div>
+                                        <datalist
+                                            id="schedule-half-hour-options"
+                                        >
+                                            {#each halfHourOptions as time (time)}
+                                                <option value={time}></option>
+                                            {/each}
+                                        </datalist>
                                     </div>
                                     <label
                                         class="flex min-h-11 items-center gap-3 text-sm"
@@ -603,11 +754,19 @@
                 <div class="grid grid-cols-7 {weekIndex > 0 ? 'border-t' : ''}">
                     {#each week as day (day.date)}
                         <div
-                            class="min-h-24 border-l p-1.5 first:border-l-0 sm:min-h-32 sm:p-2 {day.inCurrentMonth
+                            class="relative min-h-24 border-l p-1.5 first:border-l-0 sm:min-h-32 sm:p-2 {day.inCurrentMonth
                                 ? ''
                                 : 'bg-muted/20 text-muted-foreground'}"
                         >
-                            <p class="text-xs">
+                            <button
+                                type="button"
+                                onclick={() => openNewEventForDate(day.date)}
+                                class="absolute inset-0 z-0 cursor-pointer text-left outline-none hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset"
+                                aria-label={`${formatLongDate(day.date)} ${t('New event')}`}
+                            ></button>
+                            <p
+                                class="pointer-events-none relative z-10 text-xs"
+                            >
                                 {#if day.monthLabel}<span
                                         class="mr-1 rounded bg-muted px-1 py-0.5 font-medium"
                                         >{day.monthLabel}</span
@@ -617,12 +776,17 @@
                                         : ''}>{day.day}</span
                                 >
                             </p>
-                            <div class="mt-1 space-y-1">
+                            <div
+                                class="pointer-events-none relative z-10 mt-1 space-y-1"
+                            >
                                 {#each day.events.slice(0, 3) as event (event.id)}
-                                    <button
-                                        type="button"
-                                        onclick={() => scrollToEvent(event.id)}
-                                        class="block w-full truncate rounded bg-primary/10 px-1 py-0.5 text-left text-xs hover:bg-primary/20"
+                                    <Link
+                                        href={ScheduleEventController.show([
+                                            currentTeam.slug,
+                                            project.id,
+                                            event.id,
+                                        ])}
+                                        class="pointer-events-auto block w-full truncate rounded bg-primary/10 px-1 py-0.5 text-left text-xs hover:bg-primary/20"
                                         title={event.title}
                                     >
                                         <span class="font-semibold"
@@ -637,12 +801,12 @@
                                                     new Date(event.startsAt),
                                                 )}</span
                                             >{/if}
-                                    </button>
+                                    </Link>
                                 {/each}
                                 {#if day.events.length > 3}
                                     <Link
                                         href={viewHref('day', day.date)}
-                                        class="block text-xs text-muted-foreground hover:underline"
+                                        class="pointer-events-auto block text-xs text-muted-foreground hover:underline"
                                     >
                                         {t('+:count more', {
                                             count: String(
@@ -657,42 +821,144 @@
                 </div>
             {/each}
         </div>
-    {:else if view === 'week'}
+    {:else if view === 'day' || view === 'week'}
         <div class="overflow-hidden rounded-lg border">
-            <div class="grid divide-y md:grid-cols-7 md:divide-x md:divide-y-0">
-                {#each weekDays as day (day.date)}
-                    <div class="min-h-32 p-2">
+            <div
+                use:scrollTimelineToCurrentTime={`${view}:${rangeStart}:${rangeEnd}`}
+                class="h-[calc(100vh-18rem)] min-h-96 max-h-[42rem] overflow-auto overscroll-contain"
+            >
+                <div class={view === 'week' ? 'min-w-4xl' : 'min-w-md'}>
+                    <div
+                        class="sticky top-0 z-40 grid border-b bg-background shadow-sm"
+                        style={`grid-template-columns: 4rem repeat(${timelineDays.length}, minmax(0, 1fr));`}
+                    >
                         <div
-                            class="mb-2 flex items-center gap-2 md:flex-col md:text-center"
-                        >
-                            <span
-                                class="text-xs font-semibold text-muted-foreground"
+                            class="sticky left-0 z-50 border-r bg-muted/60"
+                            aria-hidden="true"
+                        ></div>
+                        {#each timelineDays as day (day.date)}
+                            <div
+                                class="min-w-0 border-r bg-muted/40 px-1 py-2 text-center last:border-r-0"
                             >
-                                {weekdayLabels[weekdayOf(day.date)]}
-                            </span>
-                            <span
-                                class="flex size-7 items-center justify-center rounded-full text-sm font-bold {day.date ===
-                                today
-                                    ? 'bg-primary text-primary-foreground'
-                                    : ''}"
-                            >
-                                {Number(day.date.slice(8, 10))}
-                            </span>
-                        </div>
-                        <div class="space-y-1">
-                            {#each day.events as event (event.id)}
                                 <button
                                     type="button"
-                                    onclick={() => scrollToEvent(event.id)}
-                                    class="block w-full truncate rounded bg-primary/10 px-1 py-0.5 text-left text-xs hover:bg-primary/20"
-                                    title={event.title}
+                                    onclick={() =>
+                                        openNewEventForDate(day.date)}
+                                    class="mx-auto flex items-center justify-center gap-1 rounded-md px-2 py-1 text-sm font-semibold hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
                                 >
-                                    {event.title}
+                                    <span class="text-muted-foreground"
+                                        >{weekdayLabels[
+                                            weekdayOf(day.date)
+                                        ]}</span
+                                    >
+                                    <span
+                                        class="flex size-7 items-center justify-center rounded-full {day.date ===
+                                        currentDateKey
+                                            ? 'bg-primary text-primary-foreground'
+                                            : ''}"
+                                    >
+                                        {Number(day.date.slice(8, 10))}
+                                    </span>
                                 </button>
+                                {#each day.events.filter((event) => event.allDay) as event (event.id)}
+                                    <Link
+                                        href={ScheduleEventController.show([
+                                            currentTeam.slug,
+                                            project.id,
+                                            event.id,
+                                        ])}
+                                        class="mt-1 block w-full truncate rounded bg-primary/15 px-1 py-0.5 text-left text-xs font-medium hover:bg-primary/25"
+                                        title={event.title}
+                                    >
+                                        {event.title}
+                                    </Link>
+                                {/each}
+                            </div>
+                        {/each}
+                    </div>
+
+                    <div
+                        class="relative grid pb-5"
+                        style={`grid-template-columns: 4rem repeat(${timelineDays.length}, minmax(0, 1fr));`}
+                    >
+                        <div
+                            class="sticky left-0 z-20 border-r bg-background"
+                            style={`height: ${timelineHeight}px;`}
+                        >
+                            {#each halfHourOptions.filter( (time) => time.endsWith(':00') ) as time (time)}
+                                <span
+                                    class="absolute right-2 text-[11px] leading-none text-muted-foreground"
+                                    style={`top: ${Number(time.slice(0, 2)) * hourHeight + 4}px;`}
+                                >
+                                    {time}
+                                </span>
                             {/each}
+                            <span
+                                class="absolute right-2 text-[11px] leading-none text-muted-foreground"
+                                style={`top: ${timelineHeight + 4}px;`}
+                            >
+                                24:00
+                            </span>
+                        </div>
+
+                        {#each timelineDays as day (day.date)}
+                            <div
+                                class="relative min-w-0 overflow-hidden border-r last:border-r-0"
+                                style={`height: ${timelineHeight}px;`}
+                            >
+                                {#each halfHourOptions as time, slotIndex (time)}
+                                    <button
+                                        type="button"
+                                        onclick={() =>
+                                            openNewEventAt(day.date, time)}
+                                        class={`block h-8 w-full border-t text-left outline-none hover:bg-primary/5 focus-visible:bg-primary/10 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset ${slotIndex % 2 === 0 ? 'border-border' : 'border-dashed border-border/60'}`}
+                                        aria-label={`${formatLongDate(day.date)} ${time} ${t('New event')}`}
+                                    ></button>
+                                {/each}
+
+                                {#each day.events.filter((event) => !event.allDay) as event (event.id)}
+                                    <Link
+                                        href={ScheduleEventController.show([
+                                            currentTeam.slug,
+                                            project.id,
+                                            event.id,
+                                        ])}
+                                        class="absolute inset-x-1 z-10 overflow-hidden rounded-md border border-primary/40 bg-primary/15 px-1.5 py-1 text-left text-xs shadow-sm hover:bg-primary/25 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+                                        style={eventStyle(event)}
+                                        title={event.title}
+                                    >
+                                        <span
+                                            class="block truncate font-semibold"
+                                            >{event.title}</span
+                                        >
+                                        <span
+                                            class="block truncate text-[10px] text-muted-foreground"
+                                            >{event.startsAt.slice(
+                                                11,
+                                                16,
+                                            )}–{event.endsAt.slice(
+                                                11,
+                                                16,
+                                            )}</span
+                                        >
+                                    </Link>
+                                {/each}
+                            </div>
+                        {/each}
+
+                        <div
+                            class="pointer-events-none absolute right-0 left-0 z-30 border-t-2 border-emerald-500"
+                            style={`top: ${currentTimeTop}px;`}
+                            aria-label={`${t('Today')} ${currentTimeLabel}`}
+                        >
+                            <span
+                                class="sticky left-0 inline-flex w-16 -translate-y-1/2 justify-center rounded-r-full bg-emerald-500 px-1 py-0.5 text-[10px] font-bold text-white shadow-sm"
+                            >
+                                {currentTimeLabel}
+                            </span>
                         </div>
                     </div>
-                {/each}
+                </div>
             </div>
         </div>
     {:else if view === 'gantt'}
@@ -749,10 +1015,11 @@
                                     aria-hidden="true"
                                 ></div>
                                 <Link
-                                    href={viewHref(
-                                        'day',
-                                        event.startsAt.slice(0, 10),
-                                    )}
+                                    href={ScheduleEventController.show([
+                                        currentTeam.slug,
+                                        project.id,
+                                        event.id,
+                                    ])}
                                     class="relative z-10 mx-px my-1 flex min-w-0 items-center overflow-visible rounded-lg border bg-primary/10 px-2 py-2 text-left text-sm font-bold shadow-sm transition hover:bg-primary/20"
                                     style={`grid-column: ${ganttGridColumn(event.startsAt, event.endsAt)};`}
                                     title={event.title}

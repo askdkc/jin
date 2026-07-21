@@ -67,17 +67,22 @@ jobs:
     needs: ci
     runs-on: ubuntu-latest
     env:
+      APP_URL: http://127.0.0.1:8000
+      DB_CONNECTION: sqlite
+      DB_DATABASE: ${{ github.workspace }}/database/onlyoffice-ci.sqlite
       ONLYOFFICE_ENABLED: 'true'
       ONLYOFFICE_DOCUMENT_SERVER_URL: http://127.0.0.1:8081
       ONLYOFFICE_PUBLIC_URL: http://127.0.0.1:8081
-      APP_ONLYOFFICE_INTERNAL_URL: http://app.internal.test
       ONLYOFFICE_JWT_SECRET: ci-onlyoffice-secret-not-for-production
+      ONLYOFFICE_INSTANCE_ID: jin-ci
     services:
       onlyoffice:
         image: onlyoffice/documentserver:9.4.0.1
         env:
           JWT_ENABLED: 'true'
           JWT_SECRET: ci-onlyoffice-secret-not-for-production
+          ALLOW_PRIVATE_IP_ADDRESS: 'true'
+          ALLOW_META_IP_ADDRESS: 'false'
           PLUGINS_ENABLED: 'false'
         ports:
           - 8081:80
@@ -93,6 +98,7 @@ jobs:
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
           php-version: '8.5'
+          extensions: mbstring, sqlite3, zip
           tools: composer:v2
           coverage: none
 
@@ -103,6 +109,7 @@ jobs:
         run: |
           cp .env.example .env
           php artisan key:generate
+          php artisan migrate --force
 
       - name: Wait for ONLYOFFICE
         run: |
@@ -121,9 +128,44 @@ jobs:
           echo 'ONLYOFFICE did not become ready within 240 seconds.' >&2
           exit 1
 
-      - name: Run ONLYOFFICE Integration Test
+      - name: Run ONLYOFFICE Contract Test
         run: php artisan test --compact tests/Integration/OnlyOfficeDocumentServerTest.php
+
+      - name: Run ONLYOFFICE DocumentServer Test
+        env:
+          ONLYOFFICE_E2E: 'true'
+        run: |
+          onlyoffice_network="$(docker inspect '${{ job.services.onlyoffice.id }}' \
+            --format '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{end}}')"
+          app_gateway="$(docker network inspect "$onlyoffice_network" \
+            --format '{{(index .IPAM.Config 0).Gateway}}')"
+          export APP_ONLYOFFICE_INTERNAL_URL="http://${app_gateway}:8000"
+
+          php artisan serve --host=0.0.0.0 --port=8000 \
+            >storage/logs/onlyoffice-ci-app.log 2>&1 &
+          app_pid=$!
+          trap 'kill "$app_pid" 2>/dev/null || true' EXIT
+
+          for attempt in {1..30}; do
+            if curl -fsS --connect-timeout 2 --max-time 3 \
+              http://127.0.0.1:8000/up >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              cat storage/logs/onlyoffice-ci-app.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          docker exec '${{ job.services.onlyoffice.id }}' \
+            curl -fsS --connect-timeout 2 --max-time 5 \
+            "${APP_ONLYOFFICE_INTERNAL_URL}/up" >/dev/null
+
+          php artisan test --compact tests/E2E/OnlyOfficeDocumentServerTest.php
 
       - name: Show ONLYOFFICE Logs
         if: failure()
-        run: docker logs "${{ job.services.onlyoffice.id }}"
+        run: |
+          test ! -f storage/logs/onlyoffice-ci-app.log || cat storage/logs/onlyoffice-ci-app.log
+          docker logs "${{ job.services.onlyoffice.id }}"

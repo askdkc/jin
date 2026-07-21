@@ -93,18 +93,21 @@ XML);
         ->timeout(180)
         ->post($conversionUrl, $request);
 
-    $this->assertTrue($conversionResponse->successful(), $conversionResponse->body());
+    $this->assertTrue(
+        $conversionResponse->successful(),
+        'Conversion request returned HTTP '.$conversionResponse->status().'.',
+    );
 
     $conversion = $conversionResponse->json();
-    $this->assertIsArray($conversion, $conversionResponse->body());
-    $this->assertSame(0, $conversion['error'] ?? 0, $conversionResponse->body());
-    $this->assertTrue($conversion['end'] ?? false, $conversionResponse->body());
-    $this->assertIsString($conversion['fileUrl'] ?? null, $conversionResponse->body());
+    $this->assertIsArray($conversion);
+    $this->assertSame(0, $conversion['error'] ?? 0, 'Document conversion failed.');
+    $this->assertTrue($conversion['endConvert'] ?? false, 'Document conversion did not finish.');
+    $this->assertIsString($conversion['fileUrl'] ?? null);
 
     $pdfResponse = Http::connectTimeout(10)
         ->timeout(60)
         ->get($conversion['fileUrl']);
 
-    $this->assertTrue($pdfResponse->successful(), $pdfResponse->body());
+    $this->assertTrue($pdfResponse->successful(), 'Converted PDF could not be downloaded.');
     expect($pdfResponse->body())->toStartWith('%PDF-');
 });

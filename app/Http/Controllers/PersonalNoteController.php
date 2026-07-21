@@ -18,9 +18,13 @@ class PersonalNoteController extends Controller
     {
         $notes = $request->user()->personalNotes()
             ->where('team_id', $currentTeam->id)
+            ->select(['id', 'title', 'body', 'updated_at'])
             ->latest('updated_at')
-            ->get()
-            ->map(fn (PersonalNote $note): array => [
+            ->latest('id')
+            // Each body can be 50 KB; bound both the query result and Inertia payload.
+            ->paginate(20)
+            ->withQueryString()
+            ->through(fn (PersonalNote $note): array => [
                 'id' => $note->id,
                 'title' => $note->title,
                 'body' => $note->body,
@@ -46,7 +50,10 @@ class PersonalNoteController extends Controller
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Note saved.')]);
 
-        return back();
+        // The notes page needs page 1; the global quick-note dock must keep its current page.
+        return $request->boolean('return_to_notes_index')
+            ? to_route('notes.index', $currentTeam)
+            : back();
     }
 
     public function update(
@@ -62,7 +69,8 @@ class PersonalNoteController extends Controller
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Note updated.')]);
 
-        return back();
+        // An updated note moves to the first page because the list is ordered by updated_at.
+        return to_route('notes.index', $currentTeam);
     }
 
     public function destroy(
@@ -80,6 +88,6 @@ class PersonalNoteController extends Controller
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Note deleted.')]);
 
-        return back();
+        return to_route('notes.index', $currentTeam);
     }
 }

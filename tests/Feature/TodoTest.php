@@ -49,7 +49,18 @@ test('project participants can create and complete assigned todos', function () 
             ->component('projects/todos/Index')
             ->where('lists.0.title', '公開準備')
             ->where('lists.0.todos.0.title', '公開前チェックを行う')
-            ->where('lists.0.todos.0.completed', true));
+            ->where('lists.0.todos.0.completed', true)
+            ->where('lists.0.todos.0.assigneeName', $member->name)
+            ->where('lists.0.todos.0.dueOn', '2026-08-01')
+            ->missing('lists.0.todos.0.details')
+            ->missing('lists.0.todos.0.assigneeId')
+            ->missing('lists.0.todos.0.completionNotifyIds')
+            ->missing('lists.0.todos.0.creatorName')
+            ->missing('lists.0.todos.0.createdAt')
+            ->missing('lists.0.todos.0.canEdit')
+            ->missing('lists.0.todos.0.attachments')
+            ->missing('lists.0.todos.0.subtasks')
+            ->missing('lists.0.todos.0.comments'));
 
     expect($todo->fresh()->completed_by)->toBe($owner->id);
 });
@@ -204,12 +215,12 @@ test('project participants can discuss todos while only authors and managers can
 
     $comment = Comment::query()->firstOrFail();
 
-    $this->get(route('projects.todos.index', [$team, $project]))
+    $this->get($showRoute)
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
-            ->where('lists.0.todos.0.comments.0.body', 'スマートフォンで確認しました。')
-            ->where('lists.0.todos.0.comments.0.authorName', 'コメント投稿者')
-            ->where('lists.0.todos.0.comments.0.canDelete', true));
+            ->where('todo.comments.0.body', 'スマートフォンで確認しました。')
+            ->where('todo.comments.0.authorName', 'コメント投稿者')
+            ->where('todo.comments.0.canDelete', true));
 
     $this->get(route('activity.index', $team))
         ->assertOk()
@@ -365,14 +376,14 @@ test('project participants can create complete and view subtasks', function () {
         ->parent_id->toBe($todo->id)
         ->created_by->toBe($member->id);
 
-    $this->get(route('projects.todos.index', [$team, $project]))
+    $this->get($showRoute)
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
-            ->where('lists.0.todos.0.title', '公開準備')
-            ->where('lists.0.todos.0.subtasks.0.title', 'モバイル表示を確認する')
-            ->where('lists.0.todos.0.subtasks.0.completed', false)
-            ->where('lists.0.todos.0.subtasks.0.canEdit', true)
-            ->missing('lists.0.todos.1'));
+            ->where('todo.title', '公開準備')
+            ->where('todo.subtasks.0.title', 'モバイル表示を確認する')
+            ->where('todo.subtasks.0.completed', false)
+            ->where('todo.subtasks.0.canEdit', true)
+            ->missing('todo.subtasks.1'));
 
     $this->from($showRoute)
         ->patch(route('projects.todos.toggle', [$team, $project, $list, $subtask]))

@@ -51,6 +51,8 @@ test('project participants can create recurring check-ins for project members', 
             ->component('projects/check-ins/Index')
             ->where('checkIns.0.question', '今週進んだことは？')
             ->where('checkIns.0.frequency', 'weekly')
+            ->where('checkIns.0.canManage', true)
+            ->where('checkIns.0.canDelete', true)
             ->where('checkIns.0.targetNames', fn (Collection $names): bool => $names->sort()->values()->all() === collect([$owner->name, '回答者'])->sort()->values()->all()));
 });
 

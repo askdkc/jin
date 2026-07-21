@@ -1,6 +1,9 @@
 <?php
 
+use App\Enums\TeamRole;
+use App\Models\Team;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Inertia\Testing\AssertableInertia as Assert;
 
 test('guests can view the JIN introduction', function () {
@@ -25,6 +28,39 @@ test('authenticated users receive their dashboard context', function () {
             ->where('auth.user.id', $user->id)
             ->where('currentTeam.slug', $team->slug),
         );
+});
+
+test('shared workspace context reuses the route team and defers the people query', function () {
+    $user = User::factory()->create();
+    $member = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($user, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $user->update(['current_team_id' => $team->id]);
+    $user = $user->fresh();
+
+    DB::flushQueryLog();
+    DB::enableQueryLog();
+
+    $this->actingAs($user)
+        ->get(route('dashboard', $team))
+        ->assertOk();
+
+    $queries = collect(DB::getQueryLog())
+        ->pluck('query')
+        // Normalize identifier quoting across SQLite, MySQL, PostgreSQL, and SQL Server.
+        ->map(fn (string $query): string => str_replace(['"', '`', '[', ']'], '', strtolower($query)));
+    DB::disableQueryLog();
+
+    $peopleQueryCount = $queries
+        ->filter(fn (string $query): bool => str_contains($query, 'from users inner join team_members'))
+        ->count();
+    $currentTeamQueryCount = $queries
+        ->filter(fn (string $query): bool => str_contains($query, 'from teams where teams.id = ?'))
+        ->count();
+
+    expect($peopleQueryCount)->toBe(0)
+        ->and($currentTeamQueryCount)->toBe(0);
 });
 
 test('the introduction uses the JIN brand copy and icon', function () {

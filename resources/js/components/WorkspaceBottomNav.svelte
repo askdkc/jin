@@ -1,5 +1,6 @@
 <script lang="ts">
-    import { Form, Link, page } from '@inertiajs/svelte';
+    import type { ReloadOptions } from '@inertiajs/core';
+    import { Form, Link, page, router, WhenVisible } from '@inertiajs/svelte';
     import Bookmark from 'lucide-svelte/icons/bookmark';
     import CalendarDays from 'lucide-svelte/icons/calendar-days';
     import Clock3 from 'lucide-svelte/icons/clock-3';
@@ -19,7 +20,6 @@
     import ProjectTodoController from '@/actions/App/Http/Controllers/ProjectTodoController';
     import WorkspaceCalendarController from '@/actions/App/Http/Controllers/WorkspaceCalendarController';
     import AppLogoIcon from '@/components/AppLogoIcon.svelte';
-    import RichTextEditor from '@/components/RichTextEditor.svelte';
     import { Button } from '@/components/ui/button';
     import { getEcho } from '@/lib/echo';
     import { t } from '@/lib/i18n';
@@ -29,10 +29,23 @@
 
     type Panel = 'tasks' | 'events' | 'bookmarks' | 'notes' | 'notifications';
     type NewForYouTab = 'notifications' | 'pings' | 'later';
+    type PingCreatedPayload = { teamId: number; message: WorkspacePing };
+    type LazyPanel = 'tasks' | 'events' | 'bookmarks' | 'pings';
+    type LazyLoadState = 'idle' | 'loading' | 'error';
+
+    const loadRichTextEditor = () =>
+        import('@/components/RichTextEditor.svelte');
+    type RichTextEditorPromise = ReturnType<typeof loadRichTextEditor>;
 
     let { currentTeam }: { currentTeam: Team } = $props();
 
     const workspace = $derived(page.props.workspaceBar);
+    const tasks = $derived(workspace.tasks ?? []);
+    const events = $derived(workspace.events ?? []);
+    const bookmarks = $derived(workspace.bookmarks ?? []);
+    const people = $derived(page.props.navigationPeople ?? []);
+    // Recipients are mutable, so refresh them with pings before enabling a send.
+    const pingsLazyData = ['workspaceBar.pings', 'navigationPeople'];
     const currentUserId = $derived(page.props.auth.user.id);
     const unreadNotifications = $derived(
         workspace.notifications.filter((item) => !item.read).length,
@@ -45,17 +58,30 @@
     );
     let activePanel = $state<Panel | null>(null);
     let newForYouTab = $state<NewForYouTab>('notifications');
-    let livePings = $state<WorkspacePing[]>([]);
+    let richTextEditorModule = $state<RichTextEditorPromise | null>(null);
+    let livePings = $state<PingCreatedPayload[]>([]);
     let pingBody = $state('');
     let now = $state(Date.now());
+    let lazyLoadStates = $state<Record<LazyPanel, LazyLoadState>>({
+        tasks: 'idle',
+        events: 'idle',
+        bookmarks: 'idle',
+        pings: 'idle',
+    });
     const pings = $derived.by(() => {
-        const all = [...workspace.pings, ...livePings];
+        const all = [
+            ...livePings
+                .filter(({ teamId }) => teamId === currentTeam.id)
+                .map(({ message }) => message),
+            ...(workspace.pings ?? []),
+        ];
 
-        return all.filter(
-            (message, index) =>
-                all.findIndex((candidate) => candidate.id === message.id) ===
-                index,
-        );
+        // Sort after merging so an old live item cannot displace newer canonical rows.
+        return Array.from(
+            new Map(all.map((message) => [message.id, message])).values(),
+        )
+            .sort((left, right) => left.id - right.id)
+            .slice(-30);
     });
     const reminderMinutes = $derived(
         workspace.reminder
@@ -104,7 +130,14 @@
         activePanel = null;
     };
     const togglePanel = (panel: Panel): void => {
-        activePanel = activePanel === panel ? null : panel;
+        const nextPanel = activePanel === panel ? null : panel;
+
+        if (nextPanel === 'notes' && !richTextEditorModule) {
+            // Trix and Markdown rendering are large; load them only for users who open notes.
+            richTextEditorModule = loadRichTextEditor();
+        }
+
+        activePanel = nextPanel;
     };
     const openNewForYou = (): void => {
         activePanel = 'notifications';
@@ -117,12 +150,58 @@
         return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T09:00`;
     };
     const handleKeydown = (event: KeyboardEvent): void => {
-        if (event.shiftKey && event.key.toLocaleLowerCase() === 's') {
-            event.preventDefault();
-            openNewForYou();
-        } else if (event.key === 'Escape') {
+        if (event.key === 'Escape') {
             closePanel();
         }
+    };
+    const lazyPanelIsLoaded = (panel: LazyPanel): boolean =>
+        page.props.workspaceBar[panel] !== undefined &&
+        (panel !== 'pings' || page.props.navigationPeople !== undefined);
+    const lazyLoadParams = (panel: LazyPanel): ReloadOptions => {
+        const fail = (): void => {
+            lazyLoadStates[panel] = 'error';
+        };
+        const handleNetworkError = (): false => {
+            fail();
+
+            // This panel renders the retry UI, so suppress Inertia's global error handling.
+            return false;
+        };
+        const settleFromCurrentProps = (): void => {
+            lazyLoadStates[panel] = lazyPanelIsLoaded(panel) ? 'idle' : 'error';
+        };
+
+        return {
+            onStart: () => {
+                lazyLoadStates[panel] = 'loading';
+            },
+            onSuccess: () => {
+                lazyLoadStates[panel] = 'idle';
+            },
+            // Preserved validation errors can trigger onError after a successful partial reload.
+            onError: settleFromCurrentProps,
+            onHttpException: fail,
+            onNetworkError: handleNetworkError,
+            onCancel: settleFromCurrentProps,
+        };
+    };
+    const retryLazyPanel = (
+        panel: LazyPanel,
+        data: string | string[],
+    ): void => {
+        router.reload({
+            only: Array.isArray(data) ? data : [data],
+            preserveErrors: true,
+            ...lazyLoadParams(panel),
+        });
+    };
+    const refreshPings = (): void => {
+        // The broadcast is best-effort; refresh after writes so the sender also gets canonical state.
+        router.reload({
+            only: ['workspaceBar.pings', 'workspaceBar.unreadPings'],
+            preserveErrors: true,
+            ...lazyLoadParams('pings'),
+        });
     };
 
     onMount(() => {
@@ -134,8 +213,18 @@
         const echo = getEcho();
         echo.private(channelName).listen(
             '.ping.created',
-            (payload: { message: WorkspacePing }) => {
-                livePings = [...livePings, payload.message];
+            (payload: PingCreatedPayload) => {
+                if (payload.teamId !== currentTeam.id) {
+                    return;
+                }
+
+                // Persistent layouts share the user channel across teams; retain only unique, bounded messages.
+                livePings = [
+                    ...livePings.filter(
+                        ({ message }) => message.id !== payload.message.id,
+                    ),
+                    payload,
+                ].slice(-30);
             },
         );
 
@@ -146,6 +235,31 @@
         };
     });
 </script>
+
+{#snippet lazyLoading()}
+    <p
+        class="px-5 py-12 text-center text-sm text-muted-foreground"
+        role="status"
+    >
+        {t('Loading')}
+    </p>
+{/snippet}
+
+{#snippet lazyLoadFailure(panel: LazyPanel, data: string | string[])}
+    <div class="space-y-3 px-5 py-8 text-center" role="alert">
+        <p class="text-sm text-destructive">
+            {t('Could not load this panel.')}
+        </p>
+        <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onclick={() => retryLazyPanel(panel, data)}
+        >
+            {t('Retry')}
+        </Button>
+    </div>
+{/snippet}
 
 <svelte:window onkeydown={handleKeydown} />
 
@@ -215,93 +329,150 @@
         </header>
 
         {#if activePanel === 'tasks'}
-            <div class="divide-y">
-                {#each workspace.tasks as task (task.id)}
-                    <Link
-                        href={ProjectTodoController.index([
-                            currentTeam.slug,
-                            task.project.id,
-                        ])}
-                        class="flex items-center gap-3 px-5 py-3 hover:bg-muted/60"
-                        onclick={closePanel}
-                    >
-                        <span class="size-5 shrink-0 rounded-md border-2"
-                        ></span>
-                        <span class="min-w-0">
-                            <span class="block truncate text-sm font-semibold"
-                                >{task.title}</span
+            <WhenVisible
+                data="workspaceBar.tasks"
+                params={lazyLoadParams('tasks')}
+                always
+            >
+                {#snippet fallback()}
+                    {@render lazyLoading()}
+                {/snippet}
+                {#if lazyLoadStates.tasks === 'error'}
+                    {@render lazyLoadFailure('tasks', 'workspaceBar.tasks')}
+                {/if}
+                {#if workspace.tasks !== undefined}
+                    <div class="divide-y">
+                        {#each tasks as task (task.id)}
+                            <Link
+                                href={ProjectTodoController.index([
+                                    currentTeam.slug,
+                                    task.project.id,
+                                ])}
+                                class="flex items-center gap-3 px-5 py-3 hover:bg-muted/60"
+                                onclick={closePanel}
                             >
-                            <span
-                                class="block truncate text-xs text-muted-foreground"
-                                >{task.project.name}</span
+                                <span
+                                    class="size-5 shrink-0 rounded-md border-2"
+                                ></span>
+                                <span class="min-w-0">
+                                    <span
+                                        class="block truncate text-sm font-semibold"
+                                        >{task.title}</span
+                                    >
+                                    <span
+                                        class="block truncate text-xs text-muted-foreground"
+                                        >{task.project.name}</span
+                                    >
+                                </span>
+                            </Link>
+                        {:else}
+                            <p
+                                class="px-5 py-12 text-center text-sm text-muted-foreground"
                             >
-                        </span>
-                    </Link>
-                {:else}
-                    <p
-                        class="px-5 py-12 text-center text-sm text-muted-foreground"
-                    >
-                        {t('No assigned tasks')}
-                    </p>
-                {/each}
-            </div>
+                                {t('No assigned tasks')}
+                            </p>
+                        {/each}
+                    </div>
+                {:else if lazyLoadStates.tasks === 'loading'}
+                    {@render lazyLoading()}
+                {/if}
+            </WhenVisible>
         {:else if activePanel === 'events'}
-            <div class="divide-y">
-                {#each workspace.events as event (event.id)}
-                    <Link
-                        href={WorkspaceCalendarController(currentTeam.slug)}
-                        class="flex items-start gap-3 px-5 py-3 hover:bg-muted/60"
-                        onclick={closePanel}
-                    >
-                        <CalendarDays
-                            class="mt-0.5 size-5 shrink-0 text-blue-500"
-                        />
-                        <span class="min-w-0">
-                            <span class="block truncate text-sm font-semibold"
-                                >{event.title}</span
+            <WhenVisible
+                data="workspaceBar.events"
+                params={lazyLoadParams('events')}
+                always
+            >
+                {#snippet fallback()}
+                    {@render lazyLoading()}
+                {/snippet}
+                {#if lazyLoadStates.events === 'error'}
+                    {@render lazyLoadFailure('events', 'workspaceBar.events')}
+                {/if}
+                {#if workspace.events !== undefined}
+                    <div class="divide-y">
+                        {#each events as event (event.id)}
+                            <Link
+                                href={WorkspaceCalendarController(
+                                    currentTeam.slug,
+                                )}
+                                class="flex items-start gap-3 px-5 py-3 hover:bg-muted/60"
+                                onclick={closePanel}
                             >
-                            <span
-                                class="block truncate text-xs text-muted-foreground"
-                                >{eventFormatter.format(
-                                    new Date(event.startsAt),
-                                )} · {event.project.name}</span
+                                <CalendarDays
+                                    class="mt-0.5 size-5 shrink-0 text-blue-500"
+                                />
+                                <span class="min-w-0">
+                                    <span
+                                        class="block truncate text-sm font-semibold"
+                                        >{event.title}</span
+                                    >
+                                    <span
+                                        class="block truncate text-xs text-muted-foreground"
+                                        >{eventFormatter.format(
+                                            new Date(event.startsAt),
+                                        )} · {event.project.name}</span
+                                    >
+                                </span>
+                            </Link>
+                        {:else}
+                            <p
+                                class="px-5 py-12 text-center text-sm text-muted-foreground"
                             >
-                        </span>
-                    </Link>
-                {:else}
-                    <p
-                        class="px-5 py-12 text-center text-sm text-muted-foreground"
-                    >
-                        {t('No events in the next 7 days')}
-                    </p>
-                {/each}
-            </div>
+                                {t('No events in the next 7 days')}
+                            </p>
+                        {/each}
+                    </div>
+                {:else if lazyLoadStates.events === 'loading'}
+                    {@render lazyLoading()}
+                {/if}
+            </WhenVisible>
         {:else if activePanel === 'bookmarks'}
-            <div class="grid gap-3 p-4 sm:grid-cols-2 sm:p-5">
-                {#each workspace.bookmarks as project (project.id)}
-                    <Link
-                        href={show([currentTeam.slug, project.id])}
-                        class="rounded-xl border p-4 hover:bg-muted/40"
-                        onclick={closePanel}
-                    >
-                        <span class="flex items-center gap-2 font-semibold"
-                            ><Bookmark
-                                class="size-4 fill-amber-400 text-amber-500"
-                            />{project.name}</span
-                        >
-                        {#if project.description}<span
-                                class="mt-1 line-clamp-2 block text-xs text-muted-foreground"
-                                >{project.description}</span
-                            >{/if}
-                    </Link>
-                {:else}
-                    <p
-                        class="col-span-full py-12 text-center text-sm text-muted-foreground"
-                    >
-                        {t("You haven't bookmarked anything yet")}
-                    </p>
-                {/each}
-            </div>
+            <WhenVisible
+                data="workspaceBar.bookmarks"
+                params={lazyLoadParams('bookmarks')}
+                always
+            >
+                {#snippet fallback()}
+                    {@render lazyLoading()}
+                {/snippet}
+                {#if lazyLoadStates.bookmarks === 'error'}
+                    {@render lazyLoadFailure(
+                        'bookmarks',
+                        'workspaceBar.bookmarks',
+                    )}
+                {/if}
+                {#if workspace.bookmarks !== undefined}
+                    <div class="grid gap-3 p-4 sm:grid-cols-2 sm:p-5">
+                        {#each bookmarks as project (project.id)}
+                            <Link
+                                href={show([currentTeam.slug, project.id])}
+                                class="rounded-xl border p-4 hover:bg-muted/40"
+                                onclick={closePanel}
+                            >
+                                <span
+                                    class="flex items-center gap-2 font-semibold"
+                                    ><Bookmark
+                                        class="size-4 fill-amber-400 text-amber-500"
+                                    />{project.name}</span
+                                >
+                                {#if project.description}<span
+                                        class="mt-1 line-clamp-2 block text-xs text-muted-foreground"
+                                        >{project.description}</span
+                                    >{/if}
+                            </Link>
+                        {:else}
+                            <p
+                                class="col-span-full py-12 text-center text-sm text-muted-foreground"
+                            >
+                                {t("You haven't bookmarked anything yet")}
+                            </p>
+                        {/each}
+                    </div>
+                {:else if lazyLoadStates.bookmarks === 'loading'}
+                    {@render lazyLoading()}
+                {/if}
+            </WhenVisible>
         {:else if activePanel === 'notes'}
             <Form
                 {...PersonalNoteController.store.form(currentTeam.slug)}
@@ -309,36 +480,66 @@
                 class="p-4 sm:p-5"
             >
                 {#snippet children({ errors, processing })}
-                    <div class="overflow-hidden rounded-xl border bg-card">
-                        <input
-                            name="title"
-                            maxlength="255"
-                            required
-                            aria-label={t('Title')}
-                            placeholder={t('Title')}
-                            class="w-full border-b bg-transparent px-4 py-3 text-sm font-semibold outline-none"
-                        />
-                        <RichTextEditor
-                            id="workspace-quick-note-body"
-                            name="body"
-                            required
-                            ariaLabel={t('Note')}
-                            placeholder={t('Jot something down...')}
-                            attachmentUploadUrl={PersonalNoteAttachmentController.upload.url(
-                                currentTeam.slug,
-                            )}
-                        />
-                    </div>
-                    {#if errors.title || errors.body}<p
-                            class="mt-2 text-sm text-destructive"
-                        >
-                            {errors.title || errors.body}
-                        </p>{/if}
-                    <div class="mt-3 text-right">
-                        <Button type="submit" size="sm" disabled={processing}
-                            >{t('Save note')}</Button
-                        >
-                    </div>
+                    {#if richTextEditorModule}
+                        {#await richTextEditorModule}
+                            <p
+                                class="py-12 text-center text-sm text-muted-foreground"
+                                role="status"
+                            >
+                                {t('Loading')}
+                            </p>
+                        {:then { default: RichTextEditor }}
+                            <div
+                                class="overflow-hidden rounded-xl border bg-card"
+                            >
+                                <input
+                                    name="title"
+                                    maxlength="255"
+                                    required
+                                    aria-label={t('Title')}
+                                    placeholder={t('Title')}
+                                    class="w-full border-b bg-transparent px-4 py-3 text-sm font-semibold outline-none"
+                                />
+                                <RichTextEditor
+                                    id="workspace-quick-note-body"
+                                    name="body"
+                                    required
+                                    ariaLabel={t('Note')}
+                                    placeholder={t('Jot something down...')}
+                                    attachmentUploadUrl={PersonalNoteAttachmentController.upload.url(
+                                        currentTeam.slug,
+                                    )}
+                                />
+                            </div>
+                            {#if errors.title || errors.body}<p
+                                    class="mt-2 text-sm text-destructive"
+                                >
+                                    {errors.title || errors.body}
+                                </p>{/if}
+                            <div class="mt-3 text-right">
+                                <Button
+                                    type="submit"
+                                    size="sm"
+                                    disabled={processing}
+                                    >{t('Save note')}</Button
+                                >
+                            </div>
+                        {:catch}
+                            <div class="py-8 text-center" role="alert">
+                                <p class="text-sm text-destructive">
+                                    {t('Could not load the editor.')}
+                                </p>
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    class="mt-3"
+                                    onclick={() => window.location.reload()}
+                                    >{t('Retry')}</Button
+                                >
+                            </div>
+                        {/await}
+                    {/if}
                 {/snippet}
             </Form>
         {:else}
@@ -476,82 +677,114 @@
                     >
                 </footer>
             {:else if newForYouTab === 'pings'}
-                <div class="max-h-72 space-y-2 overflow-y-auto bg-muted/20 p-4">
-                    {#each pings as message (message.id)}
-                        <div
-                            class:ml-auto={message.sender.id === currentUserId}
-                            class="max-w-[85%] rounded-2xl border bg-card px-3 py-2 text-sm shadow-xs"
-                        >
-                            <p class="text-xs font-bold text-muted-foreground">
-                                {message.sender.name}
-                            </p>
-                            <p class="mt-1 whitespace-pre-wrap break-words">
-                                {message.body}
-                            </p>
-                        </div>
-                    {:else}
-                        <p
-                            class="py-8 text-center text-sm text-muted-foreground"
-                        >
-                            {t('No pings yet')}
-                        </p>
-                    {/each}
-                </div>
-                <Form
-                    {...DirectMessageController.store.form(currentTeam.slug)}
-                    resetOnSuccess
-                    onSuccess={() => (pingBody = '')}
-                    class="grid gap-2 border-t p-4 sm:grid-cols-[12rem_1fr_auto_auto]"
+                <WhenVisible
+                    data={pingsLazyData}
+                    params={lazyLoadParams('pings')}
+                    always
                 >
-                    {#snippet children({ errors, processing })}
-                        <select
-                            name="recipient_id"
-                            required
-                            class="h-10 rounded-md border bg-background px-3 text-sm"
-                            aria-label={t('Recipient')}
-                        >
-                            <option value="">{t('Choose a person')}</option>
-                            {#each workspace.people as person (person.id)}<option
-                                    value={person.id}>{person.name}</option
-                                >{/each}
-                        </select>
-                        <input
-                            name="body"
-                            bind:value={pingBody}
-                            maxlength="4000"
-                            required
-                            placeholder={t('Write a ping')}
-                            class="h-10 min-w-0 rounded-md border bg-background px-3 text-sm"
-                        />
-                        <Button
-                            type="submit"
-                            size="icon"
-                            disabled={processing}
-                            aria-label={t('Send')}
-                            ><Send class="size-4" /></Button
-                        >
-                        {#if errors.recipient_id || errors.body}<p
-                                class="text-sm text-destructive sm:col-span-3"
-                            >
-                                {errors.recipient_id || errors.body}
-                            </p>{/if}
+                    {#snippet fallback()}
+                        {@render lazyLoading()}
                     {/snippet}
-                </Form>
-                {#if workspace.unreadPings > 0}
-                    <Form
-                        {...DirectMessageController.markRead.form(
-                            currentTeam.slug,
-                        )}
-                        class="border-t p-3 text-right"
-                        >{#snippet children({ processing })}<Button
-                                type="submit"
-                                size="sm"
-                                variant="outline"
-                                disabled={processing}
-                                >{t('Mark pings as read')}</Button
-                            >{/snippet}</Form
-                    >
-                {/if}
+                    {#if lazyLoadStates.pings === 'error'}
+                        {@render lazyLoadFailure('pings', pingsLazyData)}
+                    {/if}
+                    {#if workspace.pings !== undefined && page.props.navigationPeople !== undefined}
+                        <div
+                            class="max-h-72 space-y-2 overflow-y-auto bg-muted/20 p-4"
+                        >
+                            {#each pings as message (message.id)}
+                                <div
+                                    class:ml-auto={message.sender.id ===
+                                        currentUserId}
+                                    class="max-w-[85%] rounded-2xl border bg-card px-3 py-2 text-sm shadow-xs"
+                                >
+                                    <p
+                                        class="text-xs font-bold text-muted-foreground"
+                                    >
+                                        {message.sender.name}
+                                    </p>
+                                    <p
+                                        class="mt-1 whitespace-pre-wrap break-words"
+                                    >
+                                        {message.body}
+                                    </p>
+                                </div>
+                            {:else}
+                                <p
+                                    class="py-8 text-center text-sm text-muted-foreground"
+                                >
+                                    {t('No pings yet')}
+                                </p>
+                            {/each}
+                        </div>
+                        <Form
+                            {...DirectMessageController.store.form(
+                                currentTeam.slug,
+                            )}
+                            resetOnSuccess
+                            onSuccess={() => {
+                                pingBody = '';
+                                refreshPings();
+                            }}
+                            class="grid gap-2 border-t p-4 sm:grid-cols-[12rem_1fr_auto_auto]"
+                        >
+                            {#snippet children({ errors, processing })}
+                                <select
+                                    name="recipient_id"
+                                    required
+                                    class="h-10 rounded-md border bg-background px-3 text-sm"
+                                    aria-label={t('Recipient')}
+                                >
+                                    <option value=""
+                                        >{t('Choose a person')}</option
+                                    >
+                                    {#each people as person (person.id)}<option
+                                            value={person.id}
+                                            >{person.name}</option
+                                        >{/each}
+                                </select>
+                                <input
+                                    name="body"
+                                    bind:value={pingBody}
+                                    maxlength="4000"
+                                    required
+                                    placeholder={t('Write a ping')}
+                                    class="h-10 min-w-0 rounded-md border bg-background px-3 text-sm"
+                                />
+                                <Button
+                                    type="submit"
+                                    size="icon"
+                                    disabled={processing}
+                                    aria-label={t('Send')}
+                                    ><Send class="size-4" /></Button
+                                >
+                                {#if errors.recipient_id || errors.body}<p
+                                        class="text-sm text-destructive sm:col-span-3"
+                                    >
+                                        {errors.recipient_id || errors.body}
+                                    </p>{/if}
+                            {/snippet}
+                        </Form>
+                        {#if workspace.unreadPings > 0}
+                            <Form
+                                {...DirectMessageController.markRead.form(
+                                    currentTeam.slug,
+                                )}
+                                onSuccess={refreshPings}
+                                class="border-t p-3 text-right"
+                                >{#snippet children({ processing })}<Button
+                                        type="submit"
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={processing}
+                                        >{t('Mark pings as read')}</Button
+                                    >{/snippet}</Form
+                            >
+                        {/if}
+                    {:else if lazyLoadStates.pings === 'loading'}
+                        {@render lazyLoading()}
+                    {/if}
+                </WhenVisible>
             {:else}
                 <div class="divide-y">
                     {#each workspace.bubbleUps as item (item.id)}

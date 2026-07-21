@@ -268,8 +268,19 @@ test('project home summarizes the latest work', function () {
         'metadata' => ['label' => '公開前チェック'],
     ]);
 
-    $this->actingAs($owner)
-        ->get(route('projects.show', [$team, $project]))
+    DB::flushQueryLog();
+    DB::enableQueryLog();
+    $response = $this->actingAs($owner)
+        ->get(route('projects.show', [$team, $project]));
+    $todoCounterQueries = collect(DB::getQueryLog())->filter(function (array $query): bool {
+        $sql = str_replace(['"', '`', '[', ']'], '', strtolower($query['query']));
+
+        return str_contains($sql, 'from todos')
+            && (str_contains($sql, 'count(') || str_contains($sql, 'sum('));
+    });
+    DB::disableQueryLog();
+
+    $response
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
             ->component('projects/Show')
@@ -305,6 +316,8 @@ test('project home summarizes the latest work', function () {
             ->where('home.chat.latest.body', '確認をお願いします')
             ->where('home.chat.recent.0.body', '確認をお願いします'),
         );
+
+    expect($todoCounterQueries)->toHaveCount(1);
 });
 
 test('project home activity query count does not grow with activity volume', function () {

@@ -2,6 +2,7 @@
 
 use App\Enums\TeamRole;
 use App\Events\DirectMessageCreated;
+use App\Http\Middleware\HandleInertiaRequests;
 use App\Models\BubbleUp;
 use App\Models\CardColumn;
 use App\Models\CardTable;
@@ -34,8 +35,9 @@ function basecampFiveWorkspace(): array
 
 test('global my bar exposes tasks events pings bubble ups and meeting reminder', function () {
     [$owner, $member, $team, $project] = basecampFiveWorkspace();
+    $project->favoritedBy()->attach($owner);
     $list = TodoList::factory()->for($project)->create();
-    Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->create([
+    $todo = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->create([
         'title' => '自分の任務',
         'assignee_id' => $owner->id,
     ]);
@@ -56,16 +58,90 @@ test('global my bar exposes tasks events pings bubble ups and meeting reminder',
         'remind_at' => now()->subMinute(),
     ]);
 
-    $this->actingAs($owner)
-        ->get(route('projects.documents.index', [$team, $project]))
+    $response = $this->actingAs($owner)
+        ->get(route('projects.documents.index', [$team, $project]));
+
+    $response
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
-            ->where('workspaceBar.tasks.0.title', '自分の任務')
-            ->where('workspaceBar.events.0.meetingUrl', 'https://meet.example.test/room')
-            ->where('workspaceBar.pings.0.body', '確認してください')
+            ->missing('workspaceBar.tasks')
+            ->missing('workspaceBar.events')
+            ->missing('workspaceBar.bookmarks')
+            ->missing('workspaceBar.pings')
+            ->missing('navigationPeople')
             ->where('workspaceBar.unreadPings', 1)
             ->where('workspaceBar.bubbleUps.0.due', true)
-            ->where('workspaceBar.reminder.title', 'まもなく始まる会議'));
+            ->where('workspaceBar.reminder.title', 'まもなく始まる会議')
+            ->reloadOnly([
+                'workspaceBar.tasks',
+                'workspaceBar.events',
+                'workspaceBar.bookmarks',
+                'workspaceBar.pings',
+                'navigationPeople',
+            ], fn (Assert $reload) => $reload
+                ->where('workspaceBar.tasks.0.title', '自分の任務')
+                ->where('workspaceBar.events.0.meetingUrl', 'https://meet.example.test/room')
+                ->where('workspaceBar.bookmarks.0.id', $project->id)
+                ->where('workspaceBar.pings.0.body', '確認してください')
+                ->where('navigationPeople.0.id', $member->id)));
+
+    $todo->update(['title' => '更新された任務']);
+    $this->withHeaders([
+        'X-Inertia' => 'true',
+        'X-Inertia-Version' => (string) app(HandleInertiaRequests::class)->version(request()),
+        'X-Inertia-Partial-Component' => 'projects/documents/Index',
+        'X-Inertia-Partial-Data' => 'workspaceBar.tasks',
+        'X-Inertia-Except-Once-Props' => "workspace.{$owner->id}.{$team->id}.tasks",
+    ])->get(route('projects.documents.index', [$team, $project]))
+        ->assertOk()
+        ->assertHeader('X-Inertia', 'true')
+        ->assertJsonPath('props.workspaceBar.tasks.0.title', '更新された任務');
+});
+
+test('lazy workspace props stay inside the route team', function () {
+    [$owner, $firstMember, $firstTeam, $firstProject] = basecampFiveWorkspace();
+    $firstMember->update(['name' => '第一チームの人']);
+    $firstList = TodoList::factory()->for($firstProject)->create();
+    Todo::factory()->for($firstList, 'todoList')->for($owner, 'creator')->create([
+        'title' => '第一チームの任務',
+        'assignee_id' => $owner->id,
+    ]);
+    DirectMessage::factory()->for($firstTeam)->create([
+        'sender_id' => $firstMember->id,
+        'recipient_id' => $owner->id,
+        'body' => '第一チームのPing',
+    ]);
+
+    $secondMember = User::factory()->create(['name' => '第二チームの人']);
+    $secondTeam = Team::factory()->create();
+    $secondTeam->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $secondTeam->members()->attach($secondMember, ['role' => TeamRole::Member->value]);
+    $secondProject = Project::factory()->for($secondTeam)->for($owner, 'creator')->create();
+    $secondProject->members()->attach($owner);
+    $secondList = TodoList::factory()->for($secondProject)->create();
+    Todo::factory()->for($secondList, 'todoList')->for($owner, 'creator')->create([
+        'title' => '第二チームの任務',
+        'assignee_id' => $owner->id,
+    ]);
+    DirectMessage::factory()->for($secondTeam)->create([
+        'sender_id' => $secondMember->id,
+        'recipient_id' => $owner->id,
+        'body' => '第二チームのPing',
+    ]);
+
+    $this->actingAs($owner)
+        ->get(route('projects.documents.index', [$secondTeam, $secondProject]))
+        ->assertInertia(fn (Assert $page) => $page->reloadOnly([
+            'workspaceBar.tasks',
+            'workspaceBar.pings',
+            'navigationPeople',
+        ], fn (Assert $reload) => $reload
+            ->where('workspaceBar.tasks.0.title', '第二チームの任務')
+            ->where('workspaceBar.pings.0.body', '第二チームのPing')
+            ->where('navigationPeople.0.name', '第二チームの人')
+            ->missing('workspaceBar.tasks.1')
+            ->missing('workspaceBar.pings.1')
+            ->missing('navigationPeople.1')));
 });
 
 test('pings and bubble ups stay inside the current team and user', function () {
@@ -96,6 +172,19 @@ test('pings and bubble ups stay inside the current team and user', function () {
 
     $this->patch(route('bubble-ups.complete', [$team, $bubbleUp]))->assertRedirect();
     expect($bubbleUp->fresh()->completed_at)->not->toBeNull();
+});
+
+test('ping broadcasts identify their team for persistent layouts', function () {
+    [$owner, $member, $team] = basecampFiveWorkspace();
+    $message = DirectMessage::factory()->for($team)->create([
+        'sender_id' => $owner->id,
+        'recipient_id' => $member->id,
+        'body' => 'このチームだけに表示する',
+    ]);
+
+    expect((new DirectMessageCreated($message))->broadcastWith())
+        ->teamId->toBe($team->id)
+        ->message->id->toBe($message->id);
 });
 
 test('new for you lets a recipient reply to a notification without leaving the page', function () {

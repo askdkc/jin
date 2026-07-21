@@ -961,5 +961,8 @@
     "Add extra details...": "補足を追加…",
     "The first question date must be one of the selected weekdays.": "初回の質問日は、選択した曜日のいずれかにしてください。",
     "No matching to-dos": "条件に一致する任務はありません",
-    "No notes": "備考はありません"
+    "No notes": "備考はありません",
+    "Could not load the editor.": "エディターを読み込めませんでした。",
+    "Could not load this panel.": "パネルを読み込めませんでした。",
+    "Retry": "再読み込み"
 }

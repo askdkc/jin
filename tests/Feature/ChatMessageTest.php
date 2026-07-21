@@ -11,6 +11,7 @@ use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Contracts\Broadcasting\ShouldRescue;
 use Illuminate\Contracts\Events\ShouldDispatchAfterCommit;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Inertia\Testing\AssertableInertia as Assert;
 
@@ -69,6 +70,67 @@ test('chat channels keep project conversations separate', function () {
             ->where('messages.0.body', '開発連絡')
             ->where('messages.0.channelId', $development->id),
         );
+});
+
+test('explicit chat channels do not initialize the default channel', function () {
+    $user = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($user, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($user, 'creator')->create();
+    $project->members()->attach($user);
+    $development = ChatChannel::factory()->for($project)->for($user, 'creator')->create(['name' => 'development']);
+    ChatMessage::factory()->for($project)->for($development, 'channel')->for($user)->create(['body' => '開発連絡']);
+
+    $this
+        ->actingAs($user)
+        ->get(route('projects.chat.show', [
+            'current_team' => $team,
+            'project' => $project,
+            'channel' => $development->id,
+        ]))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('channels', 1)
+            ->where('selectedChannel.id', $development->id),
+        );
+
+    $this
+        ->actingAs($user)
+        ->getJson(route('projects.chat.messages.index', [
+            'current_team' => $team,
+            'project' => $project,
+            'channel_id' => $development->id,
+        ]))
+        ->assertOk()
+        ->assertJsonCount(1, 'messages')
+        ->assertJsonPath('messages.0.body', '開発連絡');
+
+    expect($project->chatChannels()->where('name', 'general')->exists())->toBeFalse();
+});
+
+test('an existing default channel does not rerun the legacy message repair', function () {
+    $user = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($user, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($user, 'creator')->create();
+    $project->members()->attach($user);
+    ChatChannel::factory()->for($project)->for($user, 'creator')->create(['name' => 'general']);
+
+    DB::flushQueryLog();
+    DB::enableQueryLog();
+
+    $response = $this
+        ->actingAs($user)
+        ->getJson(route('projects.chat.messages.index', [$team, $project]));
+
+    $queries = DB::getQueryLog();
+    DB::disableQueryLog();
+
+    $response->assertOk();
+
+    expect(collect($queries)->contains(
+        fn (array $query): bool => preg_match('/^update\s+[`"]?chat_messages[`"]?/i', $query['query']) === 1,
+    ))->toBeFalse();
 });
 
 test('project participants can create chat channels', function () {

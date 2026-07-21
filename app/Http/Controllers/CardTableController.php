@@ -27,9 +27,15 @@ use Inertia\Response;
 
 class CardTableController extends Controller
 {
+    private const POSITION_UPDATE_CHUNK_SIZE = 250;
+
     public function index(Team $currentTeam, Project $project): Response
     {
         Gate::authorize('view', $project);
+
+        $userId = request()->user()->id;
+        // Every delete policy below delegates to the same project permission.
+        $canManageProject = Gate::allows('update', $project);
 
         $tables = $project->cardTables()
             ->with(['cardColumns' => fn ($columnQuery) => $columnQuery
@@ -42,13 +48,13 @@ class CardTableController extends Controller
             ->map(fn (CardTable $cardTable): array => [
                 'id' => $cardTable->id,
                 'name' => $cardTable->name,
-                'canDelete' => Gate::allows('delete', $cardTable),
+                'canDelete' => $canManageProject,
                 'columns' => $cardTable->cardColumns->map(fn (CardColumn $cardColumn): array => [
                     'id' => $cardColumn->id,
                     'name' => $cardColumn->name,
                     'position' => $cardColumn->position,
                     'collapsed' => $cardColumn->is_collapsed,
-                    'canDelete' => Gate::allows('delete', $cardTable),
+                    'canDelete' => $canManageProject,
                     'cards' => $cardColumn->cards->map(fn (Card $card): array => [
                         'id' => $card->id,
                         'title' => $card->title,
@@ -59,8 +65,7 @@ class CardTableController extends Controller
                         'dueOn' => $card->due_on?->toDateString(),
                         'position' => $card->position,
                         'version' => $card->version,
-                        'canDelete' => $card->created_by === request()->user()->id
-                            || Gate::allows('delete', $cardTable),
+                        'canDelete' => $card->created_by === $userId || $canManageProject,
                     ])->all(),
                 ])->all(),
             ]);
@@ -333,17 +338,51 @@ class CardTableController extends Controller
     /** @param Collection<int, int> $columnIds */
     private function normalizeColumnPositions(Collection $columnIds): void
     {
-        $columnIds->each(function (int $columnId, int $position): void {
-            CardColumn::query()->whereKey($columnId)->update(['position' => $position]);
-        });
+        if ($columnIds->isEmpty()) {
+            return;
+        }
+
+        $this->updatePositions('card_columns', $columnIds);
     }
 
     /** @param Collection<int, int> $cardIds */
     private function normalizeCardPositions(Collection $cardIds): void
     {
-        $cardIds->each(function (int $cardId, int $position): void {
-            Card::query()->whereKey($cardId)->update(['position' => $position]);
-        });
+        if ($cardIds->isEmpty()) {
+            return;
+        }
+
+        $this->updatePositions('cards', $cardIds);
+    }
+
+    /** @param Collection<int, int> $ids */
+    private function updatePositions(string $tableName, Collection $ids): void
+    {
+        $connection = DB::connection();
+        $grammar = $connection->getQueryGrammar();
+        $table = $grammar->wrapTable($tableName);
+        $idColumn = $grammar->wrap('id');
+        $positionColumn = $grammar->wrap('position');
+        $updatedAtColumn = $grammar->wrap('updated_at');
+
+        foreach ($ids->chunk(self::POSITION_UPDATE_CHUNK_SIZE) as $chunk) {
+            $caseClauses = implode(' ', array_fill(0, $chunk->count(), 'WHEN ? THEN ?'));
+            $wherePlaceholders = implode(', ', array_fill(0, $chunk->count(), '?'));
+
+            // Bind every value: only hard-coded, grammar-quoted identifiers enter SQL.
+            // CASE is update-only, so a concurrent delete cannot recreate a row.
+            $sql = "UPDATE {$table} SET {$positionColumn} = CASE {$idColumn} {$caseClauses} ELSE {$positionColumn} END, {$updatedAtColumn} = ? WHERE {$idColumn} IN ({$wherePlaceholders})";
+            $caseBindings = $chunk
+                ->flatMap(fn (int $id, int $position): array => [$id, $position])
+                ->values()
+                ->all();
+
+            $connection->update($sql, [
+                ...$caseBindings,
+                now(),
+                ...$chunk->values()->all(),
+            ]);
+        }
     }
 
     /** @throws ValidationException */

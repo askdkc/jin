@@ -38,12 +38,14 @@ class DirectMessageCreated implements ShouldBroadcast, ShouldDispatchAfterCommit
         return 'ping.created';
     }
 
-    /** @return array{message: array<string, mixed>} */
+    /** @return array{teamId: int, message: array<string, mixed>} */
     public function broadcastWith(): array
     {
         $this->message->loadMissing(['sender:id,name', 'recipient:id,name']);
 
         return [
+            // A user's broadcast channel spans teams, so persistent layouts need this boundary.
+            'teamId' => $this->message->team_id,
             'message' => [
                 'id' => $this->message->id,
                 'body' => $this->message->body,

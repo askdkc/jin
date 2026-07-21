@@ -126,6 +126,12 @@
                 .some((value) => value!.toLocaleLowerCase().includes(query)),
         );
     };
+    // Filtering changes display indexes, but the move API stores positions in
+    // the complete column, so drag targets must use the original card array.
+    const originalCardPosition = (
+        column: ProjectCardColumn,
+        cardId: number,
+    ): number => column.cards.findIndex((card) => card.id === cardId);
 
     let filterText = $state('');
     let createDialogOpen = $state(false);
@@ -203,6 +209,7 @@
         cardId: number,
         version: number,
     ): void => {
+        // The server treats version as a compare-and-swap guard against stale moves.
         draggedCard = { tableId, columnId, cardId, version };
 
         if (event.dataTransfer) {
@@ -486,6 +493,8 @@
                             class="flex min-h-[35rem] items-stretch overflow-x-auto"
                         >
                             {#each table.columns as column, columnIndex (column.id)}
+                                {@const visibleColumnCards =
+                                    visibleCards(column)}
                                 <section
                                     class={cn(
                                         'relative shrink-0 border-r last:border-r-0',
@@ -540,7 +549,7 @@
                                             <span
                                                 class="text-xs text-muted-foreground"
                                             >
-                                                {visibleCards(column).length}
+                                                {visibleColumnCards.length}
                                             </span>
                                             <h2
                                                 id={`column-${column.id}`}
@@ -565,8 +574,7 @@
                                                     <span
                                                         class="font-normal text-muted-foreground"
                                                     >
-                                                        ({visibleCards(column)
-                                                            .length})
+                                                        ({visibleColumnCards.length})
                                                     </span>
                                                 </h2>
                                                 <div
@@ -830,7 +838,7 @@
                                             <div
                                                 class="flex flex-1 flex-col gap-2 px-3 pb-4"
                                             >
-                                                {#each visibleCards(column) as card (card.id)}
+                                                {#each visibleColumnCards as card (card.id)}
                                                     <article
                                                         class="group rounded-lg border bg-card shadow-sm"
                                                         draggable="true"
@@ -855,10 +863,9 @@
                                                                 event,
                                                                 table.id,
                                                                 column.id,
-                                                                column.cards.findIndex(
-                                                                    (item) =>
-                                                                        item.id ===
-                                                                        card.id,
+                                                                originalCardPosition(
+                                                                    column,
+                                                                    card.id,
                                                                 ),
                                                             )}
                                                     >
@@ -955,7 +962,7 @@
                                                     </button>
                                                 {/each}
 
-                                                {#if visibleCards(column).length > 0}
+                                                {#if visibleColumnCards.length > 0}
                                                     <button
                                                         type="button"
                                                         class="min-h-14 rounded-md border border-dashed text-sm text-muted-foreground hover:bg-accent"

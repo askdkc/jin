@@ -20,12 +20,21 @@ class ProjectTimeEntryController extends Controller
         Gate::authorize('view', $project);
         abort_unless($project->usesTool('timesheets'), 404);
 
+        // Every row belongs to this route-bound project, so evaluate management access once.
+        $canManageProject = Gate::allows('update', $project);
+        $userId = $request->user()->id;
+
+        // Keep the all-time total independent from the current 30-row page.
+        $totalMinutes = (int) $project->timeEntries()->sum('minutes');
+
         $entries = $project->timeEntries()
+            ->select(['id', 'project_id', 'user_id', 'todo_id', 'worked_on', 'minutes', 'notes'])
             ->with(['user:id,name', 'todo:id,title'])
             ->latest('worked_on')
             ->latest('id')
-            ->get()
-            ->map(fn (TimeEntry $entry): array => [
+            ->paginate(30)
+            ->withQueryString()
+            ->through(fn (TimeEntry $entry): array => [
                 'id' => $entry->id,
                 'workedOn' => $entry->worked_on->toDateString(),
                 'minutes' => $entry->minutes,
@@ -33,12 +42,12 @@ class ProjectTimeEntryController extends Controller
                 'userId' => $entry->user_id,
                 'userName' => $entry->user->name,
                 'todoTitle' => $entry->todo?->title,
-                'canDelete' => $entry->user_id === $request->user()->id || Gate::allows('update', $project),
+                'canDelete' => $entry->user_id === $userId || $canManageProject,
             ]);
 
         $todos = Todo::query()
             ->whereNull('parent_id')
-            ->whereHas('todoList', fn ($query) => $query->where('project_id', $project->id))
+            ->whereIn('todo_list_id', $project->todoLists()->select('id'))
             ->orderBy('title')
             ->get(['id', 'title'])
             ->map(fn (Todo $todo): array => ['id' => $todo->id, 'name' => $todo->title]);
@@ -47,7 +56,7 @@ class ProjectTimeEntryController extends Controller
             'project' => ['id' => $project->id, 'name' => $project->name],
             'entries' => $entries,
             'todos' => $todos,
-            'totalMinutes' => $entries->sum('minutes'),
+            'totalMinutes' => $totalMinutes,
         ]);
     }
 
@@ -60,7 +69,8 @@ class ProjectTimeEntryController extends Controller
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Time entry saved.')]);
 
-        return back();
+        // A new entry sorts to page 1, so do not leave it invisible on a later page.
+        return to_route('projects.time-entries.index', [$currentTeam, $project]);
     }
 
     public function destroy(Request $request, Team $currentTeam, Project $project, TimeEntry $timeEntry): RedirectResponse
@@ -73,6 +83,7 @@ class ProjectTimeEntryController extends Controller
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Time entry deleted.')]);
 
-        return back();
+        // Deletion can empty the final page; return to a valid first page.
+        return to_route('projects.time-entries.index', [$currentTeam, $project]);
     }
 }

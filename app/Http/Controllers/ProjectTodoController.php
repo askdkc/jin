@@ -34,15 +34,11 @@ class ProjectTodoController extends Controller
         Gate::authorize('view', $project);
 
         $canManageProject = Gate::allows('update', $project);
+        // The board renders summaries only; detail relations are loaded by show().
         $lists = $project->todoLists()
             ->with(['todos' => fn ($query) => $query
-                ->with([
-                    'assignee:id,name',
-                    'creator:id,name',
-                    'comments' => fn ($commentQuery) => $commentQuery->with('user:id,name')->oldest(),
-                    'subtasks' => fn ($subtaskQuery) => $subtaskQuery->orderBy('position'),
-                    'attachments' => fn ($attachmentQuery) => $attachmentQuery->with('uploader:id,name')->oldest(),
-                ])
+                ->select(['id', 'todo_list_id', 'title', 'assignee_id', 'due_on', 'completed_at', 'position'])
+                ->with('assignee:id,name')
                 ->whereNull('parent_id')
                 ->orderBy('position')])
             ->orderByDesc('is_loose')
@@ -54,11 +50,13 @@ class ProjectTodoController extends Controller
                 'isLoose' => $list->is_loose,
                 'canDelete' => $canManageProject,
                 'todos' => $list->todos
-                    ->map(fn (Todo $todo): array => $this->todoData(
-                        $todo,
-                        $canManageProject,
-                        request()->user()->id,
-                    ))
+                    ->map(fn (Todo $todo): array => [
+                        'id' => $todo->id,
+                        'title' => $todo->title,
+                        'completed' => $todo->completed_at !== null,
+                        'assigneeName' => $todo->assignee?->name,
+                        'dueOn' => $todo->due_on?->toDateString(),
+                    ])
                     ->all(),
             ]);
 

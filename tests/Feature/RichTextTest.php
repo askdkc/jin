@@ -175,7 +175,7 @@ it('expands the message comment editor only when requested', function () {
         ->toContain('onSuccess={() => (commentComposerOpen = false)}')
         ->toContain('onclick={() =>')
         ->toContain('(commentComposerOpen = false)')
-        ->toContain("[&_trix-editor.rich-text-editor]:!min-h-56")
+        ->toContain('[&_trix-editor.rich-text-editor]:!min-h-56')
         ->toContain("{t('Add your comment…')}");
 });
 
@@ -211,9 +211,13 @@ it('switches every rich text editor between rich text and Markdown without chang
         ->toContain('Trix.config.blockAttributes[`heading${level}`]')
         ->toContain('<ToggleGroup.Root')
         ->toContain('onValueChange={setMode}')
+        ->toContain('getStringAtRange([blockStart, position])')
         ->toContain("if (nextMode === 'markdown')")
         ->toContain('markdownValue = htmlToMarkdown(hiddenInput.value)')
-        ->toContain('hiddenInput.value = markdownToHtml(markdownValue)')
+        ->toContain('const html = markdownToHtml(markdownValue)')
+        ->toContain('hiddenInput.value = html')
+        ->toContain("form?.addEventListener('submit', syncMarkdownBeforeSubmit, true)")
+        ->toContain("form?.removeEventListener('submit', syncMarkdownBeforeSubmit, true)")
         ->toContain('editor.editor?.loadHTML(html)')
         ->toContain('<textarea')
         ->toContain('oninput={updateMarkdown}')
@@ -221,6 +225,7 @@ it('switches every rich text editor between rich text and Markdown without chang
         ->toContain('rich-text-editor-insert-tools')
         ->toContain('rich-text-editor-mode-tools')
         ->toMatch('/<input\s+[^>]*type="hidden"[^>]*\{name\}[^>]*>/s')
+        ->not->toContain('getDocument().toString().slice')
         ->not->toContain('Rich text mode')
         ->not->toContain("{t('Markdown supported')}");
 

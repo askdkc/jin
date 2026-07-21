@@ -36,7 +36,7 @@ declare module '@inertiajs/core' {
                 unreadCount: number;
             };
             navigationProjects: ProjectTool[];
-            navigationPeople: ChatUser[];
+            navigationPeople?: ChatUser[];
             workspaceBar: WorkspaceBar;
             [key: string]: unknown;
         };

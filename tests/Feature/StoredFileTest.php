@@ -284,6 +284,12 @@ test('deleting a stored file removes its blobs and comments without breaking act
         $storedFile,
         $storedFile->original_name,
     );
+    $otherProject = Project::factory()->for(Team::factory())->for($owner, 'creator')->create();
+    $unrelatedActivity = Activity::factory()->for($otherProject)->for($owner, 'actor')->create([
+        'subject_type' => $storedFile->getMorphClass(),
+        'subject_id' => $storedFile->id,
+        'metadata' => ['label' => '別案件の履歴'],
+    ]);
     Storage::disk('local')->put(
         StoredFilePreviewGenerator::cachedPdfPath($storedFile->id, $storedFile->path),
         'converted pdf content',
@@ -300,7 +306,8 @@ test('deleting a stored file removes its blobs and comments without breaking act
     expect(StoredFile::query()->count())->toBe(0)
         ->and($comment->fresh())->toBeNull()
         ->and($activity->fresh())->not->toBeNull()
-        ->and($activity->fresh()?->metadata['subjectDeleted'])->toBeTrue();
+        ->and($activity->fresh()?->metadata['subjectDeleted'])->toBeTrue()
+        ->and($unrelatedActivity->fresh()?->metadata)->toBe(['label' => '別案件の履歴']);
 
     $this->get(route('activity.index', $team))
         ->assertInertia(fn (Assert $page) => $page

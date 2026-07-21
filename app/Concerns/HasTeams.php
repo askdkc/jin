@@ -98,6 +98,7 @@ trait HasTeams
      */
     public function belongsToTeam(Team $team): bool
     {
+        // Membership changes can happen before this model is reloaded, so authorization uses fresh DB state.
         return $this->teams()->where('teams.id', $team->id)->exists();
     }
 
@@ -122,9 +123,11 @@ trait HasTeams
      */
     public function teamRole(Team $team): ?TeamRole
     {
-        return $this->teamMemberships()
-            ->where('team_id', $team->id)
-            ->first()
+        // Cache memberships on this request's model; refresh/unset the relation after mutating them.
+        $this->loadMissing('teamMemberships');
+
+        return $this->teamMemberships
+            ->first(fn (Membership $membership): bool => $membership->team_id === $team->id)
             ?->role;
     }
 

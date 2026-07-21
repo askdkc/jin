@@ -80,18 +80,30 @@
         { value: 6, label: 'Sat' },
         { value: 7, label: 'Sun' },
     ];
+    const dateFormatters: Record<string, Intl.DateTimeFormat> = {};
+    const dateFormatterFor = (timezone: string): Intl.DateTimeFormat => {
+        const cached = dateFormatters[timezone];
+
+        if (cached) {
+            return cached;
+        }
+
+        // Intl formatter construction is comparatively expensive on response lists.
+        const formatter = new Intl.DateTimeFormat('ja-JP', {
+            timeZone: timezone,
+            dateStyle: 'medium',
+            timeStyle: 'short',
+        });
+        dateFormatters[timezone] = formatter;
+
+        return formatter;
+    };
 
     const formatDate = (
         value: string | null,
         timezone = 'Asia/Tokyo',
     ): string =>
-        value
-            ? new Intl.DateTimeFormat('ja-JP', {
-                  timeZone: timezone,
-                  dateStyle: 'medium',
-                  timeStyle: 'short',
-              }).format(new Date(value))
-            : '';
+        value ? dateFormatterFor(timezone).format(new Date(value)) : '';
     const frequencyLabel = (checkIn: CheckInSchedule): string =>
         checkIn.frequency === 'daily'
             ? `${t('Daily')}（${checkIn.weekdays
@@ -104,8 +116,17 @@
                   )
                   .join('・')}）`
             : t(checkIn.frequency === 'weekly' ? 'Weekly' : 'Monthly');
-    const responsesFor = (checkInId: number): CheckInResponse[] =>
-        responses.filter((response) => response.checkInId === checkInId);
+    // Build the lookup once when the response prop changes instead of scanning
+    // the entire response list for every check-in rendered below.
+    const responsesByCheckIn = $derived.by(() => {
+        const grouped: Record<number, CheckInResponse[]> = {};
+
+        for (const response of responses) {
+            (grouped[response.checkInId] ??= []).push(response);
+        }
+
+        return grouped;
+    });
     const memberInitial = (name: string | null): string =>
         name?.trim().slice(0, 1).toLocaleUpperCase('ja-JP') || '?';
 </script>
@@ -223,7 +244,8 @@
                 {:else}
                     <div class="grid gap-4">
                         {#each checkIns as checkIn (checkIn.id)}
-                            {@const checkInResponses = responsesFor(checkIn.id)}
+                            {@const checkInResponses =
+                                responsesByCheckIn[checkIn.id] ?? []}
                             <article
                                 class="rounded-xl border p-5 sm:p-6"
                                 class:opacity-75={checkIn.paused}

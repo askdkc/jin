@@ -51,9 +51,12 @@ test('project participants can create and view card tables columns and cards', f
         ->assertInertia(fn (Assert $page) => $page
             ->component('projects/card-tables/Index')
             ->where('tables.0.name', 'リリース準備')
+            ->where('tables.0.canDelete', false)
             ->where('tables.0.columns.0.name', '未着手')
+            ->where('tables.0.columns.0.canDelete', false)
             ->where('tables.0.columns.0.cards.0.title', 'モバイル表示を確認する')
             ->where('tables.0.columns.0.cards.0.assigneeName', 'カード担当')
+            ->where('tables.0.columns.0.cards.0.canDelete', true)
             ->where('tables.0.columns.0.cards.0.version', 1));
 
     $this->get(route('projects.show', [$team, $project]))
@@ -229,4 +232,36 @@ test('card columns can be reordered with normalized positions', function () {
     expect($third->fresh()->position)->toBe(0)
         ->and($first->fresh()->position)->toBe(1)
         ->and($second->fresh()->position)->toBe(2);
+});
+
+test('large card column reorders stay normalized across update chunks', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $cardTable = CardTable::factory()->for($project)->create();
+    $timestamp = now();
+
+    collect(range(0, 250))->chunk(100)->each(function ($positions) use ($cardTable, $timestamp): void {
+        CardColumn::query()->insert($positions->map(fn (int $position): array => [
+            'card_table_id' => $cardTable->id,
+            'name' => "Column {$position}",
+            'position' => $position,
+            'created_at' => $timestamp,
+            'updated_at' => $timestamp,
+        ])->all());
+    });
+
+    $last = $cardTable->cardColumns()->orderByDesc('position')->firstOrFail();
+
+    $this->actingAs($owner)
+        ->patch(route('projects.card-columns.move', [$team, $project, $cardTable, $last]), [
+            'target_position' => 0,
+        ])
+        ->assertRedirect();
+
+    $ordered = $cardTable->cardColumns()->orderBy('position')->orderBy('id')->get(['id', 'position']);
+
+    expect($ordered->first()->id)->toBe($last->id)
+        ->and($ordered->pluck('position')->all())->toBe(range(0, 250));
 });

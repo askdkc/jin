@@ -15,7 +15,10 @@ return new class extends Migration
             $table->string('reaction', 20);
             $table->timestamps();
 
-            $table->unique(['message_board_post_id', 'user_id']);
+            $table->unique(
+                ['message_board_post_id', 'user_id'],
+                'message_board_reactions_post_user_unique',
+            );
         });
     }
 

@@ -44,6 +44,7 @@ class StoreCheckInRequest extends FormRequest
                 Rule::requiredIf($isDaily),
                 'array',
                 'min:1',
+                'max:7',
             ],
             'weekdays.*' => ['integer', 'distinct', Rule::in(range(1, 7))],
             'timezone' => ['required', 'timezone'],

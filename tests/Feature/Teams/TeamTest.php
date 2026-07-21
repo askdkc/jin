@@ -3,6 +3,7 @@
 use App\Enums\TeamRole;
 use App\Models\Team;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Inertia\Testing\AssertableInertia as Assert;
 
 test('the teams index page can be rendered', function () {
@@ -13,6 +14,36 @@ test('the teams index page can be rendered', function () {
         ->get(route('teams.index'));
 
     $response->assertOk();
+});
+
+test('serializing teams loads membership roles with a constant query count', function () {
+    $user = User::factory()->create();
+    $teams = Team::factory()->count(3)->create();
+
+    foreach ($teams as $team) {
+        $team->members()->attach($user, ['role' => TeamRole::Member->value]);
+    }
+
+    $user = $user->fresh();
+    DB::flushQueryLog();
+    DB::enableQueryLog();
+
+    $userTeams = $user->toUserTeams(includeCurrent: true);
+    $queryCount = count(DB::getQueryLog());
+
+    DB::disableQueryLog();
+
+    expect($userTeams)->toHaveCount(4)
+        ->and($queryCount)->toBe(2);
+});
+
+test('membership authorization ignores a stale role relation', function () {
+    $user = User::factory()->create();
+    $user->teamRole($user->currentTeam);
+    $team = Team::factory()->create();
+    $team->members()->attach($user, ['role' => TeamRole::Member->value]);
+
+    expect($user->belongsToTeam($team))->toBeTrue();
 });
 
 test('teams can be created', function () {

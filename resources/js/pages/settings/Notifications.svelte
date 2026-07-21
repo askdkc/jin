@@ -90,8 +90,12 @@
         <AlertDescription>
             <p>
                 {form.enabled
-                    ? t('You will receive notifications using the channels selected below.')
-                    : t('Mentions, activity notifications, and reminder notifications are paused.')}
+                    ? t(
+                          'You will receive notifications using the channels selected below.',
+                      )
+                    : t(
+                          'Mentions, activity notifications, and reminder notifications are paused.',
+                      )}
             </p>
             <Button
                 type="button"
@@ -117,19 +121,19 @@
                     value="everything"
                 />
                 <span>
-                    <span class="option-title">{t('Notify me about everything')}</span>
+                    <span class="option-title"
+                        >{t('Notify me about everything')}</span
+                    >
                     <span class="option-description">
-                        {t('Includes comments, assignments, completions, and mentions.')}
+                        {t(
+                            'Includes comments, assignments, completions, and mentions.',
+                        )}
                     </span>
                 </span>
             </label>
 
             <label class="option-row">
-                <input
-                    type="radio"
-                    bind:group={form.scope}
-                    value="mentions"
-                />
+                <input type="radio" bind:group={form.scope} value="mentions" />
                 <span>
                     <span class="option-title">
                         {t('Only notify me about direct messages and mentions')}
@@ -153,7 +157,9 @@
                             {t('Show upcoming event reminders')}
                         </span>
                         <span class="option-description">
-                            {t('Shows a reminder in the workspace bar shortly before an event starts.')}
+                            {t(
+                                'Shows a reminder in the workspace bar shortly before an event starts.',
+                            )}
                         </span>
                     </span>
                 </label>
@@ -167,7 +173,9 @@
                             {t('Notify me about upcoming assignments')}
                         </span>
                         <span class="option-description">
-                            {t('Sends an in-app or email reminder when an assigned to-do is due.')}
+                            {t(
+                                'Sends an in-app or email reminder when an assigned to-do is due.',
+                            )}
                         </span>
                     </span>
                 </label>
@@ -180,7 +188,9 @@
             <label class="option-row">
                 <input type="checkbox" bind:checked={form.email} />
                 <span>
-                    <span class="option-title">{t('Send me email notifications')}</span>
+                    <span class="option-title"
+                        >{t('Send me email notifications')}</span
+                    >
                     <span class="option-description">
                         {t('Email follows the work-hours schedule below.')}
                     </span>
@@ -190,22 +200,27 @@
             <label class="option-row">
                 <input type="checkbox" bind:checked={form.in_app} />
                 <span>
-                    <span class="option-title">{t('Keep notifications in the app')}</span>
+                    <span class="option-title"
+                        >{t('Keep notifications in the app')}</span
+                    >
                     <span class="option-description">
-                        {t('The in-app inbox stays available outside work hours.')}
+                        {t(
+                            'The in-app inbox stays available outside work hours.',
+                        )}
                     </span>
                 </span>
             </label>
 
             <label class="option-row">
-                <input
-                    type="checkbox"
-                    bind:checked={form.show_unread_count}
-                />
+                <input type="checkbox" bind:checked={form.show_unread_count} />
                 <span>
-                    <span class="option-title">{t('Show the number of unread items')}</span>
+                    <span class="option-title"
+                        >{t('Show the number of unread items')}</span
+                    >
                     <span class="option-description">
-                        {t('Display an unread badge in the header and sidebar.')}
+                        {t(
+                            'Display an unread badge in the header and sidebar.',
+                        )}
                     </span>
                 </span>
             </label>
@@ -215,11 +230,7 @@
             <legend class="section-heading">{t('When?')}</legend>
 
             <label class="option-row">
-                <input
-                    type="radio"
-                    bind:group={form.schedule}
-                    value="always"
-                />
+                <input type="radio" bind:group={form.schedule} value="always" />
                 <span class="option-title">{t('Always')}</span>
             </label>
 
@@ -230,9 +241,13 @@
                     value="work_hours"
                 />
                 <span>
-                    <span class="option-title">{t('Only during my work hours')}</span>
+                    <span class="option-title"
+                        >{t('Only during my work hours')}</span
+                    >
                     <span class="option-description">
-                        {t('Outside these hours, email is not sent while in-app notifications remain available.')}
+                        {t(
+                            'Outside these hours, email is not sent while in-app notifications remain available.',
+                        )}
                     </span>
                 </span>
             </label>

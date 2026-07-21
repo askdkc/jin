@@ -39,6 +39,14 @@
     import { t } from '@/lib/i18n';
     import type { ProjectTodo, ProjectTodoList, TodoMember } from '@/types';
 
+    type ProjectTodoSummary = Pick<
+        ProjectTodo,
+        'id' | 'title' | 'completed' | 'assigneeName' | 'dueOn'
+    >;
+    type ProjectTodoSummaryList = Omit<ProjectTodoList, 'todos'> & {
+        todos: ProjectTodoSummary[];
+    };
+
     let {
         currentTeam,
         project,
@@ -47,7 +55,7 @@
     }: {
         currentTeam: Team;
         project: ProjectTool;
-        lists: ProjectTodoList[];
+        lists: ProjectTodoSummaryList[];
         members: TodoMember[];
     } = $props();
 
@@ -64,7 +72,9 @@
 
     const confirmDelete = (): boolean =>
         window.confirm(t('Are you sure you want to delete this?'));
-    const visibleTodos = (list: ProjectTodoList): ProjectTodo[] => {
+    const visibleTodos = (
+        list: ProjectTodoSummaryList,
+    ): ProjectTodoSummary[] => {
         const query = filter.trim().toLocaleLowerCase();
 
         return list.todos.filter(
@@ -75,8 +85,6 @@
                     todo.assigneeName?.toLocaleLowerCase().includes(query)),
         );
     };
-    const todoPosition = (list: ProjectTodoList, todo: ProjectTodo): number =>
-        list.todos.findIndex((candidate) => candidate.id === todo.id);
     const openAddForm = (listId: number): void => {
         showListForm = false;
         addFormListId = listId;
@@ -233,6 +241,10 @@
     {:else}
         <div class="mt-8 space-y-10">
             {#each lists as list (list.id)}
+                {@const visibleListTodos = visibleTodos(list)}
+                {@const todoPositions = new Map(
+                    list.todos.map((todo, index) => [todo.id, index] as const),
+                )}
                 <section
                     aria-label={list.title}
                     ondragover={allowDrop}
@@ -287,17 +299,14 @@
                     {/if}
 
                     <div class="space-y-1" role="list">
-                        {#each visibleTodos(list) as todo (todo.id)}
+                        {#each visibleListTodos as todo (todo.id)}
+                            {@const position = todoPositions.get(todo.id) ?? 0}
                             <div
                                 role="listitem"
                                 class="group flex min-w-0 items-start gap-2 rounded-md px-1 py-1.5 hover:bg-muted/50"
                                 ondragover={allowDrop}
                                 ondrop={(event) =>
-                                    dropTodo(
-                                        event,
-                                        list.id,
-                                        todoPosition(list, todo),
-                                    )}
+                                    dropTodo(event, list.id, position)}
                             >
                                 <button
                                     type="button"
@@ -396,10 +405,7 @@
                                                         type="hidden"
                                                         name="target_position"
                                                         value={Math.max(
-                                                            todoPosition(
-                                                                list,
-                                                                todo,
-                                                            ) - 1,
+                                                            position - 1,
                                                             0,
                                                         )}
                                                     />
@@ -408,10 +414,7 @@
                                                         variant="outline"
                                                         size="sm"
                                                         disabled={processing ||
-                                                            todoPosition(
-                                                                list,
-                                                                todo,
-                                                            ) === 0}
+                                                            position === 0}
                                                     >
                                                         {t('Move up')}
                                                     </Button>
@@ -438,20 +441,14 @@
                                                     <input
                                                         type="hidden"
                                                         name="target_position"
-                                                        value={todoPosition(
-                                                            list,
-                                                            todo,
-                                                        ) + 1}
+                                                        value={position + 1}
                                                     />
                                                     <Button
                                                         type="submit"
                                                         variant="outline"
                                                         size="sm"
                                                         disabled={processing ||
-                                                            todoPosition(
-                                                                list,
-                                                                todo,
-                                                            ) ===
+                                                            position ===
                                                                 list.todos
                                                                     .length -
                                                                     1}
@@ -509,7 +506,7 @@
                         {/each}
                     </div>
 
-                    {#if filter && visibleTodos(list).length === 0}
+                    {#if filter && visibleListTodos.length === 0}
                         <p class="pl-7 text-sm text-muted-foreground">
                             {t('No matching to-dos')}
                         </p>

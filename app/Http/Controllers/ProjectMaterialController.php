@@ -28,11 +28,14 @@ class ProjectMaterialController extends Controller
         $type = $filters['type'] ?? null;
         $folderId = isset($filters['folder']) ? (int) $filters['folder'] : null;
         $updaterId = isset($filters['updater']) ? (int) $filters['updater'] : null;
+        $userId = $request->user()->id;
         $canManageProject = Gate::allows('update', $project);
         $items = collect();
 
         if ($type === null || $type === 'document') {
             $items = $items->concat($project->documents()
+                // The material list does not need the potentially large rich-text body.
+                ->select(['id', 'project_id', 'material_folder_id', 'created_by', 'title', 'updated_at'])
                 ->with(['creator:id,name', 'materialFolder:id,name'])
                 ->when(
                     $folderId !== null,
@@ -51,12 +54,13 @@ class ProjectMaterialController extends Controller
                     'updaterId' => $document->created_by,
                     'updaterName' => $document->creator?->name,
                     'updatedAt' => $document->updated_at?->toISOString(),
-                    'canDelete' => $canManageProject || $document->created_by === request()->user()->id,
+                    'canDelete' => $canManageProject || $document->created_by === $userId,
                 ]));
         }
 
         if ($type === null || $type === 'file') {
             $items = $items->concat($project->storedFiles()
+                ->select(['id', 'project_id', 'material_folder_id', 'uploaded_by', 'original_name', 'updated_at'])
                 ->inMaterialLibrary()
                 ->with(['uploader:id,name', 'materialFolder:id,name'])
                 ->when(
@@ -76,12 +80,13 @@ class ProjectMaterialController extends Controller
                     'updaterId' => $file->uploaded_by,
                     'updaterName' => $file->uploader?->name,
                     'updatedAt' => $file->updated_at?->toISOString(),
-                    'canDelete' => $canManageProject || $file->uploaded_by === request()->user()->id,
+                    'canDelete' => $canManageProject || $file->uploaded_by === $userId,
                 ]));
         }
 
         if ($type === null || $type === 'link') {
             $items = $items->concat($project->externalLinks()
+                ->select(['id', 'project_id', 'material_folder_id', 'created_by', 'title', 'url', 'updated_at'])
                 ->with(['creator:id,name', 'materialFolder:id,name'])
                 ->when(
                     $folderId !== null,
@@ -100,7 +105,7 @@ class ProjectMaterialController extends Controller
                     'updaterId' => $link->created_by,
                     'updaterName' => $link->creator?->name,
                     'updatedAt' => $link->updated_at?->toISOString(),
-                    'canDelete' => $canManageProject || $link->created_by === request()->user()->id,
+                    'canDelete' => $canManageProject || $link->created_by === $userId,
                 ]));
         }
 
@@ -108,6 +113,7 @@ class ProjectMaterialController extends Controller
             'project' => ['id' => $project->id, 'name' => $project->name],
             'items' => $items->sortByDesc('updatedAt')->values(),
             'folders' => $project->materialFolders()
+                ->select(['id', 'project_id', 'created_by', 'name', 'position'])
                 ->withCount([
                     'documents',
                     'storedFiles' => fn ($query) => $query->inMaterialLibrary(),
@@ -121,7 +127,8 @@ class ProjectMaterialController extends Controller
                     'itemCount' => (int) $folder->documents_count
                         + (int) $folder->stored_files_count
                         + (int) $folder->external_links_count,
-                    'canDelete' => Gate::allows('delete', $folder),
+                    // Folder deletion follows the same creator-or-project-manager policy.
+                    'canDelete' => $folder->created_by === $userId || $canManageProject,
                 ]),
             'members' => $project->members()
                 ->orderBy('name')

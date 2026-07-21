@@ -250,7 +250,9 @@ test('material library combines documents files and links and applies its filter
             ->has('items', 1)
             ->where('items.0.type', 'link')
             ->where('items.0.title', '共有リンク')
+            ->where('items.0.canDelete', true)
             ->where('folders.0.itemCount', 2)
+            ->where('folders.0.canDelete', true)
             ->has('members', 2));
 
     $this->actingAs($member)

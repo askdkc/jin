@@ -32,7 +32,7 @@
 </script>
 
 <script lang="ts">
-    import { Form } from '@inertiajs/svelte';
+    import { Form, Link } from '@inertiajs/svelte';
     import ExternalLink from 'lucide-svelte/icons/external-link';
     import Globe2 from 'lucide-svelte/icons/globe-2';
     import AttachmentController from '@/actions/App/Http/Controllers/AttachmentController';
@@ -51,7 +51,7 @@
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
     import { t } from '@/lib/i18n';
-    import type { ProjectDocument, TodoMember } from '@/types';
+    import type { Paginated, ProjectDocument, TodoMember } from '@/types';
 
     let {
         currentTeam,
@@ -61,7 +61,7 @@
     }: {
         currentTeam: Team;
         project: ProjectTool;
-        documents: ProjectDocument[];
+        documents: Paginated<ProjectDocument>;
         folders: TodoMember[];
     } = $props();
 
@@ -69,6 +69,29 @@
         string,
         number,
     ]);
+    // Trix is expensive to mount, so keep one document editor active at a time.
+    let editingDocumentId = $state<number | null>(null);
+    const toggleDocumentEditor = (documentId: number): void => {
+        const opening = editingDocumentId !== documentId;
+        editingDocumentId = opening ? documentId : null;
+
+        if (opening) {
+            // Focus the first field after Svelte mounts the selected editor.
+            requestAnimationFrame(() =>
+                document
+                    .getElementById(`document-title-${documentId}`)
+                    ?.focus(),
+            );
+        }
+    };
+    const closeDocumentEditor = (documentId: number): void => {
+        editingDocumentId = null;
+        requestAnimationFrame(() =>
+            document
+                .getElementById(`document-edit-toggle-${documentId}`)
+                ?.focus(),
+        );
+    };
     const formatDate = (value: string | null): string =>
         value
             ? new Intl.DateTimeFormat('ja-JP', {
@@ -76,6 +99,16 @@
                   timeStyle: 'short',
               }).format(new Date(value))
             : '';
+    // Paginator labels are localized HTML entities on the server, so positions are reliable.
+    const paginationLabel = (
+        label: string,
+        index: number,
+        lastIndex: number,
+    ): string =>
+        index === 0 ? t('Previous') : index === lastIndex ? t('Next') : label;
+    const hasPaginationNavigation = $derived(
+        documents.links.some((link) => link.url !== null && !link.active),
+    );
     const confirmDelete = (): boolean =>
         window.confirm(t('Are you sure you want to delete this?'));
 </script>
@@ -142,7 +175,7 @@
         </CardContent>
     </Card>
 
-    {#if documents.length === 0}
+    {#if documents.data.length === 0}
         <Card
             ><CardContent
                 class="py-10 text-center text-sm text-muted-foreground"
@@ -151,7 +184,7 @@
         >
     {:else}
         <div class="grid gap-5 md:grid-cols-2">
-            {#each documents as document (document.id)}
+            {#each documents.data as document (document.id)}
                 <Card class="min-w-0">
                     <CardHeader class="gap-2">
                         <CardTitle class="break-words"
@@ -223,91 +256,167 @@
                         {/if}
 
                         {#if document.canEdit}
-                            <details class="rounded-lg border p-3">
-                                <summary
-                                    class="cursor-pointer text-sm font-medium"
-                                    >{t('Edit document')}</summary
+                            <Button
+                                id={`document-edit-toggle-${document.id}`}
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                aria-expanded={editingDocumentId ===
+                                    document.id}
+                                aria-controls={editingDocumentId === document.id
+                                    ? `document-editor-${document.id}`
+                                    : undefined}
+                                disabled={editingDocumentId !== null &&
+                                    editingDocumentId !== document.id}
+                                onclick={() =>
+                                    toggleDocumentEditor(document.id)}
+                            >
+                                {editingDocumentId === document.id
+                                    ? t('Cancel')
+                                    : t('Edit document')}
+                            </Button>
+
+                            {#if editingDocumentId === document.id}
+                                <div
+                                    id={`document-editor-${document.id}`}
+                                    class="rounded-lg border p-3"
                                 >
-                                <Form
-                                    {...ProjectDocumentController.update.form([
-                                        currentTeam.slug,
-                                        project.id,
-                                        document.id,
-                                    ])}
-                                    class="mt-4 space-y-3"
-                                >
-                                    {#snippet children({ errors, processing })}
-                                        <Input
-                                            name="title"
-                                            value={document.title}
-                                            maxlength={255}
-                                            required
-                                        />
-                                        <InputError message={errors.title} />
-                                        <RichTextEditor
-                                            id={`document-body-${document.id}`}
-                                            name="body"
-                                            value={document.body}
-                                            required
-                                            ariaLabel={t('Body')}
-                                            attachmentUploadUrl={AttachmentController.uploadInline.url(
-                                                routeArguments,
-                                            )}
-                                        />
-                                        <InputError message={errors.body} />
-                                        <select
-                                            name="material_folder_id"
-                                            class="border-input h-10 w-full rounded-md border bg-background px-3 text-sm"
-                                            aria-label={t('Folder')}
-                                        >
-                                            <option value=""
-                                                >{t('No folder')}</option
+                                    <Form
+                                        {...ProjectDocumentController.update.form(
+                                            [
+                                                currentTeam.slug,
+                                                project.id,
+                                                document.id,
+                                            ],
+                                        )}
+                                        onSuccess={() =>
+                                            closeDocumentEditor(document.id)}
+                                        class="space-y-3"
+                                    >
+                                        {#snippet children({
+                                            errors,
+                                            processing,
+                                        })}
+                                            <Input
+                                                id={`document-title-${document.id}`}
+                                                name="title"
+                                                value={document.title}
+                                                maxlength={255}
+                                                required
+                                                aria-label={t('Title')}
+                                            />
+                                            <InputError
+                                                message={errors.title}
+                                            />
+                                            <RichTextEditor
+                                                id={`document-body-${document.id}`}
+                                                name="body"
+                                                value={document.body}
+                                                required
+                                                ariaLabel={t('Body')}
+                                                attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                                    routeArguments,
+                                                )}
+                                            />
+                                            <InputError message={errors.body} />
+                                            <select
+                                                name="material_folder_id"
+                                                class="border-input h-10 w-full rounded-md border bg-background px-3 text-sm"
+                                                aria-label={t('Folder')}
                                             >
-                                            {#each folders as folder (folder.id)}
-                                                <option
-                                                    value={folder.id}
-                                                    selected={folder.id ===
-                                                        document.folderId}
+                                                <option value=""
+                                                    >{t('No folder')}</option
                                                 >
-                                                    {folder.name}
-                                                </option>
-                                            {/each}
-                                        </select>
-                                        <InputError
-                                            message={errors.material_folder_id}
-                                        />
-                                        <Button
-                                            type="submit"
-                                            size="sm"
-                                            disabled={processing}
-                                            >{t('Save')}</Button
-                                        >
-                                    {/snippet}
-                                </Form>
-                                <Form
-                                    {...ProjectDocumentController.destroy.form([
-                                        currentTeam.slug,
-                                        project.id,
-                                        document.id,
-                                    ])}
-                                    onBefore={confirmDelete}
-                                    class="mt-2"
-                                >
-                                    {#snippet children({ processing })}
-                                        <Button
-                                            type="submit"
-                                            variant="destructive"
-                                            size="sm"
-                                            disabled={processing}
-                                            >{t('Delete')}</Button
-                                        >
-                                    {/snippet}
-                                </Form>
-                            </details>
+                                                {#each folders as folder (folder.id)}
+                                                    <option
+                                                        value={folder.id}
+                                                        selected={folder.id ===
+                                                            document.folderId}
+                                                    >
+                                                        {folder.name}
+                                                    </option>
+                                                {/each}
+                                            </select>
+                                            <InputError
+                                                message={errors.material_folder_id}
+                                            />
+                                            <Button
+                                                type="submit"
+                                                size="sm"
+                                                disabled={processing}
+                                                >{t('Save')}</Button
+                                            >
+                                        {/snippet}
+                                    </Form>
+                                    <Form
+                                        {...ProjectDocumentController.destroy.form(
+                                            [
+                                                currentTeam.slug,
+                                                project.id,
+                                                document.id,
+                                            ],
+                                        )}
+                                        onBefore={confirmDelete}
+                                        class="mt-2"
+                                    >
+                                        {#snippet children({ processing })}
+                                            <Button
+                                                type="submit"
+                                                variant="destructive"
+                                                size="sm"
+                                                disabled={processing}
+                                                >{t('Delete')}</Button
+                                            >
+                                        {/snippet}
+                                    </Form>
+                                </div>
+                            {/if}
                         {/if}
                     </CardContent>
                 </Card>
             {/each}
         </div>
+    {/if}
+
+    {#if hasPaginationNavigation}
+        <nav
+            class="flex flex-wrap justify-center gap-2"
+            aria-label={t('Pagination')}
+        >
+            {#each documents.links as link, index (index)}
+                {@const url = link.url}
+                {#if url}
+                    <Button
+                        variant={link.active ? 'default' : 'outline'}
+                        size="sm"
+                        asChild
+                    >
+                        {#snippet children(buttonProps)}
+                            <Link
+                                {...buttonProps}
+                                href={url}
+                                preserveScroll
+                                class={buttonProps.class}
+                                aria-current={link.active ? 'page' : undefined}
+                            >
+                                {paginationLabel(
+                                    link.label,
+                                    index,
+                                    documents.links.length - 1,
+                                )}
+                            </Link>
+                        {/snippet}
+                    </Button>
+                {:else}
+                    <Button variant="outline" size="sm" disabled>
+                        {paginationLabel(
+                            link.label,
+                            index,
+                            documents.links.length - 1,
+                        )}
+                    </Button>
+                {/if}
+            {/each}
+        </nav>
     {/if}
 </div>

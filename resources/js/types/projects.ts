@@ -657,13 +657,12 @@ export type WorkspaceReminder = {
 };
 
 export type WorkspaceBar = {
-    tasks: DashboardTodo[];
-    events: (DashboardEvent & { meetingUrl: string | null })[];
-    bookmarks: Pick<DashboardProject, 'id' | 'name' | 'description'>[];
+    tasks?: DashboardTodo[];
+    events?: (DashboardEvent & { meetingUrl: string | null })[];
+    bookmarks?: Pick<DashboardProject, 'id' | 'name' | 'description'>[];
     notifications: WorkspaceNotification[];
-    pings: WorkspacePing[];
+    pings?: WorkspacePing[];
     unreadPings: number;
-    people: ChatUser[];
     bubbleUps: WorkspaceBubbleUp[];
     reminder: WorkspaceReminder | null;
 };

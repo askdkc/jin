@@ -7,6 +7,8 @@ use App\Models\Team;
 use App\Models\Todo;
 use App\Models\TodoList;
 use App\Models\User;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Support\Facades\DB;
 use Inertia\Testing\AssertableInertia as Assert;
 
 test('reports calculate overdue unassigned completed and workload totals', function () {
@@ -40,6 +42,13 @@ test('reports calculate overdue unassigned completed and workload totals', funct
         'completed_by' => $member->id,
     ]);
 
+    $summaryQueries = [];
+    DB::listen(function (QueryExecuted $query) use (&$summaryQueries): void {
+        if (str_contains($query->sql, 'completed_last_30_days')) {
+            $summaryQueries[] = $query->sql;
+        }
+    });
+
     $this->actingAs($member)
         ->get(route('reports.index', $team))
         ->assertOk()
@@ -57,6 +66,11 @@ test('reports calculate overdue unassigned completed and workload totals', funct
             ->has('workload', 1)
             ->where('workload.0.name', '担当者')
             ->where('workload.0.incompleteCount', 1));
+
+    expect($summaryQueries)->toHaveCount(1);
+
+    $summarySql = str_replace(['"', '`', '[', ']'], '', strtolower($summaryQueries[0]));
+    expect($summarySql)->toContain('select projects.id');
 });
 
 test('reports exclude inaccessible archived and other team projects', function () {

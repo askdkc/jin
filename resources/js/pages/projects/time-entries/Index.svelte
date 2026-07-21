@@ -33,7 +33,7 @@
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
     import { t } from '@/lib/i18n';
-    import type { ProjectTimeEntry } from '@/types';
+    import type { Paginated, ProjectTimeEntry } from '@/types';
 
     let {
         currentTeam,
@@ -44,7 +44,7 @@
     }: {
         currentTeam: Team;
         project: ProjectTool;
-        entries: ProjectTimeEntry[];
+        entries: Paginated<ProjectTimeEntry>;
         todos: ProjectTool[];
         totalMinutes: number;
     } = $props();
@@ -54,6 +54,16 @@
     }).format(new Date());
     const formatDuration = (minutes: number): string =>
         `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+    // Paginator labels are localized HTML entities on the server, so positions are reliable.
+    const paginationLabel = (
+        label: string,
+        index: number,
+        lastIndex: number,
+    ): string =>
+        index === 0 ? t('Previous') : index === lastIndex ? t('Next') : label;
+    const hasPaginationNavigation = $derived(
+        entries.links.some((link) => link.url !== null && !link.active),
+    );
 </script>
 
 <AppHead title={currentTeam.menuNames.timesheets} />
@@ -143,7 +153,7 @@
         {/snippet}
     </Form>
 
-    {#if entries.length === 0}
+    {#if entries.data.length === 0}
         <div
             class="rounded-2xl border border-dashed p-10 text-center text-muted-foreground"
         >
@@ -151,7 +161,7 @@
         </div>
     {:else}
         <div class="overflow-hidden rounded-2xl border bg-card shadow-sm">
-            {#each entries as entry (entry.id)}
+            {#each entries.data as entry (entry.id)}
                 <article
                     class="flex flex-col gap-3 border-b p-4 last:border-0 sm:flex-row sm:items-center"
                 >
@@ -194,6 +204,48 @@
                 </article>
             {/each}
         </div>
+    {/if}
+
+    {#if hasPaginationNavigation}
+        <nav
+            class="flex flex-wrap justify-center gap-2"
+            aria-label={t('Pagination')}
+        >
+            {#each entries.links as link, index (index)}
+                {@const url = link.url}
+                {#if url}
+                    <Button
+                        variant={link.active ? 'default' : 'outline'}
+                        size="sm"
+                        asChild
+                    >
+                        {#snippet children(buttonProps)}
+                            <Link
+                                {...buttonProps}
+                                href={url}
+                                preserveScroll
+                                class={buttonProps.class}
+                                aria-current={link.active ? 'page' : undefined}
+                            >
+                                {paginationLabel(
+                                    link.label,
+                                    index,
+                                    entries.links.length - 1,
+                                )}
+                            </Link>
+                        {/snippet}
+                    </Button>
+                {:else}
+                    <Button variant="outline" size="sm" disabled>
+                        {paginationLabel(
+                            link.label,
+                            index,
+                            entries.links.length - 1,
+                        )}
+                    </Button>
+                {/if}
+            {/each}
+        </nav>
     {/if}
 
     <Button variant="outline" asChild>

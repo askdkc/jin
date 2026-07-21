@@ -27,6 +27,10 @@ class CheckInController extends Controller
     {
         Gate::authorize('view', $project);
 
+        $userId = request()->user()->id;
+        // Check-in policies grant creators or project managers; the latter is request-wide.
+        $canManageProject = Gate::allows('update', $project);
+
         $checkIns = $project->checkIns()
             ->with(['creator:id,name', 'targets:id,name'])
             ->withCount([
@@ -45,8 +49,8 @@ class CheckInController extends Controller
                 'creatorName' => $checkIn->creator?->name,
                 'targetNames' => $checkIn->targets->pluck('name')->all(),
                 'pendingCount' => (int) $checkIn->getAttribute('pending_count'),
-                'canManage' => Gate::allows('update', $checkIn),
-                'canDelete' => Gate::allows('delete', $checkIn),
+                'canManage' => $checkIn->created_by === $userId || $canManageProject,
+                'canDelete' => $checkIn->created_by === $userId || $canManageProject,
             ]);
 
         $pendingPrompts = CheckInPrompt::query()

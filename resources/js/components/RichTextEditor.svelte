@@ -21,7 +21,7 @@
     type TrixRect = { left: number; top: number; bottom: number };
     type TrixLocation = { index: number; offset: number };
     type TrixDocumentApi = {
-        toString: () => string;
+        getStringAtRange: (range: [number, number]) => string;
         locationFromPosition: (position: number) => TrixLocation;
         positionFromLocation: (location: TrixLocation) => number;
         getBlockAtIndex: (index: number) => { toString: () => string };
@@ -196,7 +196,14 @@
         }
 
         const position = range[0];
-        const text = editor.editor.getDocument().toString().slice(0, position);
+        const trixDocument = editor.editor.getDocument();
+        const { index } = trixDocument.locationFromPosition(position);
+        const blockStart = trixDocument.positionFromLocation({
+            index,
+            offset: 0,
+        });
+        // A mention cannot cross a block boundary, so avoid copying the whole document per keystroke.
+        const text = trixDocument.getStringAtRange([blockStart, position]);
         const match = text.match(/@([^\s@]*(?:\s[^\s@]*){0,3})$/);
 
         if (!match) {
@@ -282,6 +289,19 @@
         markdownParser.parse(markdown, { async: false });
     const inlineMarkdown = (markdown: string): string =>
         markdownParser.parseInline(markdown, { async: false });
+
+    const syncMarkdownToInput = (): string => {
+        if (!markdownDirty) {
+            return hiddenInput.value;
+        }
+
+        // Laravel stores rich HTML; defer the O(document) conversion to mode/submit boundaries.
+        const html = markdownToHtml(markdownValue);
+        hiddenInput.value = html;
+        markdownDirty = false;
+
+        return html;
+    };
 
     const tableFromMarkdown = (markdown: string): string | null => {
         const lines = markdown
@@ -475,10 +495,8 @@
             markdownValue = htmlToMarkdown(hiddenInput.value);
             markdownDirty = false;
         } else if (markdownDirty) {
-            const html = markdownToHtml(markdownValue);
-            hiddenInput.value = html;
+            const html = syncMarkdownToInput();
             editor.editor?.loadHTML(html);
-            markdownDirty = false;
         }
 
         mode = nextMode;
@@ -488,7 +506,6 @@
     const updateMarkdown = (event: Event): void => {
         markdownValue = (event.currentTarget as HTMLTextAreaElement).value;
         markdownDirty = true;
-        hiddenInput.value = markdownToHtml(markdownValue);
     };
 
     const looksLikeMarkdown = (text: string): boolean =>
@@ -580,6 +597,11 @@
 
     onMount(() => {
         const form = hiddenInput.form;
+        const syncMarkdownBeforeSubmit = (): void => {
+            if (mode === 'markdown') {
+                syncMarkdownToInput();
+            }
+        };
         const resetEditor = (): void => {
             queueMicrotask(() => {
                 const resetValue = hiddenInput.value;
@@ -630,6 +652,7 @@
         };
 
         form?.addEventListener('reset', resetEditor);
+        form?.addEventListener('submit', syncMarkdownBeforeSubmit, true);
         editor.addEventListener('trix-file-accept', handleFileAccept);
         editor.addEventListener('error', handleImageError, true);
         editor.addEventListener('paste', formatMarkdownPaste);
@@ -646,6 +669,7 @@
 
         return () => {
             form?.removeEventListener('reset', resetEditor);
+            form?.removeEventListener('submit', syncMarkdownBeforeSubmit, true);
             editor.removeEventListener('trix-file-accept', handleFileAccept);
             editor.removeEventListener('error', handleImageError, true);
             editor.removeEventListener('paste', formatMarkdownPaste);

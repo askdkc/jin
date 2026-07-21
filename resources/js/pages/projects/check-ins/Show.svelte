@@ -94,6 +94,24 @@
         { value: 6, label: 'Sat' },
         { value: 7, label: 'Sun' },
     ];
+    const dateFormatters: Record<string, Intl.DateTimeFormat> = {};
+    const dateFormatterFor = (timezone: string): Intl.DateTimeFormat => {
+        const cached = dateFormatters[timezone];
+
+        if (cached) {
+            return cached;
+        }
+
+        // Reuse formatters while rendering a response history instead of rebuilding each one.
+        const formatter = new Intl.DateTimeFormat('ja-JP', {
+            timeZone: timezone,
+            dateStyle: 'medium',
+            timeStyle: 'short',
+        });
+        dateFormatters[timezone] = formatter;
+
+        return formatter;
+    };
 
     const confirmDelete = (): boolean =>
         window.confirm(t('Are you sure you want to delete this?'));
@@ -105,13 +123,7 @@
         value: string | null,
         timezone = 'Asia/Tokyo',
     ): string =>
-        value
-            ? new Intl.DateTimeFormat('ja-JP', {
-                  timeZone: timezone,
-                  dateStyle: 'medium',
-                  timeStyle: 'short',
-              }).format(new Date(value))
-            : '';
+        value ? dateFormatterFor(timezone).format(new Date(value)) : '';
     const frequencyLabel = (schedule: CheckInDetail): string =>
         schedule.frequency === 'daily'
             ? `${t('Daily')}（${schedule.weekdays

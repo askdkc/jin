@@ -1,5 +1,6 @@
 <script lang="ts">
-    import { Form, Link, page, router } from '@inertiajs/svelte';
+    import type { ReloadOptions } from '@inertiajs/core';
+    import { Form, Link, page, router, WhenVisible } from '@inertiajs/svelte';
     import ArrowLeft from 'lucide-svelte/icons/arrow-left';
     import Bell from 'lucide-svelte/icons/bell';
     import CalendarDays from 'lucide-svelte/icons/calendar-days';
@@ -65,7 +66,12 @@
     const currentTeam = $derived(page.props.currentTeam as Team | null);
     const unreadCount = $derived(page.props.notificationSummary.unreadCount);
     const navigationProjects = $derived(page.props.navigationProjects);
-    const navigationPeople = $derived(page.props.navigationPeople);
+    const navigationPeopleLoaded = $derived(
+        page.props.navigationPeople !== undefined,
+    );
+    const navigationPeople = $derived(
+        (page.props.navigationPeople ?? []).slice(0, 50),
+    );
     const url = currentUrlState();
     const dashboardUrl = $derived(
         currentTeam ? dashboard(currentTeam.slug) : '/',
@@ -96,6 +102,9 @@
     let jumpQuery = $state('');
     let jumpInput = $state<HTMLInputElement>();
     let shiftHeld = $state(false);
+    let navigationPeopleLoadState = $state<'idle' | 'loading' | 'error'>(
+        'idle',
+    );
     const filteredProjects = $derived(
         navigationProjects.filter((project) =>
             project.name
@@ -111,6 +120,37 @@
         ),
     );
 
+    const failNavigationPeopleLoad = (): void => {
+        navigationPeopleLoadState = 'error';
+    };
+    const settleNavigationPeopleLoad = (): void => {
+        navigationPeopleLoadState = navigationPeopleLoaded ? 'idle' : 'error';
+    };
+    const navigationPeopleLoadParams: ReloadOptions = {
+        onStart: () => {
+            navigationPeopleLoadState = 'loading';
+        },
+        onSuccess: () => {
+            navigationPeopleLoadState = 'idle';
+        },
+        // A partial reload can retain unrelated validation errors and invoke onError.
+        onError: settleNavigationPeopleLoad,
+        onHttpException: failNavigationPeopleLoad,
+        onNetworkError: () => {
+            failNavigationPeopleLoad();
+
+            return false;
+        },
+        onCancel: settleNavigationPeopleLoad,
+    };
+    const retryNavigationPeople = (): void => {
+        router.reload({
+            only: ['navigationPeople'],
+            preserveErrors: true,
+            ...navigationPeopleLoadParams,
+        });
+    };
+
     const openJump = (): void => {
         if (!currentTeam) {
             return;
@@ -122,6 +162,23 @@
     const handleShortcut = (event: KeyboardEvent): void => {
         shiftHeld = event.shiftKey || event.key === 'Shift';
 
+        if (event.key === 'Escape') {
+            jumpOpen = false;
+
+            return;
+        }
+
+        const target = event.target;
+        const isEditing =
+            target instanceof HTMLElement &&
+            (target.matches('input, textarea, select') ||
+                target.isContentEditable);
+
+        // Global shortcuts must not consume ordinary uppercase input in editors.
+        if (isEditing) {
+            return;
+        }
+
         if (event.shiftKey && event.key.toLocaleLowerCase() === 'j') {
             event.preventDefault();
             openJump();
@@ -129,23 +186,14 @@
             event.preventDefault();
             window.dispatchEvent(new CustomEvent('jin:new-for-you'));
         } else if (event.shiftKey && !jumpOpen) {
-            const target = event.target;
-            const isEditing =
-                target instanceof HTMLElement &&
-                (target.matches('input, textarea, select') ||
-                    target.isContentEditable);
             const item = mainNavItems.find(
                 (navItem) => navItem.shortcut === event.key.toLocaleLowerCase(),
             );
 
-            if (!isEditing && item) {
+            if (item) {
                 event.preventDefault();
                 router.visit(toUrl(item.href));
             }
-        }
-
-        if (event.key === 'Escape') {
-            jumpOpen = false;
         }
     };
     const handleKeyup = (event: KeyboardEvent): void => {
@@ -522,28 +570,64 @@
                 </Button>
             </div>
             <div class="max-h-[45vh] overflow-y-auto p-2">
-                {#if filteredPeople.length > 0}
-                    <p
-                        class="px-3 pt-2 pb-1 text-xs font-bold uppercase tracking-wider text-muted-foreground"
-                    >
-                        {t('People')}
-                    </p>
-                    {#each filteredPeople as person (person.id)}
-                        <Link
-                            href={ActivityController(
-                                {
-                                    current_team: currentTeam.slug,
-                                },
-                                { query: { user: person.id } },
-                            )}
-                            class="flex items-center gap-3 rounded-xl px-3 py-2 font-semibold hover:bg-muted"
-                            onclick={() => (jumpOpen = false)}
+                <WhenVisible
+                    data="navigationPeople"
+                    params={navigationPeopleLoadParams}
+                    always
+                >
+                    {#snippet fallback()}
+                        <p
+                            class="px-3 py-3 text-sm text-muted-foreground"
+                            role="status"
                         >
-                            <UserRound class="size-4 text-primary" />
-                            {person.name}
-                        </Link>
-                    {/each}
-                {/if}
+                            {t('Loading')}
+                        </p>
+                    {/snippet}
+                    {#if navigationPeopleLoadState === 'error'}
+                        <div class="space-y-2 px-3 py-3 text-sm" role="alert">
+                            <p class="text-destructive">
+                                {t('Could not load this panel.')}
+                            </p>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onclick={retryNavigationPeople}
+                            >
+                                {t('Retry')}
+                            </Button>
+                        </div>
+                    {/if}
+                    {#if navigationPeopleLoaded && filteredPeople.length > 0}
+                        <p
+                            class="px-3 pt-2 pb-1 text-xs font-bold uppercase tracking-wider text-muted-foreground"
+                        >
+                            {t('People')}
+                        </p>
+                        {#each filteredPeople as person (person.id)}
+                            <Link
+                                href={ActivityController(
+                                    {
+                                        current_team: currentTeam.slug,
+                                    },
+                                    { query: { user: person.id } },
+                                )}
+                                class="flex items-center gap-3 rounded-xl px-3 py-2 font-semibold hover:bg-muted"
+                                onclick={() => (jumpOpen = false)}
+                            >
+                                <UserRound class="size-4 text-primary" />
+                                {person.name}
+                            </Link>
+                        {/each}
+                    {:else if navigationPeopleLoadState === 'loading'}
+                        <p
+                            class="px-3 py-3 text-sm text-muted-foreground"
+                            role="status"
+                        >
+                            {t('Loading')}
+                        </p>
+                    {/if}
+                </WhenVisible>
                 <p
                     class="px-3 pt-3 pb-1 text-xs font-bold uppercase tracking-wider text-muted-foreground"
                 >
@@ -559,7 +643,7 @@
                         {project.name}
                     </Link>
                 {/each}
-                {#if filteredProjects.length === 0 && filteredPeople.length === 0}
+                {#if navigationPeopleLoaded && filteredProjects.length === 0 && filteredPeople.length === 0}
                     <p
                         class="px-3 py-6 text-center text-sm text-muted-foreground"
                     >

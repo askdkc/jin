@@ -267,8 +267,18 @@ class ProjectController extends Controller
     /** @return array<string, mixed> */
     private function projectHome(Project $project): array
     {
+        // Keep project scoping indexable and compute all counters in one table scan.
         $todoQuery = Todo::query()
-            ->whereHas('todoList', fn (Builder $query) => $query->where('project_id', $project->id));
+            ->whereIn('todo_list_id', $project->todoLists()->select('id'));
+        $todoCounts = (clone $todoQuery)
+            ->toBase()
+            ->selectRaw('COUNT(*) as total_count')
+            ->selectRaw('SUM(CASE WHEN completed_at IS NOT NULL THEN 1 ELSE 0 END) as completed_count')
+            ->selectRaw(
+                'SUM(CASE WHEN completed_at IS NULL AND due_on < ? THEN 1 ELSE 0 END) as overdue_count',
+                [today()->toDateString()],
+            )
+            ->first();
         $recentChatMessages = $project->chatMessages()
             ->with('user:id,name')
             ->latest('id')
@@ -369,12 +379,9 @@ class ProjectController extends Controller
                     ]),
             ],
             'todos' => [
-                'total' => (clone $todoQuery)->count(),
-                'completed' => (clone $todoQuery)->whereNotNull('completed_at')->count(),
-                'overdue' => (clone $todoQuery)
-                    ->whereNull('completed_at')
-                    ->whereDate('due_on', '<', today())
-                    ->count(),
+                'total' => (int) data_get($todoCounts, 'total_count', 0),
+                'completed' => (int) data_get($todoCounts, 'completed_count', 0),
+                'overdue' => (int) data_get($todoCounts, 'overdue_count', 0),
                 'latest' => (clone $todoQuery)
                     ->with('todoList:id,title')
                     ->whereNull('parent_id')

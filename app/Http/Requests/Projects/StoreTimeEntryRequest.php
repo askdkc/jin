@@ -72,9 +72,11 @@ class StoreTimeEntryRequest extends FormRequest
                 return;
             }
 
+            // Keep the indexed DATE column bare and match Eloquent's SQLite serialization.
+            $databaseDate = (new TimeEntry)->fromDateTime($workedOn);
             $loggedMinutes = (int) TimeEntry::query()
                 ->where('user_id', $user->id)
-                ->whereDate('worked_on', $workedOn)
+                ->where('worked_on', $databaseDate)
                 ->sum('minutes');
 
             if ($loggedMinutes + (int) $minutes > 1440) {

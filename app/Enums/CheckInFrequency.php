@@ -3,6 +3,7 @@
 namespace App\Enums;
 
 use Carbon\CarbonImmutable;
+use InvalidArgumentException;
 
 enum CheckInFrequency: string
 {
@@ -34,10 +35,15 @@ enum CheckInFrequency: string
         CarbonImmutable $scheduledFor,
         array $weekdays,
     ): CarbonImmutable {
-        do {
+        // A corrupt stored schedule must fail instead of trapping the scheduler in an infinite loop.
+        for ($daysChecked = 0; $daysChecked < 7; $daysChecked++) {
             $scheduledFor = $scheduledFor->addDay();
-        } while (! in_array($scheduledFor->dayOfWeekIso, $weekdays, true));
 
-        return $scheduledFor;
+            if (in_array($scheduledFor->dayOfWeekIso, $weekdays, true)) {
+                return $scheduledFor;
+            }
+        }
+
+        throw new InvalidArgumentException('Daily check-ins require at least one weekday from 1 through 7.');
     }
 }

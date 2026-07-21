@@ -30,9 +30,38 @@ test('project participants can create and view documents', function () {
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
             ->component('projects/documents/Index')
-            ->where('documents.0.id', $document->id)
-            ->where('documents.0.title', '運用手順')
-            ->where('documents.0.canEdit', true));
+            ->where('documents.data.0.id', $document->id)
+            ->where('documents.data.0.title', '運用手順')
+            ->where('documents.data.0.canEdit', true));
+});
+
+test('documents are paginated twenty at a time', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    Document::factory()
+        ->count(25)
+        ->for($project)
+        ->for($owner, 'creator')
+        ->create();
+
+    $indexRoute = route('projects.documents.index', [$team, $project]);
+
+    $this->actingAs($owner)
+        ->get($indexRoute)
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('documents.data', 20)
+            ->where('documents.current_page', 1)
+            ->where('documents.total', 25));
+
+    $this->get($indexRoute.'?page=2')
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('documents.data', 5)
+            ->where('documents.current_page', 2)
+            ->where('documents.total', 25));
 });
 
 test('document authors and team managers can edit while other members cannot', function () {

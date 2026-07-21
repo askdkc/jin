@@ -26,8 +26,9 @@ class ProjectDocumentController extends Controller
         $documents = $project->documents()
             ->with(['creator:id,name', 'materialFolder:id,name'])
             ->latest('updated_at')
-            ->get()
-            ->map(fn (Document $document): array => [
+            ->latest('id')
+            ->paginate(20)
+            ->through(fn (Document $document): array => [
                 'id' => $document->id,
                 'title' => $document->title,
                 'body' => $document->body,

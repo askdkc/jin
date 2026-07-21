@@ -27,7 +27,9 @@
         {@render children?.()}
     </AppContent>
     {#if currentTeam}
-        <WorkspaceBottomNav {currentTeam} />
+        {#key currentTeam.id}
+            <WorkspaceBottomNav {currentTeam} />
+        {/key}
     {/if}
     <Toaster />
 </AppShell>

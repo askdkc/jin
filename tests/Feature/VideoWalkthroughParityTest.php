@@ -124,7 +124,7 @@ test('project members can log time and only owners or authors can delete entries
             'todo_id' => $todo->id,
             'notes' => '設計レビュー',
         ])
-        ->assertRedirect();
+        ->assertRedirect(route('projects.time-entries.index', [$this->team, $this->project]));
 
     $entry = TimeEntry::query()->sole();
 
@@ -136,14 +136,32 @@ test('project members can log time and only owners or authors can delete entries
         ->get(route('projects.time-entries.index', [$this->team, $this->project]))
         ->assertInertia(fn (Assert $page) => $page
             ->component('projects/time-entries/Index')
-            ->where('entries.0.notes', '設計レビュー')
+            ->where('entries.data.0.notes', '設計レビュー')
             ->where('totalMinutes', 95));
 
     $this->actingAs($this->owner)
         ->delete(route('projects.time-entries.destroy', [$this->team, $this->project, $entry]))
-        ->assertRedirect();
+        ->assertRedirect(route('projects.time-entries.index', [$this->team, $this->project]));
 
     expect(TimeEntry::query()->exists())->toBeFalse();
+});
+
+test('time entry pages stay bounded while the total includes every entry', function () {
+    TimeEntry::factory()
+        ->count(31)
+        ->for($this->project)
+        ->for($this->owner)
+        ->create([
+            'worked_on' => '2026-07-16',
+            'minutes' => 1,
+        ]);
+
+    $this->actingAs($this->owner)
+        ->get(route('projects.time-entries.index', [$this->team, $this->project]))
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('projects/time-entries/Index')
+            ->has('entries.data', 30)
+            ->where('totalMinutes', 31));
 });
 
 test('time entries cannot reference a todo from another project', function () {
@@ -184,8 +202,9 @@ test('personal notes are private to their author', function () {
         ->post(route('notes.store', $this->team), [
             'title' => '個人メモ',
             'body' => '自分だけの下書き',
+            'return_to_notes_index' => '1',
         ])
-        ->assertRedirect();
+        ->assertRedirect(route('notes.index', $this->team));
 
     $note = PersonalNote::query()->sole();
 
@@ -193,12 +212,12 @@ test('personal notes are private to their author', function () {
         ->get(route('notes.index', $this->team))
         ->assertInertia(fn (Assert $page) => $page
             ->component('notes/Index')
-            ->has('notes', 1)
-            ->where('notes.0.title', '個人メモ'));
+            ->has('notes.data', 1)
+            ->where('notes.data.0.title', '個人メモ'));
 
     $this->actingAs($member)
         ->get(route('notes.index', $this->team))
-        ->assertInertia(fn (Assert $page) => $page->has('notes', 0));
+        ->assertInertia(fn (Assert $page) => $page->has('notes.data', 0));
 
     $this->actingAs($member)
         ->patch(route('notes.update', [$this->team, $note]), [
@@ -208,6 +227,52 @@ test('personal notes are private to their author', function () {
         ->assertForbidden();
 
     expect($note->fresh()->title)->toBe('個人メモ');
+});
+
+test('personal notes are paginated newest first', function () {
+    foreach (range(1, 21) as $number) {
+        PersonalNote::factory()
+            ->for($this->team)
+            ->for($this->owner, 'user')
+            ->create([
+                'title' => "Note {$number}",
+                'updated_at' => now()->addMinutes($number),
+            ]);
+    }
+
+    $this->actingAs($this->owner)
+        ->get(route('notes.index', $this->team))
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('notes/Index')
+            ->has('notes.data', 20)
+            ->where('notes.data.0.title', 'Note 21'));
+
+    $this->actingAs($this->owner)
+        ->get(route('notes.index', [$this->team, 'page' => 2]))
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('notes.data', 1)
+            ->where('notes.data.0.title', 'Note 1'));
+});
+
+test('note creation keeps quick-note users in place but returns the notes page to page one', function () {
+    $dashboard = route('dashboard', $this->team);
+
+    $this->actingAs($this->owner)
+        ->from($dashboard)
+        ->post(route('notes.store', $this->team), [
+            'title' => 'Dock note',
+            'body' => 'Stay on the current page',
+        ])
+        ->assertRedirect($dashboard);
+
+    $this->actingAs($this->owner)
+        ->from(route('notes.index', [$this->team, 'page' => 2]))
+        ->post(route('notes.store', $this->team), [
+            'title' => 'Notes page note',
+            'body' => 'Return to page one',
+            'return_to_notes_index' => '1',
+        ])
+        ->assertRedirect(route('notes.index', $this->team));
 });
 
 test('quick jump only shares projects visible to the signed in member', function () {

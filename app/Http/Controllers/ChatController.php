@@ -27,11 +27,11 @@ class ChatController extends Controller
     {
         Gate::authorize('view', $project);
 
-        $defaultChannel = $this->ensureDefaultChannel($project);
-        $selectedChannel = $request->integer('channel') > 0
-            ? $project->chatChannels()->find($request->integer('channel'))
+        $channelId = $request->integer('channel');
+        $selectedChannel = $channelId > 0
+            ? $project->chatChannels()->find($channelId)
             : null;
-        $selectedChannel ??= $defaultChannel;
+        $selectedChannel ??= $this->ensureDefaultChannel($project);
         $history = $this->historyPage($selectedChannel);
 
         return Inertia::render('projects/chat/Show', [
@@ -75,6 +75,7 @@ class ChatController extends Controller
                 ->whereNull('parent_id')
                 ->where('id', '>', $afterId)
                 ->oldest('id')
+                // The 101st row is a cheap sentinel for another sync request; no COUNT(*) needed.
                 ->limit(101)
                 ->get();
 
@@ -172,6 +173,7 @@ class ChatController extends Controller
             );
 
         return [
+            // Cursor pagination reads newest-first; the UI receives each page chronologically.
             'messages' => $paginator->getCollection()
                 ->reverse()
                 ->map(fn (ChatMessage $message): array => $this->messageData($message))
@@ -203,11 +205,11 @@ class ChatController extends Controller
 
     private function resolveChannel(Project $project, int $channelId): ChatChannel
     {
-        $defaultChannel = $this->ensureDefaultChannel($project);
+        if ($channelId > 0) {
+            return $project->chatChannels()->findOrFail($channelId);
+        }
 
-        return $channelId > 0
-            ? $project->chatChannels()->findOrFail($channelId)
-            : $defaultChannel;
+        return $this->ensureDefaultChannel($project);
     }
 
     private function ensureDefaultChannel(Project $project): ChatChannel
@@ -220,9 +222,12 @@ class ChatController extends Controller
             ],
         );
 
-        $project->chatMessages()
-            ->whereNull('chat_channel_id')
-            ->update(['chat_channel_id' => $channel->id]);
+        if ($channel->wasRecentlyCreated) {
+            // The migration repaired existing rows; only a newly created default can need this fallback.
+            $project->chatMessages()
+                ->whereNull('chat_channel_id')
+                ->update(['chat_channel_id' => $channel->id]);
+        }
 
         return $channel;
     }

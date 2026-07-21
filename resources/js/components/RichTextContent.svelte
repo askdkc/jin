@@ -67,6 +67,16 @@
     const highlightCodeBlocks = async (
         blocks: HTMLPreElement[],
     ): Promise<void> => {
+        const markedBlocks = blocks.filter((block) =>
+            languageMarker.test(block.textContent ?? ''),
+        );
+
+        // Shiki initializes its syntax engine lazily; plain <pre> blocks should
+        // stay plain and must not pay that download/initialization cost.
+        if (markedBlocks.length === 0) {
+            return;
+        }
+
         const {
             codeToHtml,
             bundledLanguages,
@@ -78,7 +88,7 @@
             dark: 'github-dark',
         } as const;
 
-        for (const block of blocks) {
+        for (const block of markedBlocks) {
             const text = block.textContent ?? '';
             const match = text.match(languageMarker);
             const requested = match?.[1].toLowerCase() ?? '';

@@ -436,7 +436,9 @@ class ProjectFileController extends Controller
 
             InlineAttachments::removeFromBody($current);
             $current->comments()->delete();
+            // Bound the morph lookup to this project so the existing project index limits the scan.
             Activity::query()
+                ->where('project_id', $current->project_id)
                 ->where('subject_type', $current->getMorphClass())
                 ->where('subject_id', $current->id)
                 ->get()

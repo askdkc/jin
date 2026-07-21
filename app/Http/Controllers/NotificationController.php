@@ -4,9 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Models\Project;
 use App\Models\Team;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Notifications\DatabaseNotification;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -14,9 +16,7 @@ class NotificationController extends Controller
 {
     public function index(Request $request, Team $currentTeam): Response
     {
-        $projectIds = Project::query()
-            ->visibleTo($request->user(), $currentTeam)
-            ->pluck('id');
+        $projectIds = $this->notificationProjectIds($request, $currentTeam);
 
         $notifications = $request->user()
             ->notifications()
@@ -51,9 +51,7 @@ class NotificationController extends Controller
 
     public function markAllRead(Request $request, Team $currentTeam): RedirectResponse
     {
-        $projectIds = Project::query()
-            ->visibleTo($request->user(), $currentTeam)
-            ->pluck('id');
+        $projectIds = $this->notificationProjectIds($request, $currentTeam);
 
         $request->user()
             ->unreadNotifications()
@@ -62,5 +60,16 @@ class NotificationController extends Controller
             ->update(['read_at' => now()]);
 
         return to_route('notifications.index', $currentTeam);
+    }
+
+    /** @return Builder<Project> */
+    private function notificationProjectIds(Request $request, Team $team): Builder
+    {
+        $query = Project::query()->visibleTo($request->user(), $team);
+
+        // PostgreSQL JSON extraction returns text, so its subquery must return the same type.
+        return DB::connection()->getDriverName() === 'pgsql'
+            ? $query->selectRaw('CAST(projects.id AS TEXT)')
+            : $query->select('projects.id');
     }
 }

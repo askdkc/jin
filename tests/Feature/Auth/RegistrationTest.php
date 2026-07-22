@@ -41,8 +41,8 @@ test('new users can register', function () {
         'password_confirmation' => 'password',
     ]);
 
-    $this->assertAuthenticated();
+    $user = User::where('email', 'test@example.com')->firstOrFail();
 
-    $user = User::where('email', 'test@example.com')->first();
+    $this->assertAuthenticatedAs($user);
     $response->assertRedirect(route('dashboard'));
 });

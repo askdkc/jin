@@ -41,34 +41,8 @@
         return () => query.removeEventListener('change', update);
     });
 
-    const switchTeam = (team: Team) => {
-        const previousTeamSlug = currentTeam?.slug;
-
-        const options = {
-            onFinish: () => {
-                if (!previousTeamSlug || typeof window === 'undefined') {
-                    router.reload();
-
-                    return;
-                }
-
-                const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-                const segment = `/${previousTeamSlug}`;
-
-                if (currentUrl.includes(segment)) {
-                    router.visit(currentUrl.replace(segment, `/${team.slug}`), {
-                        replace: true,
-                    });
-
-                    return;
-                }
-
-                router.reload();
-            },
-        };
-
-        router.visit(switchMethod(team.slug), options);
-    };
+    const switchTeam = (team: Team): void =>
+        router.visit(switchMethod(team.slug));
 </script>
 
 <DropdownMenu>

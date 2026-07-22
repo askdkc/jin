@@ -226,7 +226,13 @@ export type EverythingType =
     'message' | 'todo' | 'document' | 'file' | 'link' | 'comment';
 
 export type EverythingTarget =
-    'messages' | 'todos' | 'documents' | 'files' | 'materials';
+    | 'messages'
+    | 'todos'
+    | 'documents'
+    | 'files'
+    | 'materials'
+    | 'schedule'
+    | 'check_ins';
 
 export type EverythingItem = {
     id: number;

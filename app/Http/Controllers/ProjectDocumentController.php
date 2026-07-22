@@ -84,14 +84,19 @@ class ProjectDocumentController extends Controller
         Project $project,
         Document $document,
     ): RedirectResponse {
-        $document->update($request->validated());
+        DB::transaction(function () use ($request, $project, $document): void {
+            $document = Document::query()
+                ->lockForUpdate()
+                ->findOrFail($document->id);
+            $document->update($request->validated());
 
-        InlineAttachments::syncFromBody(
-            $document,
-            $project,
-            $request->user()->id,
-            $document->body,
-        );
+            InlineAttachments::syncFromBody(
+                $document,
+                $project,
+                $request->user()->id,
+                $document->body,
+            );
+        });
 
         return to_route('projects.documents.index', [$currentTeam, $project]);
     }
@@ -101,7 +106,10 @@ class ProjectDocumentController extends Controller
         Gate::authorize('view', $project);
         abort_unless($document->created_by === request()->user()->id || Gate::allows('update', $project), 403);
 
-        $document->delete();
+        DB::transaction(function () use ($document): void {
+            InlineAttachments::detach($document);
+            $document->delete();
+        });
 
         return to_route('projects.documents.index', [$currentTeam, $project]);
     }

@@ -5,6 +5,12 @@ export type ScheduleEventTimes = {
     endTime: string;
 };
 
+export type ScheduleEventDaySegment = {
+    startMinute: number;
+    endMinute: number;
+    startsOnDate: boolean;
+};
+
 export const halfHourOptions = Array.from({ length: 48 }, (_, index) => {
     const hours = Math.floor(index / 2);
     const minutes = index % 2 === 0 ? '00' : '30';
@@ -60,4 +66,46 @@ export const scheduleEventEnd = (
     const { endDate, endTime } = rangeFromStart(start);
 
     return { endDate, endTime };
+};
+
+export const scheduleEventLastDisplayDate = (endsAt: string): string => {
+    const endDate = endsAt.slice(0, 10);
+
+    if (endsAt.slice(11, 16) !== '00:00') {
+        return endDate;
+    }
+
+    const [year, month, day] = endDate.split('-').map(Number);
+
+    return new Date(Date.UTC(year, month - 1, day - 1))
+        .toISOString()
+        .slice(0, 10);
+};
+
+const minuteOfDay = (value: string): number => {
+    const [hour, minute] = value.slice(11, 16).split(':').map(Number);
+
+    return hour * 60 + minute;
+};
+
+export const scheduleEventDaySegment = (
+    startsAt: string,
+    endsAt: string,
+    date: string,
+): ScheduleEventDaySegment | null => {
+    const startDate = startsAt.slice(0, 10);
+    const endDate = endsAt.slice(0, 10);
+
+    if (startDate > date || endDate < date) {
+        return null;
+    }
+
+    const startMinute = startDate === date ? minuteOfDay(startsAt) : 0;
+    const endMinute = endDate === date ? minuteOfDay(endsAt) : 24 * 60;
+
+    if (endMinute <= startMinute) {
+        return null;
+    }
+
+    return { startMinute, endMinute, startsOnDate: startDate === date };
 };

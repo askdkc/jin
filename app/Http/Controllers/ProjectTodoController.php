@@ -195,15 +195,20 @@ class ProjectTodoController extends Controller
         Gate::authorize('update', $project);
         abort_if($todoList->is_loose, 422, 'The loose to-do list cannot be deleted.');
         DB::transaction(function () use ($todoList): void {
-            StoredFile::query()
-                ->where('attachable_type', Todo::class)
-                ->whereIn('attachable_id', $todoList->todos()->select('id'))
-                ->update(['attachable_type' => null, 'attachable_id' => null]);
-            Comment::query()
-                ->where('commentable_type', Todo::class)
-                ->whereIn('commentable_id', $todoList->todos()->select('id'))
-                ->delete();
-            $todoList->comments()->delete();
+            $todoIds = $todoList->todos()->pluck('id');
+            $commentQuery = Comment::query()->where(function ($query) use ($todoIds, $todoList): void {
+                $query->where(function ($todoComments) use ($todoIds): void {
+                    $todoComments->where('commentable_type', (new Todo)->getMorphClass())
+                        ->whereIn('commentable_id', $todoIds);
+                })->orWhere(function ($listComments) use ($todoList): void {
+                    $listComments->where('commentable_type', $todoList->getMorphClass())
+                        ->where('commentable_id', $todoList->id);
+                });
+            });
+
+            InlineAttachments::detachMany((new Todo)->getMorphClass(), $todoIds);
+            InlineAttachments::detachMany((new Comment)->getMorphClass(), (clone $commentQuery)->pluck('id'));
+            $commentQuery->delete();
             $todoList->delete();
         });
 
@@ -264,18 +269,27 @@ class ProjectTodoController extends Controller
         TodoList $todoList,
         Todo $todo,
     ): RedirectResponse {
-        $previousAssigneeId = $todo->assignee_id;
-        $previousDetails = $todo->details;
-        $todo->update([
-            ...$request->safe()->except('subtasks'),
-            'completion_notify_ids' => $request->validated('completion_notify_ids') ?? [],
-        ]);
+        [$todo, $previousAssigneeId, $previousDetails] = DB::transaction(
+            function () use ($request, $project, $todo): array {
+                $todo = Todo::query()
+                    ->lockForUpdate()
+                    ->findOrFail($todo->id);
+                $previousAssigneeId = $todo->assignee_id;
+                $previousDetails = $todo->details;
+                $todo->update([
+                    ...$request->safe()->except('subtasks'),
+                    'completion_notify_ids' => $request->validated('completion_notify_ids') ?? [],
+                ]);
 
-        InlineAttachments::syncFromBody(
-            $todo,
-            $project,
-            $request->user()->id,
-            $todo->details,
+                InlineAttachments::syncFromBody(
+                    $todo,
+                    $project,
+                    $request->user()->id,
+                    $todo->details,
+                );
+
+                return [$todo, $previousAssigneeId, $previousDetails];
+            },
         );
 
         if ($todo->assignee_id !== $previousAssigneeId) {
@@ -431,15 +445,13 @@ class ProjectTodoController extends Controller
 
         DB::transaction(function () use ($todo): void {
             $todoIds = $todo->subtasks()->pluck('id')->push($todo->id);
+            $commentQuery = Comment::query()
+                ->where('commentable_type', (new Todo)->getMorphClass())
+                ->whereIn('commentable_id', $todoIds);
 
-            Comment::query()
-                ->where('commentable_type', Todo::class)
-                ->whereIn('commentable_id', $todoIds)
-                ->delete();
-            StoredFile::query()
-                ->where('attachable_type', Todo::class)
-                ->whereIn('attachable_id', $todoIds)
-                ->update(['attachable_type' => null, 'attachable_id' => null]);
+            InlineAttachments::detachMany((new Comment)->getMorphClass(), (clone $commentQuery)->pluck('id'));
+            InlineAttachments::detachMany((new Todo)->getMorphClass(), $todoIds);
+            $commentQuery->delete();
             $todo->delete();
         });
 

@@ -134,7 +134,7 @@ class TeamController extends Controller
 
         $request->user()->switchTeam($team);
 
-        return back();
+        return to_route('dashboard', ['current_team' => $team->slug]);
     }
 
     /**
@@ -144,19 +144,28 @@ class TeamController extends Controller
     {
         Gate::authorize('leave', $team);
 
-        $user = $request->user();
+        DB::transaction(function () use ($request, $team): void {
+            $user = User::query()->lockForUpdate()->findOrFail($request->user()->id);
+            $membership = $team->memberships()
+                ->where('user_id', $user->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            $fallbackTeam = $user->isCurrentTeam($team)
+                ? $user->fallbackTeam($team)
+                : null;
 
-        $fallbackTeam = $user->isCurrentTeam($team)
-            ? $user->fallbackTeam($team)
-            : null;
+            $membership->delete();
 
-        $team->memberships()
-            ->where('user_id', $user->id)
-            ->delete();
+            if (! $user->isCurrentTeam($team)) {
+                return;
+            }
 
-        if ($fallbackTeam) {
-            $user->switchTeam($fallbackTeam);
-        }
+            if ($fallbackTeam !== null && $user->switchTeam($fallbackTeam)) {
+                return;
+            }
+
+            $user->update(['current_team_id' => null]);
+        });
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('You left the team ":name"', ['name' => $team->name])]);
 

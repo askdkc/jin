@@ -38,13 +38,15 @@ class CommentController extends Controller
         CheckIn $checkIn,
         CheckInPrompt $prompt,
     ): RedirectResponse {
-        $comment = $prompt->comments()->create([
-            ...$request->validated(),
-            'project_id' => $project->id,
-            'user_id' => $request->user()->id,
-        ]);
+        DB::transaction(function () use ($request, $project, $prompt): void {
+            $comment = $prompt->comments()->create([
+                ...$request->validated(),
+                'project_id' => $project->id,
+                'user_id' => $request->user()->id,
+            ]);
 
-        InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
+            InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
+        });
 
         return back();
     }
@@ -62,6 +64,7 @@ class CommentController extends Controller
                 'user_id' => $request->user()->id,
             ]);
 
+            InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
             Activity::record(
                 $project,
                 $request->user(),
@@ -72,8 +75,6 @@ class CommentController extends Controller
 
             return $comment;
         });
-
-        InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
 
         $recipients = $messageBoardPost->subscribers()
             ->where('users.id', '<>', $request->user()->id)
@@ -102,9 +103,7 @@ class CommentController extends Controller
         MessageBoardPost $messageBoardPost,
         Comment $comment,
     ): RedirectResponse {
-        $comment->update($request->validated());
-
-        InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
+        $comment = $this->updateComment($request, $project, $comment);
 
         MentionNotification::sendToUsers(
             Mentions::extract($comment->body, $project->members),
@@ -129,7 +128,10 @@ class CommentController extends Controller
         Gate::authorize('view', $project);
         abort_unless($comment->user_id === request()->user()->id || Gate::allows('update', $project), 403);
 
-        $comment->delete();
+        DB::transaction(function () use ($comment): void {
+            InlineAttachments::detach($comment);
+            $comment->delete();
+        });
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Comment deleted.')]);
 
         return to_route('projects.messages.show', [$currentTeam, $project, $messageBoardPost]);
@@ -149,6 +151,7 @@ class CommentController extends Controller
                 'user_id' => $request->user()->id,
             ]);
 
+            InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
             Activity::record(
                 $project,
                 $request->user(),
@@ -159,8 +162,6 @@ class CommentController extends Controller
 
             return $comment;
         });
-
-        InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
 
         TodoActivityNotification::sendToUsers(
             [$todo->created_by, $todo->assignee_id],
@@ -189,9 +190,7 @@ class CommentController extends Controller
         Todo $todo,
         Comment $comment,
     ): RedirectResponse {
-        $comment->update($request->validated());
-
-        InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
+        $comment = $this->updateComment($request, $project, $comment);
 
         MentionNotification::sendToUsers(
             Mentions::extract($comment->body, $project->members),
@@ -216,7 +215,10 @@ class CommentController extends Controller
         Gate::authorize('view', $project);
         abort_unless($comment->user_id === request()->user()->id || Gate::allows('update', $project), 403);
 
-        $comment->delete();
+        DB::transaction(function () use ($comment): void {
+            InlineAttachments::detach($comment);
+            $comment->delete();
+        });
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Comment deleted.')]);
 
         return back(fallback: route('projects.todos.index', [$currentTeam, $project]));
@@ -235,6 +237,7 @@ class CommentController extends Controller
                 'user_id' => $request->user()->id,
             ]);
 
+            InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
             Activity::record(
                 $project,
                 $request->user(),
@@ -245,8 +248,6 @@ class CommentController extends Controller
 
             return $comment;
         });
-
-        InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
 
         // Whoever comments starts following the list, Basecamp-style, so they get replies.
         $todoList->subscribers()->syncWithoutDetaching([$request->user()->id]);
@@ -295,9 +296,7 @@ class CommentController extends Controller
         TodoList $todoList,
         Comment $comment,
     ): RedirectResponse {
-        $comment->update($request->validated());
-
-        InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
+        $comment = $this->updateComment($request, $project, $comment);
 
         MentionNotification::sendToUsers(
             Mentions::extract($comment->body, $project->members),
@@ -321,7 +320,10 @@ class CommentController extends Controller
         Gate::authorize('view', $project);
         abort_unless($comment->user_id === request()->user()->id || Gate::allows('update', $project), 403);
 
-        $comment->delete();
+        DB::transaction(function () use ($comment): void {
+            InlineAttachments::detach($comment);
+            $comment->delete();
+        });
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Comment deleted.')]);
 
         return back(fallback: route('projects.todo-lists.show', [$currentTeam, $project, $todoList]));
@@ -333,13 +335,17 @@ class CommentController extends Controller
         Project $project,
         StoredFile $storedFile,
     ): RedirectResponse {
-        $comment = $storedFile->comments()->create([
-            ...$request->validated(),
-            'project_id' => $project->id,
-            'user_id' => $request->user()->id,
-        ]);
+        $comment = DB::transaction(function () use ($request, $project, $storedFile): Comment {
+            $comment = $storedFile->comments()->create([
+                ...$request->validated(),
+                'project_id' => $project->id,
+                'user_id' => $request->user()->id,
+            ]);
 
-        InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
+            InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
+
+            return $comment;
+        });
 
         MentionNotification::sendToUsers(
             Mentions::extract($comment->body, $project->members),
@@ -359,13 +365,15 @@ class CommentController extends Controller
         Project $project,
         ScheduleEvent $scheduleEvent,
     ): RedirectResponse {
-        $comment = $scheduleEvent->comments()->create([
-            ...$request->validated(),
-            'project_id' => $project->id,
-            'user_id' => $request->user()->id,
-        ]);
+        DB::transaction(function () use ($request, $project, $scheduleEvent): void {
+            $comment = $scheduleEvent->comments()->create([
+                ...$request->validated(),
+                'project_id' => $project->id,
+                'user_id' => $request->user()->id,
+            ]);
 
-        InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
+            InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
+        });
 
         return back(fallback: route('projects.schedule.show', [$currentTeam, $project, $scheduleEvent]));
     }
@@ -377,9 +385,7 @@ class CommentController extends Controller
         StoredFile $storedFile,
         Comment $comment,
     ): RedirectResponse {
-        $comment->update($request->validated());
-
-        InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
+        $comment = $this->updateComment($request, $project, $comment);
 
         MentionNotification::sendToUsers(
             Mentions::extract($comment->body, $project->members),
@@ -404,9 +410,29 @@ class CommentController extends Controller
         Gate::authorize('view', $project);
         abort_unless($comment->user_id === request()->user()->id || Gate::allows('update', $project), 403);
 
-        $comment->delete();
+        DB::transaction(function () use ($comment): void {
+            InlineAttachments::detach($comment);
+            $comment->delete();
+        });
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Comment deleted.')]);
 
         return back(fallback: route('projects.files.show', [$currentTeam, $project, $storedFile]));
+    }
+
+    private function updateComment(
+        SaveCommentRequest $request,
+        Project $project,
+        Comment $comment,
+    ): Comment {
+        return DB::transaction(function () use ($request, $project, $comment): Comment {
+            $comment = Comment::query()
+                ->lockForUpdate()
+                ->findOrFail($comment->id);
+            $comment->update($request->validated());
+
+            InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
+
+            return $comment;
+        });
     }
 }

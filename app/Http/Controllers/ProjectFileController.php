@@ -34,6 +34,8 @@ use Throwable;
 
 class ProjectFileController extends Controller
 {
+    private const DELETION_LEASE_SECONDS = 60;
+
     public function store(StoreProjectFileRequest $request, Team $currentTeam, Project $project): RedirectResponse
     {
         $files = $request->file('files');
@@ -361,7 +363,14 @@ class ProjectFileController extends Controller
                 ->lockForUpdate()
                 ->first();
 
-            if ($current === null || $current->preview_status === 'deleting') {
+            if ($current === null) {
+                return null;
+            }
+
+            $retrying = $current->preview_status === 'deleting';
+
+            if ($retrying
+                && $current->updated_at?->isAfter(now()->subSeconds(self::DELETION_LEASE_SECONDS))) {
                 return null;
             }
 
@@ -369,8 +378,8 @@ class ProjectFileController extends Controller
                 'disk' => $current->disk,
                 'path' => $current->path,
                 'original_name' => $current->original_name,
-                'preview_path' => $current->preview_path,
-                'preview_status' => $current->preview_status,
+                'preview_path' => $retrying ? null : $current->preview_path,
+                'preview_status' => $retrying ? null : $current->preview_status,
             ];
 
             $current->update([
@@ -378,7 +387,10 @@ class ProjectFileController extends Controller
                 'preview_status' => 'deleting',
             ]);
 
-            return $deletion;
+            return [
+                ...$deletion,
+                'lease_token' => (string) $current->getRawOriginal('updated_at'),
+            ];
         });
 
         if ($deletion === null) {
@@ -389,7 +401,9 @@ class ProjectFileController extends Controller
 
         try {
             if ($disk->exists($deletion['path']) && ! $disk->delete($deletion['path'])) {
-                throw new RuntimeException('File deletion failed.');
+                if (Storage::disk($deletion['disk'])->exists($deletion['path'])) {
+                    throw new RuntimeException('File deletion failed.');
+                }
             }
         } catch (Throwable $exception) {
             $this->restoreAfterDeletionFailure($storedFile->id, $deletion);
@@ -410,7 +424,7 @@ class ProjectFileController extends Controller
         return back();
     }
 
-    /** @param array{path: string} $deletion */
+    /** @param array{path: string, lease_token: string} $deletion */
     private function finalizeDeletion(int $storedFileId, array $deletion): bool
     {
         return DB::transaction(function () use ($storedFileId, $deletion): bool {
@@ -421,11 +435,13 @@ class ProjectFileController extends Controller
 
             if ($current === null
                 || $current->path !== $deletion['path']
-                || $current->preview_status !== 'deleting') {
+                || $current->preview_status !== 'deleting'
+                || (string) $current->getRawOriginal('updated_at') !== $deletion['lease_token']) {
                 return false;
             }
 
             InlineAttachments::removeFromBody($current);
+            InlineAttachments::detachMany((new Comment)->getMorphClass(), $current->comments()->pluck('id'));
             $current->comments()->delete();
             // Bound the morph lookup to this project so the existing project index limits the scan.
             Activity::query()
@@ -442,7 +458,7 @@ class ProjectFileController extends Controller
         });
     }
 
-    /** @param array{disk: string, path: string, original_name: string, preview_path: string|null, preview_status: string|null} $deletion */
+    /** @param array{disk: string, path: string, original_name: string, preview_path: string|null, preview_status: string|null, lease_token: string} $deletion */
     private function restoreAfterDeletionFailure(int $storedFileId, array $deletion): void
     {
         DB::transaction(function () use ($storedFileId, $deletion): void {
@@ -450,6 +466,7 @@ class ProjectFileController extends Controller
                 ->whereKey($storedFileId)
                 ->where('path', $deletion['path'])
                 ->where('preview_status', 'deleting')
+                ->where('updated_at', $deletion['lease_token'])
                 ->lockForUpdate()
                 ->first();
 

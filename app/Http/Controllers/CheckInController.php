@@ -10,6 +10,7 @@ use App\Http\Requests\Phase9\UpdateCheckInRequest;
 use App\Models\Activity;
 use App\Models\CheckIn;
 use App\Models\CheckInPrompt;
+use App\Models\Comment;
 use App\Models\Project;
 use App\Models\Team;
 use App\Models\User;
@@ -277,7 +278,18 @@ class CheckInController extends Controller
         CheckIn $checkIn,
     ): RedirectResponse {
         Gate::authorize('delete', $checkIn);
-        $checkIn->delete();
+
+        DB::transaction(function () use ($checkIn): void {
+            $promptIds = $checkIn->prompts()->pluck('id');
+            $commentQuery = Comment::query()
+                ->where('commentable_type', (new CheckInPrompt)->getMorphClass())
+                ->whereIn('commentable_id', $promptIds);
+
+            InlineAttachments::detachMany((new CheckInPrompt)->getMorphClass(), $promptIds);
+            InlineAttachments::detachMany((new Comment)->getMorphClass(), (clone $commentQuery)->pluck('id'));
+            $commentQuery->delete();
+            $checkIn->delete();
+        });
 
         return to_route('projects.check-ins.index', [$currentTeam, $project]);
     }
@@ -305,6 +317,9 @@ class CheckInController extends Controller
         CheckInPrompt $prompt,
     ): RedirectResponse {
         DB::transaction(function () use ($request, $project, $prompt): void {
+            $prompt = CheckInPrompt::query()
+                ->lockForUpdate()
+                ->findOrFail($prompt->id);
             $prompt->update([
                 'answer' => $request->validated('answer'),
                 'answered_at' => now(),
@@ -337,6 +352,9 @@ class CheckInController extends Controller
         CheckInPrompt $prompt,
     ): RedirectResponse {
         DB::transaction(function () use ($request, $project, $prompt): void {
+            $prompt = CheckInPrompt::query()
+                ->lockForUpdate()
+                ->findOrFail($prompt->id);
             $prompt->update(['answer' => $request->validated('answer')]);
 
             InlineAttachments::syncFromBody(

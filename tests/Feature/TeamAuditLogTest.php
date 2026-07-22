@@ -38,7 +38,7 @@ test('invitation lifecycle and reissue are audited', function () {
     $reissuedInvitation = TeamInvitation::query()->sole();
 
     $this->actingAs($invitedUser)
-        ->get(route('invitations.accept', $reissuedInvitation))
+        ->post(route('invitations.accept', $reissuedInvitation))
         ->assertRedirect(route('dashboard'));
 
     $logs = $team->auditLogs()->oldest('id')->get();

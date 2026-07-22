@@ -34,6 +34,7 @@ class AttachmentController extends Controller
         try {
             $storedFile = $project->storedFiles()->create([
                 'uploaded_by' => $request->user()->id,
+                'is_inline' => true,
                 'disk' => 'local',
                 'path' => $path,
                 'original_name' => $file->getClientOriginalName(),

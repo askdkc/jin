@@ -44,7 +44,7 @@ Basecampの情報設計を参考にしていますが、名称、画面、配色
 - Node.js 22.12以上とnpm
 - PHPのSQLite拡張（初期設定で使用）
 - ImageMagickとPoppler（PDFの先頭ページサムネイル生成用）
-- Docker DesktopまたはDocker Engine（ONLYOFFICE Docs用）
+- ONLYOFFICE Docs（macOS開発とCIはDocker、Ubuntu本番はAPTパッケージ）
 
 Office文書の表示にLibreOfficeは使いません。MySQLやPostgreSQLへ変更する場合は、対応するPHP拡張と`.env`のDB設定を別途追加してください。
 
@@ -218,13 +218,13 @@ docker exec jin-onlyoffice curl -fsS http://host.docker.internal:8000/up
 
 ## Ubuntu Server 24.04 / 26.04 公開環境
 
-以下は新規サーバーでJinを`/var/www/jin`へ配置し、Nginx + PHP-FPMで公開し、同じホストのDocker EngineでONLYOFFICE Docsを動かす例です。既存のWebサーバー、Docker、firewall、DBがある場合は、その設定を消さず差分だけ適用してください。
+以下は新規サーバーでJinを`/var/www/jin`へ配置し、Nginx + PHP-FPMで公開し、同じホストにONLYOFFICE Docsの公式APTパッケージを入れる例です。Docker Engineは不要です。既存のWebサーバー、firewall、DBがある場合は、その設定を消さず差分だけ適用してください。
 
 前提:
 
 - `jin.example.com`と`office.example.com`のDNS A/AAAAレコードがこのサーバーを向いている
 - TCP 80/443だけを外部公開する。8080と`ONLYOFFICE_HOST_PORT`は公開しない
-- DocumentServer用に少なくとも2 CPU、RAM 4 GB、swap 2 GB、十分な空き容量を確保する
+- DocumentServer用に少なくとも2 CPU、RAM 4 GB、swap 4 GB、十分な空き容量を確保する
 - 本番値とsecretをGitへコミットしない
 
 実際の値を設定します。
@@ -281,36 +281,22 @@ composer --version
 
 Ubuntu 24.04の標準PHPは8.3のため、上記は[Ondřej SurýのPHP PPA](https://launchpad.net/~ondrej/+archive/ubuntu/php)を使います。Ubuntu 26.04ではディストリビューションのPHP 8.4パッケージを使います。Node.jsは[NodeSourceの22.x setup script](https://github.com/nodesource/distributions/blob/master/scripts/deb/setup_22.x)、Composerは[公式のchecksum検証手順](https://getcomposer.org/doc/faqs/how-to-install-composer-programmatically.md)に合わせています。
 
-### 2. Docker Engineを入れる
+### 2. ONLYOFFICEのAPTリポジトリを追加する
 
-[Docker Engine公式Ubuntu手順](https://docs.docker.com/engine/install/ubuntu/)はUbuntu 24.04と26.04を対象にしています。次は競合パッケージがない新規ホスト向けです。
+Ubuntu標準リポジトリではなく、[ONLYOFFICE公式APTリポジトリ](https://helpcenter.onlyoffice.com/docs/installation/docs-community-install-ubuntu.aspx)を使います。リポジトリ名の`squeeze`は公式の指定です。
 
 ```bash
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-  -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
+curl -fsSL https://download.onlyoffice.com/GPG-KEY-ONLYOFFICE \
+  | gpg --dearmor \
+  | sudo tee /usr/share/keyrings/onlyoffice.gpg >/dev/null
 
-. /etc/os-release
-UBUNTU_CODENAME="${UBUNTU_CODENAME:-$VERSION_CODENAME}"
-
-sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null <<EOF
-Types: deb
-URIs: https://download.docker.com/linux/ubuntu
-Suites: ${UBUNTU_CODENAME}
-Components: stable
-Architectures: $(dpkg --print-architecture)
-Signed-By: /etc/apt/keyrings/docker.asc
-EOF
+echo "deb [signed-by=/usr/share/keyrings/onlyoffice.gpg] https://download.onlyoffice.com/repo/debian squeeze main" \
+  | sudo tee /etc/apt/sources.list.d/onlyoffice.list >/dev/null
 
 sudo apt update
-sudo apt install -y \
-  docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-sudo systemctl enable --now docker
-sudo docker run --rm hello-world
 ```
 
-`ufw`や`firewalld`を使っていてもDockerの公開portが意図した規則を迂回する場合があります。以降では選択した`ONLYOFFICE_HOST_PORT`を必ず`127.0.0.1`へbindします。
+DocumentServerの待受portはインストール前にdebconfで`ONLYOFFICE_HOST_PORT`へ変更します。TCP 80/443以外をfirewallまたはcloud security groupで公開しないでください。
 
 ### 3. Jinを配置する
 
@@ -328,26 +314,25 @@ php artisan key:generate
 
 既存サーバーへの更新では`git clone`と`cp .env.example .env`を実行しないでください。既存の`.env`と`storage/app/private`を保持し、リリース手順に合わせて`git pull`またはartifactを配置します。
 
-### 4. ONLYOFFICEのsecretとJinの本番設定を作る
+### 4. ONLYOFFICE DocsをインストールしてJinを設定する
 
-Docker用secretはrootだけが読めるファイルへ保存します。
+[ONLYOFFICE公式手順](https://helpcenter.onlyoffice.com/docs/installation/docs-community-install-ubuntu.aspx)のdebconf設定で、待受portとJWT secretをインストール前に固定します。次の2つのcode blockは同じshellで続けて実行してください。
 
 ```bash
-sudo install -d -m 0750 /etc/jin
 ONLYOFFICE_SECRET="$(openssl rand -hex 32)"
 
+printf 'onlyoffice-documentserver onlyoffice/ds-port select %s\n' \
+  "$ONLYOFFICE_HOST_PORT" | sudo debconf-set-selections
 printf '%s\n' \
-  'JWT_ENABLED=true' \
-  "JWT_SECRET=${ONLYOFFICE_SECRET}" \
-  'ALLOW_PRIVATE_IP_ADDRESS=false' \
-  'ALLOW_META_IP_ADDRESS=false' \
-  'PLUGINS_ENABLED=false' | sudo tee /etc/jin/onlyoffice.env >/dev/null
+  'onlyoffice-documentserver onlyoffice/jwt-enabled boolean true' \
+  | sudo debconf-set-selections
+printf 'onlyoffice-documentserver onlyoffice/jwt-secret password %s\n' \
+  "$ONLYOFFICE_SECRET" | sudo debconf-set-selections
 
-sudo chown root:root /etc/jin/onlyoffice.env
-sudo chmod 600 /etc/jin/onlyoffice.env
+sudo apt install -y ttf-mscorefonts-installer onlyoffice-documentserver
 ```
 
-`.env`をコマンドで更新します。`ONLYOFFICE_INSTANCE_ID`は共有DocumentServer内で重複しない固定値へ変更してください。
+Microsoft fontsのEULAを聞かれた場合は内容を確認して応答します。APTパッケージが`/etc/onlyoffice/documentserver/local.json`へJWT設定を保存します。同じsecretをJinの`.env`へ設定します。`ONLYOFFICE_INSTANCE_ID`は共有DocumentServer内で重複しない固定値へ変更してください。
 
 ```bash
 set_env() {
@@ -397,27 +382,14 @@ Viteは`VITE_REVERB_*`をbuild時に埋め込むため、`.env`の本番Reverb�
 
 公開範囲をIPで制限する場合は`IP_RESTRICTION_ENABLED=true`へ変更し、利用者だけでなくDocumentServerから見える送信元IPも`ALLOWED_IPS`へ追加します。`TRUSTED_PROXIES=*`や`ALLOWED_IPS=*`は使いません。
 
-### 5. ONLYOFFICE Docsを起動する
+### 5. ONLYOFFICE Docsの起動を確認する
 
 ```bash
 ONLYOFFICE_HOST_PORT="$(sed -n 's|^ONLYOFFICE_DOCUMENT_SERVER_URL=http://127.0.0.1:||p' .env)"
 test -n "$ONLYOFFICE_HOST_PORT"
 
-sudo docker volume create jin-onlyoffice-data
-sudo docker volume create jin-onlyoffice-logs
-sudo docker volume create jin-onlyoffice-lib
-sudo docker volume create jin-onlyoffice-db
-
-sudo docker run -d \
-  --name jin-onlyoffice \
-  --restart unless-stopped \
-  --env-file /etc/jin/onlyoffice.env \
-  -p "127.0.0.1:${ONLYOFFICE_HOST_PORT}:80" \
-  -v jin-onlyoffice-data:/var/www/onlyoffice/Data \
-  -v jin-onlyoffice-logs:/var/log/onlyoffice \
-  -v jin-onlyoffice-lib:/var/lib/onlyoffice \
-  -v jin-onlyoffice-db:/var/lib/postgresql \
-  onlyoffice/documentserver:9.4.0.1
+sudo systemctl restart ds-converter ds-docservice ds-metrics
+systemctl is-active ds-converter ds-docservice
 
 for attempt in {1..90}; do
   curl -fsS "http://127.0.0.1:${ONLYOFFICE_HOST_PORT}/healthcheck" && break
@@ -425,9 +397,10 @@ for attempt in {1..90}; do
 done
 
 curl -fsS "http://127.0.0.1:${ONLYOFFICE_HOST_PORT}/healthcheck"
+dpkg-query -W onlyoffice-documentserver
 ```
 
-`latest`タグは使いません。更新時は[ONLYOFFICE Docker image](https://github.com/ONLYOFFICE/Docker-DocumentServer)のrelease noteを確認し、stagingで表示を検証してから明示的にタグを変更します。JWT secretを変更した場合は、Jinの設定cacheを消し、DocumentServerコンテナも再作成してください。
+DocumentServerはAPTの対象です。パッケージ更新はstagingでOffice文書の表示を確認してから本番へ適用してください。
 
 ### 6. NginxとTLSを設定する
 
@@ -560,7 +533,7 @@ redirect_stderr=true
 stdout_logfile=${JIN_PATH}/storage/logs/reverb.log
 EOF
 
-sudo systemctl enable --now nginx docker php8.4-fpm supervisor
+sudo systemctl enable --now nginx php8.4-fpm supervisor
 sudo supervisorctl reread
 sudo supervisorctl update
 sudo supervisorctl status jin-queue jin-reverb
@@ -573,62 +546,65 @@ sudo chmod 644 /etc/cron.d/jin-scheduler
 
 #### OS再起動時の自動起動
 
-systemdではDocker Engine、Nginx、PHP-FPM、Supervisorを有効化します。SupervisorがQueueとReverbを起動します。ONLYOFFICEコンテナはDockerのrestart policyで復帰させるため、同じコンテナやLaravelプロセスを起動する独自systemd unitは作りません。
+systemdでNginx、PHP-FPM、Supervisorを有効化します。SupervisorがQueueとReverbを起動し、ONLYOFFICEのAPTパッケージがds系serviceを管理します。独自のsystemd unitは作りません。
 
 ```bash
-sudo systemctl enable docker nginx php8.4-fpm supervisor
-sudo docker update --restart unless-stopped jin-onlyoffice
+sudo systemctl enable nginx php8.4-fpm supervisor
 
-systemctl is-enabled docker nginx php8.4-fpm supervisor
+systemctl is-enabled nginx php8.4-fpm supervisor
+systemctl is-active ds-converter ds-docservice
 sudo supervisorctl status jin-queue jin-reverb
-sudo docker inspect \
-  --format '{{.HostConfig.RestartPolicy.Name}}' \
-  jin-onlyoffice
 ```
 
-期待値はsystemd側がすべて`enabled`、Supervisor側が両方`RUNNING`、Docker restart policyが`unless-stopped`です。コンテナを手動で`docker stop`した場合は再起動後も停止したままなので、`sudo docker start jin-onlyoffice`で運用へ戻します。macOSはsystemdを使わず、Docker Desktopのログイン時起動と同じrestart policyを使います。
+期待値はNginx、PHP-FPM、Supervisorが`enabled`、ds系serviceが`active`、Supervisor側が両方`RUNNING`です。macOS開発は引き続きDocker Desktopのrestart policyを使います。
 
 ### 8. 公開前に疎通と安全性を確認する
 
 ```bash
 curl -fsS "https://${JIN_DOMAIN}/up"
 curl -fsS "https://${OFFICE_DOMAIN}/healthcheck"
-sudo docker exec jin-onlyoffice curl -fsS "https://${JIN_DOMAIN}/up"
 
 cd "$JIN_PATH"
 php artisan app:production-check
 composer check-platform-reqs --no-dev
-sudo systemctl --no-pager --full status nginx docker php8.4-fpm supervisor
+sudo systemctl --no-pager --full status nginx php8.4-fpm supervisor ds-converter ds-docservice
 sudo supervisorctl status jin-queue jin-reverb
-sudo docker ps --filter name=jin-onlyoffice
 ```
 
 `app:production-check`はHTTPS、デバッグ、Queue、Reverb、Cookieなどの本番設定が安全でない場合に失敗します。
 
-3つ目の`curl`が失敗する状態ではOffice原本をDocumentServerが取得できません。DNS、TLS chain、Nginx、egress firewall、LaravelのIP制限を直してください。公開環境で`ALLOW_PRIVATE_IP_ADDRESS=true`へ逃げるのはSSRF防御を弱めるため不可です。
+Officeプレビューが`Download failed`になる場合は、DocumentServerから`${JIN_DOMAIN}`へのDNS、TLS chain、Nginx、egress firewall、LaravelのIP制限を確認してください。
 
 通常の更新は、既存`.env`とprivate storageを維持したまま次を実行します。
 
 ```bash
-cd "$JIN_PATH"
-git pull --ff-only
-composer install --no-dev --optimize-autoloader
-npm ci
-npm run build
-php artisan migrate --force
-php artisan stored-files:backfill-checksums
-php artisan optimize
-php artisan app:production-check
-php artisan queue:restart
-sudo supervisorctl restart jin-reverb
-sudo systemctl reload php8.4-fpm
+(
+  set -euo pipefail
+
+  cd "$JIN_PATH"
+  php artisan down --retry=60
+  sudo supervisorctl stop jin-queue jin-reverb
+  git pull --ff-only
+  composer install --no-dev --optimize-autoloader
+  npm ci
+  npm run build
+  php artisan migrate --force
+  php artisan stored-files:backfill-checksums
+  php artisan optimize
+  php artisan app:production-check
+  sudo systemctl reload php8.4-fpm
+  sudo supervisorctl start jin-queue jin-reverb
+  php artisan up
+)
 ```
 
-DB、`storage/app/private`、`.env`、`/etc/jin/onlyoffice.env`、Docker volumeをバックアップ対象に含めてください。DocumentServerのホスト側portはインターネットへ公開しません。
+このin-place更新では、アプリとworkerを停止してからmigrationを実行します。サブシェルは途中のコマンドが失敗した時点で停止するため、原因を直して残りの手順を完了するまでworkerの再起動と`php artisan up`は実行されません。これにより、コード更新とDB更新の間に新しいデータが書き込まれる競合を防ぎます。
+
+DB、`storage/app/private`、`.env`、`/etc/onlyoffice/documentserver/local.json`をバックアップ対象に含めてください。DocumentServerの待受portはインターネットへ公開しません。
 
 ## ONLYOFFICE補足
 
-Office文書は固定バージョンの`onlyoffice/documentserver:9.4.0.1`で閲覧専用表示します。PDFと画像は既存viewerを使います。
+Office文書はAPTパッケージ`onlyoffice-documentserver`で閲覧専用表示します。PDFと画像は既存viewerを使います。
 
 | 種別               | 拡張子                       | `documentType` |
 | ------------------ | ---------------------------- | -------------- |
@@ -636,7 +612,7 @@ Office文書は固定バージョンの`onlyoffice/documentserver:9.4.0.1`で閲
 | 表計算             | `xls`, `xlsx`, `xlsm`, `ods` | `cell`         |
 | プレゼンテーション | `ppt`, `pptx`, `odp`         | `slide`        |
 
-DocumentServerコンテナ内の`localhost`はLaravelではありません。3方向のURLを分けて設定します。
+Browser、Laravel、DocumentServerで通信方向が違うため、3つのURLを分けて設定します。
 
 | 通信                     | 設定                             | 開発例                             | 公開環境例                   |
 | ------------------------ | -------------------------------- | ---------------------------------- | ---------------------------- |
@@ -644,41 +620,39 @@ DocumentServerコンテナ内の`localhost`はLaravelではありません。3�
 | Browser → DocumentServer | `ONLYOFFICE_PUBLIC_URL`          | `http://127.0.0.1:8081`            | `https://office.example.com` |
 | DocumentServer → Laravel | `APP_ONLYOFFICE_INTERNAL_URL`    | `http://host.docker.internal:8000` | `https://jin.example.com`    |
 
-### Dockerのホスト側ポートを変更する
+### DocumentServerの待受ポートを変更する
 
-8081が使用中なら、各環境構築手順の最初にホスト側ポートを変更します。コンテナ側は80のままです。
+8081が使用中なら、環境構築手順の最初に値を変更します。Ubuntu本番はdebconfがAPT版の待受portへ反映し、macOS開発はDockerのホスト側portへ反映します。
 
 ```bash
 export ONLYOFFICE_HOST_PORT=18081
 ```
 
-既存コンテナのポートは変更できないため、変更時は同じnamed volumeとJWT secretを使ってコンテナを再作成します。
+`ONLYOFFICE_JWT_SECRET`とDocumentServerのJWT secretには同じ32 bytes以上の値を設定します。secret、JWT、完全な署名URLはGitやログへ出さないでください。
 
-`ONLYOFFICE_JWT_SECRET`とDocumentServerの`JWT_SECRET`には同じ32 bytes以上のsecretを設定します。secret、JWT、完全な署名URLはGitやログへ出さないでください。
-
-コンテナの停止、再開、ログ確認:
+APT版の再起動とログ確認:
 
 ```bash
-docker stop jin-onlyoffice
-docker start jin-onlyoffice
-docker logs --tail=200 jin-onlyoffice
+sudo systemctl restart ds-converter ds-docservice ds-metrics
+sudo systemctl --no-pager --full status ds-converter ds-docservice
+sudo journalctl -u ds-converter -u ds-docservice -n 200 --no-pager
 ```
 
 ### 障害確認
 
 - `503`: `ONLYOFFICE_ENABLED`、3つのURL、JWT secret、選択したホスト側portの`/healthcheck`を確認する。
-- `Download failed`: DocumentServer内から`APP_ONLYOFFICE_INTERNAL_URL`へ到達できるか確認する。コンテナ内の`localhost`はLaravelではない。
+- `Download failed`: DocumentServerが`APP_ONLYOFFICE_INTERNAL_URL`へ到達できるか確認する。
 - `JWT validation failed`: JinとDocumentServerのsecretが一致するか確認する。secretやJWT全文をログへ出さない。
 - Mixed Content: JinがHTTPSなら`ONLYOFFICE_PUBLIC_URL`もHTTPSにする。
 - 古い内容が出る: StorageをDB外から直接上書きせず、Jinの「新しいバージョンに差し替え」を使う。更新後に`php artisan optimize:clear`を実行する。
-- Viewer初期化失敗: `sudo docker logs --tail=200 jin-onlyoffice`、ブラウザconsole、Nginx logを確認する。画面は認証済みダウンロードへフォールバックする。
+- Viewer初期化失敗: ds系service、`/var/log/onlyoffice/documentserver/`、ブラウザconsole、Nginx logを確認する。画面は認証済みダウンロードへフォールバックする。
 
 ### 公式資料
 
-- [ONLYOFFICE Docs Dockerインストール](https://helpcenter.onlyoffice.com/docs/installation/docs-community-install-docker.aspx)
-- [ONLYOFFICE DocumentServer Docker image](https://github.com/ONLYOFFICE/Docker-DocumentServer)
+- [ONLYOFFICE Docs Ubuntu / Debian APTインストール](https://helpcenter.onlyoffice.com/docs/installation/docs-community-install-ubuntu.aspx)
+- [ONLYOFFICE Docs JWT設定](https://helpcenter.onlyoffice.com/docs/installation/docs-configure-jwt.aspx)
+- [ONLYOFFICE Docs Linux障害確認](https://helpcenter.onlyoffice.com/docs/installation/docs-troubleshooting-linux.aspx)
 - [Docker Desktop for Mac](https://docs.docker.com/desktop/setup/install/mac-install/)
-- [Docker Engine for Ubuntu](https://docs.docker.com/engine/install/ubuntu/)
 
 ## 使い方
 
@@ -784,7 +758,13 @@ php artisan optimize:clear
 
 ## テストと品質確認
 
-PHP側のフォーマット、静的解析、Pestをまとめて実行します。
+ローカルで実行できる品質チェックをまとめて実行します。
+
+```bash
+composer ci:check
+```
+
+PHP側のフォーマット、静的解析、Pestだけを実行します。
 
 ```bash
 composer test

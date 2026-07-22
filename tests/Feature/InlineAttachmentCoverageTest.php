@@ -2,6 +2,7 @@
 
 use App\Enums\CheckInFrequency;
 use App\Enums\TeamRole;
+use App\Models\Activity;
 use App\Models\Card;
 use App\Models\CardColumn;
 use App\Models\CardTable;
@@ -19,6 +20,7 @@ use App\Models\TodoList;
 use App\Models\User;
 use App\Support\InlineAttachments;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
 
@@ -52,7 +54,18 @@ function expectInlineAttachmentClaimed(int $fileId, object $attachable): void
 {
     expect(StoredFile::query()->findOrFail($fileId))
         ->attachable_type->toBe($attachable->getMorphClass())
-        ->attachable_id->toBe($attachable->getKey());
+        ->attachable_id->toBe($attachable->getKey())
+        ->is_inline->toBeTrue();
+}
+
+function expectInlineAttachmentDetached(int $fileId): void
+{
+    expect(StoredFile::query()->findOrFail($fileId))
+        ->attachable_type->toBeNull()
+        ->attachable_id->toBeNull()
+        ->is_inline->toBeTrue()
+        ->and(StoredFile::query()->inMaterialLibrary()->whereKey($fileId)->exists())
+        ->toBeFalse();
 }
 
 test('document store and update claim neutral inline uploads to the document', function () {
@@ -80,7 +93,39 @@ test('document store and update claim neutral inline uploads to the document', f
         ])
         ->assertRedirect();
 
+    expectInlineAttachmentDetached($createdUpload['id']);
     expectInlineAttachmentClaimed($updatedUpload['id'], $document);
+
+    $this->actingAs($owner)
+        ->delete(route('projects.documents.destroy', [$team, $project, $document]))
+        ->assertRedirect();
+
+    expectInlineAttachmentDetached($createdUpload['id']);
+    expectInlineAttachmentDetached($updatedUpload['id']);
+});
+
+test('document creation and its inline attachment claim roll back together', function () {
+    Storage::fake('local');
+    [$owner, $team, $project] = inlineAttachmentCoverageWorkspace();
+    $upload = inlineAttachmentCoverageUpload($this, $owner, $team, $project);
+
+    Event::listen('eloquent.creating: '.Activity::class, function (): void {
+        throw new RuntimeException('Forced activity creation failure.');
+    });
+
+    $this->withoutExceptionHandling();
+
+    expect(fn () => $this->actingAs($owner)
+        ->post(route('projects.documents.store', [$team, $project]), [
+            'title' => 'ロールバック対象',
+            'body' => inlineAttachmentCoverageBody($upload['previewUrl']),
+        ]))
+        ->toThrow(RuntimeException::class, 'Forced activity creation failure.');
+
+    expect(Document::query()->where('title', 'ロールバック対象')->exists())->toBeFalse()
+        ->and(StoredFile::query()->findOrFail($upload['id']))
+        ->attachable_type->toBeNull()
+        ->attachable_id->toBeNull();
 });
 
 test('schedule store and update claim inline uploads to the primary event', function () {
@@ -102,7 +147,18 @@ test('schedule store and update claim inline uploads to the primary event', func
         ->assertRedirect();
 
     $event = ScheduleEvent::query()->where('title', '繰り返し予定')->oldest('id')->firstOrFail();
+    $occurrenceDetails = ScheduleEvent::query()
+        ->where('recurrence_group_id', $event->recurrence_group_id)
+        ->whereKeyNot($event->id)
+        ->pluck('details');
+
     expectInlineAttachmentClaimed($createdUpload['id'], $event);
+    expect($event->details)->toContain($createdUpload['previewUrl'])
+        ->and($occurrenceDetails)->toHaveCount(2)
+        ->and($occurrenceDetails->every(fn (?string $details): bool => $details !== null
+            && str_contains($details, 'before')
+            && str_contains($details, 'after')
+            && ! str_contains($details, '/files/')))->toBeTrue();
 
     $updatedUpload = inlineAttachmentCoverageUpload($this, $owner, $team, $project);
 
@@ -116,7 +172,43 @@ test('schedule store and update claim inline uploads to the primary event', func
         ])
         ->assertRedirect();
 
+    expectInlineAttachmentDetached($createdUpload['id']);
     expectInlineAttachmentClaimed($updatedUpload['id'], $event);
+
+    $this->actingAs($owner)
+        ->delete(route('projects.schedule.destroy', [$team, $project, $event]))
+        ->assertRedirect();
+
+    expectInlineAttachmentDetached($createdUpload['id']);
+    expectInlineAttachmentDetached($updatedUpload['id']);
+});
+
+test('schedule creation, recurrence, and its inline attachment claim roll back together', function () {
+    Storage::fake('local');
+    [$owner, $team, $project] = inlineAttachmentCoverageWorkspace();
+    $upload = inlineAttachmentCoverageUpload($this, $owner, $team, $project);
+
+    Event::listen('eloquent.creating: '.Activity::class, function (): void {
+        throw new RuntimeException('Forced activity creation failure.');
+    });
+
+    $this->withoutExceptionHandling();
+
+    expect(fn () => $this->actingAs($owner)
+        ->post(route('projects.schedule.store', [$team, $project]), [
+            'title' => 'ロールバック対象',
+            'details' => inlineAttachmentCoverageBody($upload['previewUrl']),
+            'starts_at' => '2026-08-03T10:00',
+            'ends_at' => '2026-08-03T11:00',
+            'recurrence' => 'weekly',
+            'recurrence_until' => '2026-08-17',
+        ]))
+        ->toThrow(RuntimeException::class, 'Forced activity creation failure.');
+
+    expect(ScheduleEvent::query()->where('title', 'ロールバック対象')->exists())->toBeFalse()
+        ->and(StoredFile::query()->findOrFail($upload['id']))
+        ->attachable_type->toBeNull()
+        ->attachable_id->toBeNull();
 });
 
 test('card store and update claim inline uploads while advancing the card version', function () {
@@ -147,8 +239,16 @@ test('card store and update claim inline uploads while advancing the card versio
         ])
         ->assertRedirect();
 
+    expectInlineAttachmentDetached($createdUpload['id']);
     expectInlineAttachmentClaimed($updatedUpload['id'], $card);
     expect($card->fresh()->version)->toBe(2);
+
+    $this->actingAs($owner)
+        ->delete(route('projects.cards.destroy', [$team, $project, $cardTable, $cardColumn, $card]))
+        ->assertRedirect();
+
+    expectInlineAttachmentDetached($createdUpload['id']);
+    expectInlineAttachmentDetached($updatedUpload['id']);
 });
 
 test('check-in answers claim inline uploads to the answered prompt', function () {
@@ -167,6 +267,12 @@ test('check-in answers claim inline uploads to the answered prompt', function ()
         ->assertRedirect();
 
     expectInlineAttachmentClaimed($upload['id'], $prompt);
+
+    $this->actingAs($owner)
+        ->delete(route('projects.check-ins.destroy', [$team, $project, $checkIn]))
+        ->assertRedirect();
+
+    expectInlineAttachmentDetached($upload['id']);
 });
 
 test('todo updates and todo comments claim inline uploads to their exact models', function () {
@@ -200,6 +306,7 @@ test('todo updates and todo comments claim inline uploads to their exact models'
             'body' => inlineAttachmentCoverageBody($updatedTodoCommentUpload['previewUrl'], '更新添付'),
         ])
         ->assertRedirect();
+    expectInlineAttachmentDetached($todoCommentUpload['id']);
     expectInlineAttachmentClaimed($updatedTodoCommentUpload['id'], $todoComment);
 
     $listCommentUpload = inlineAttachmentCoverageUpload($this, $owner, $team, $project);
@@ -219,7 +326,23 @@ test('todo updates and todo comments claim inline uploads to their exact models'
             'body' => inlineAttachmentCoverageBody($updatedListCommentUpload['previewUrl'], '更新添付'),
         ])
         ->assertRedirect();
+    expectInlineAttachmentDetached($listCommentUpload['id']);
     expectInlineAttachmentClaimed($updatedListCommentUpload['id'], $listComment);
+
+    $this->actingAs($owner)
+        ->delete(route('projects.todos.destroy', [$team, $project, $todoList, $todo]))
+        ->assertRedirect();
+
+    expectInlineAttachmentDetached($todoUpload['id']);
+    expectInlineAttachmentDetached($todoCommentUpload['id']);
+    expectInlineAttachmentDetached($updatedTodoCommentUpload['id']);
+
+    $this->actingAs($owner)
+        ->delete(route('projects.todo-lists.destroy', [$team, $project, $todoList]))
+        ->assertRedirect();
+
+    expectInlineAttachmentDetached($listCommentUpload['id']);
+    expectInlineAttachmentDetached($updatedListCommentUpload['id']);
 });
 
 test('removeFromBody strips links and images for every supported rich text attribute', function () {

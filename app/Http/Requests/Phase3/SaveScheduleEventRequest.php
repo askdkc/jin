@@ -41,7 +41,7 @@ class SaveScheduleEventRequest extends FormRequest
             'details' => ['nullable', 'string', 'max:5000'],
             'meeting_url' => ['nullable', 'url:http,https', 'max:2048'],
             'starts_at' => ['required', 'date_format:Y-m-d\\TH:i'],
-            'ends_at' => ['required', 'date_format:Y-m-d\\TH:i', 'after_or_equal:starts_at'],
+            'ends_at' => ['required', 'date_format:Y-m-d\\TH:i', 'after:starts_at'],
             'all_day' => ['boolean'],
             'recurrence' => ['nullable', Rule::in(ScheduleEvent::RECURRENCES)],
             'recurrence_until' => ['nullable', 'date_format:Y-m-d', 'required_with:recurrence'],

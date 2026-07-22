@@ -3,11 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\Phase10\EverythingIndexRequest;
+use App\Models\CheckInPrompt;
 use App\Models\MessageBoardPost;
 use App\Models\Project;
+use App\Models\ScheduleEvent;
 use App\Models\StoredFile;
 use App\Models\Team;
 use App\Models\User;
+use App\Support\RichText;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -175,9 +178,17 @@ class EverythingController extends Controller
                 'CASE
                     WHEN comments.commentable_type = ? THEN ?
                     WHEN comments.commentable_type = ? THEN ?
+                    WHEN comments.commentable_type = ? THEN ?
+                    WHEN comments.commentable_type = ? THEN ?
                     ELSE ?
                 END as target',
-                [MessageBoardPost::class, 'messages', StoredFile::class, 'files', 'todos'],
+                [
+                    MessageBoardPost::class, 'messages',
+                    StoredFile::class, 'files',
+                    ScheduleEvent::class, 'schedule',
+                    CheckInPrompt::class, 'check_ins',
+                    'todos',
+                ],
             );
 
         $this->applySearch($query, $search, ['comments.body']);
@@ -229,7 +240,7 @@ class EverythingController extends Controller
             'id' => (int) $values['id'],
             'type' => (string) $values['type'],
             'title' => (string) $values['title'],
-            'snippet' => Str::limit(trim((string) $values['snippet']), 240),
+            'snippet' => Str::limit(RichText::plainText((string) $values['snippet']), 240),
             'target' => (string) $values['target'],
             'project' => [
                 'id' => (int) $values['project_id'],

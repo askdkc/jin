@@ -1,11 +1,14 @@
 <?php
 
 use App\Enums\TeamRole;
+use App\Models\CheckIn;
+use App\Models\CheckInPrompt;
 use App\Models\Comment;
 use App\Models\Document;
 use App\Models\ExternalLink;
 use App\Models\MessageBoardPost;
 use App\Models\Project;
+use App\Models\ScheduleEvent;
 use App\Models\StoredFile;
 use App\Models\Team;
 use App\Models\Todo;
@@ -57,7 +60,7 @@ test('everything search filters by words type and project', function () {
     $otherProject->members()->attach($member);
     Document::factory()->for($project)->for($member, 'creator')->create([
         'title' => '通常文書',
-        'body' => '固有検索語を含む本文',
+        'body' => '<p><strong>固有検索語</strong>を含む &lt;本文&gt;</p>',
     ]);
     MessageBoardPost::factory()->for($project)->for($member, 'user')->create([
         'title' => '固有検索語のお知らせ',
@@ -77,6 +80,7 @@ test('everything search filters by words type and project', function () {
             ->has('results.data', 1)
             ->where('results.data.0.type', 'document')
             ->where('results.data.0.title', '通常文書')
+            ->where('results.data.0.snippet', '固有検索語を含む <本文>')
             ->where('filters.q', '固有検索語')
             ->where('filters.type', 'document')
             ->where('filters.project', $project->id));
@@ -158,7 +162,7 @@ test('everything results are paginated and retain search filters', function () {
             )));
 });
 
-test('comments link back to their message or todo tool', function () {
+test('comments link back to their parent tool', function () {
     $owner = User::factory()->create();
     $team = Team::factory()->create();
     $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
@@ -167,18 +171,23 @@ test('comments link back to their message or todo tool', function () {
     $todoList = TodoList::factory()->for($project)->create();
     $todo = Todo::factory()->for($todoList)->for($owner, 'creator')->create();
     $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create();
+    $event = ScheduleEvent::factory()->for($project)->for($owner, 'creator')->create();
+    $checkIn = CheckIn::factory()->for($project)->for($owner, 'creator')->create();
+    $prompt = CheckInPrompt::factory()->for($checkIn)->for($owner)->create();
     Comment::factory()->for($project)->for($owner, 'user')->for($message, 'commentable')->create(['body' => 'メッセージ側コメント']);
     Comment::factory()->for($project)->for($owner, 'user')->for($todo, 'commentable')->create(['body' => 'To-do側コメント']);
     Comment::factory()->for($project)->for($owner, 'user')->for($file, 'commentable')->create(['body' => 'ファイル側コメント']);
+    Comment::factory()->for($project)->for($owner, 'user')->for($event, 'commentable')->create(['body' => '予定側コメント']);
+    Comment::factory()->for($project)->for($owner, 'user')->for($prompt, 'commentable')->create(['body' => 'チェックイン側コメント']);
 
     $this->actingAs($owner)
         ->get(route('everything.index', [$team, 'type' => 'comment']))
         ->assertInertia(fn (Assert $page) => $page
-            ->has('results.data', 3)
+            ->has('results.data', 5)
             ->where('results.data', function (Collection $items): bool {
                 $targets = $items->pluck('target')->sort()->values()->all();
 
-                return $targets === ['files', 'messages', 'todos']
+                return $targets === ['check_ins', 'files', 'messages', 'schedule', 'todos']
                     && $items->every(fn (array $item): bool => $item['project']['id'] > 0
                         && preg_match('/^\d{4}-\d{2}-\d{2}/', $item['updatedAt']) === 1);
             }));

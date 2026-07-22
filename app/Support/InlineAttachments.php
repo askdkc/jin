@@ -27,24 +27,64 @@ class InlineAttachments
         int $uploaderId,
         ?string $body,
     ): void {
-        if ($body === null || $body === '' || preg_match_all('/\/files\/(\d+)/', $body, $matches) === false) {
-            return;
-        }
+        $matches = [];
+        preg_match_all('/\/files\/(\d+)/', $body ?? '', $matches);
+        $fileIds = array_values(array_unique(array_map('intval', $matches[1])));
 
-        $fileIds = array_unique(array_map('intval', $matches[1]));
+        $attachedInlineFiles = StoredFile::query()
+            ->where('attachable_type', $attachable->getMorphClass())
+            ->where('attachable_id', $attachable->getKey())
+            ->where('is_inline', true);
 
         if ($fileIds === []) {
+            $attachedInlineFiles->update([
+                'attachable_type' => null,
+                'attachable_id' => null,
+            ]);
+
             return;
         }
+
+        $attachedInlineFiles
+            ->whereNotIn('id', $fileIds)
+            ->update([
+                'attachable_type' => null,
+                'attachable_id' => null,
+            ]);
 
         StoredFile::query()
             ->where('project_id', $project->id)
             ->where('uploaded_by', $uploaderId)
+            ->where('is_inline', true)
             ->whereIn('id', $fileIds)
             ->whereNull('attachable_type')
+            ->whereNull('attachable_id')
             ->update([
                 'attachable_type' => $attachable->getMorphClass(),
                 'attachable_id' => $attachable->getKey(),
+            ]);
+    }
+
+    public static function detach(Model $attachable): void
+    {
+        self::detachMany($attachable->getMorphClass(), [$attachable->getKey()]);
+    }
+
+    /** @param iterable<int, int|string|null> $attachableIds */
+    public static function detachMany(string $morphClass, iterable $attachableIds): void
+    {
+        $attachableIds = collect($attachableIds)->filter(fn ($id) => $id !== null)->values();
+
+        if ($attachableIds->isEmpty()) {
+            return;
+        }
+
+        StoredFile::query()
+            ->where('attachable_type', $morphClass)
+            ->whereIn('attachable_id', $attachableIds)
+            ->update([
+                'attachable_type' => null,
+                'attachable_id' => null,
             ]);
     }
 
@@ -72,6 +112,24 @@ class InlineAttachments
             return;
         }
 
+        $cleaned = self::removeFileReferences($body, $needle);
+
+        if ($cleaned !== $body) {
+            $attachable->setAttribute($attribute, $cleaned)->save();
+        }
+    }
+
+    public static function withoutFileReferences(?string $body): ?string
+    {
+        if ($body === null || ! str_contains($body, '/files/')) {
+            return $body;
+        }
+
+        return self::removeFileReferences($body);
+    }
+
+    private static function removeFileReferences(string $body, ?string $needle = null): string
+    {
         $document = new DOMDocument('1.0', 'UTF-8');
         $loaded = $document->loadHTML(
             "<?xml encoding=\"UTF-8\"><body>{$body}</body>",
@@ -79,18 +137,25 @@ class InlineAttachments
         );
 
         if (! $loaded) {
-            return;
+            return $body;
         }
 
         $nodes = (new DOMXPath($document))->query('//*[@href or @src]');
 
         if ($nodes === false) {
-            return;
+            return $body;
         }
 
         foreach (iterator_to_array($nodes) as $node) {
-            if (! $node instanceof DOMElement
-                || ! str_contains($node->getAttribute('href').$node->getAttribute('src'), $needle)) {
+            if (! $node instanceof DOMElement) {
+                continue;
+            }
+
+            $reference = $node->getAttribute('href').$node->getAttribute('src');
+
+            if ($needle === null
+                ? preg_match('/\/files\/\d+/', $reference) !== 1
+                : ! str_contains($reference, $needle)) {
                 continue;
             }
 
@@ -108,7 +173,7 @@ class InlineAttachments
         $root = $document->getElementsByTagName('body')->item(0);
 
         if (! $root instanceof DOMElement) {
-            return;
+            return $body;
         }
 
         $cleaned = '';
@@ -117,6 +182,6 @@ class InlineAttachments
             $cleaned .= $document->saveHTML($node);
         }
 
-        $attachable->setAttribute($attribute, $cleaned)->save();
+        return $cleaned;
     }
 }

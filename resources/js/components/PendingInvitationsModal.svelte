@@ -1,6 +1,7 @@
 <script lang="ts">
     import { router } from '@inertiajs/svelte';
     import TeamInvitationController from '@/actions/App/Http/Controllers/Teams/TeamInvitationController';
+    import AlertError from '@/components/AlertError.svelte';
     import { Button } from '@/components/ui/button';
     import {
         Dialog,
@@ -19,18 +20,33 @@
 
     let open = $state(true);
     let processingCode = $state<string | null>(null);
+    let invitationError = $state<string | null>(null);
 
     const acceptInvitation = (invitation: DashboardInvitation) => {
         router.visit(TeamInvitationController.accept(invitation), {
-            onStart: () => (processingCode = invitation.code),
+            onStart: () => {
+                processingCode = invitation.code;
+                invitationError = null;
+            },
             onFinish: () => (processingCode = null),
+            onError: (errors) => {
+                invitationError =
+                    errors.invitation ?? t('Something went wrong.');
+            },
         });
     };
 
     const declineInvitation = (invitation: DashboardInvitation) => {
         router.visit(TeamInvitationController.decline(invitation), {
-            onStart: () => (processingCode = invitation.code),
+            onStart: () => {
+                processingCode = invitation.code;
+                invitationError = null;
+            },
             onFinish: () => (processingCode = null),
+            onError: (errors) => {
+                invitationError =
+                    errors.invitation ?? t('Something went wrong.');
+            },
             onSuccess: () => {
                 if (invitations.length === 1) {
                     open = false;
@@ -52,6 +68,10 @@
                 </DialogDescription>
             </div>
 
+            {#if invitationError}
+                <AlertError errors={[invitationError]} />
+            {/if}
+
             <div class="grid gap-4">
                 {#each invitations as invitation (invitation.code)}
                     <div
@@ -70,7 +90,7 @@
                             <Button
                                 variant="secondary"
                                 data-test="pending-invitation-decline"
-                                disabled={processingCode === invitation.code}
+                                disabled={processingCode !== null}
                                 onclick={() => declineInvitation(invitation)}
                             >
                                 {t('Decline')}
@@ -78,7 +98,7 @@
 
                             <Button
                                 data-test="pending-invitation-accept"
-                                disabled={processingCode === invitation.code}
+                                disabled={processingCode !== null}
                                 onclick={() => acceptInvitation(invitation)}
                             >
                                 {t('Accept')}

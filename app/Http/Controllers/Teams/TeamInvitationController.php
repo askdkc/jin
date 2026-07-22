@@ -16,6 +16,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 
 class TeamInvitationController extends Controller
@@ -100,6 +101,12 @@ class TeamInvitationController extends Controller
      */
     public function accept(RespondToTeamInvitationRequest $request, TeamInvitation $invitation): RedirectResponse
     {
+        if (! $invitation->role->isAssignable()) {
+            throw ValidationException::withMessages([
+                'invitation' => __('This invitation role is no longer available.'),
+            ]);
+        }
+
         $user = $request->user();
 
         DB::transaction(function () use ($user, $invitation) {

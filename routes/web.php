@@ -44,6 +44,8 @@ Route::get('calendar-subscriptions/{calendar_subscription}.ics', [CalendarSubscr
     ->name('calendar-subscriptions.show');
 Route::get('shared/documents/{document:public_token}', PublicDocumentController::class)
     ->name('public-documents.show');
+Route::get('dashboard', [DashboardController::class, 'redirectToCurrentTeam'])
+    ->middleware('auth');
 
 Route::prefix('{current_team}')
     ->middleware(['auth', 'verified', EnsureTeamMembership::class])
@@ -199,7 +201,7 @@ Route::get('internal/onlyoffice/files/{file}', OnlyOfficeFileController::class)
     ->name('files.onlyoffice.internal-download');
 
 Route::middleware(['auth'])->group(function () {
-    Route::get('invitations/{invitation}/accept', [TeamInvitationController::class, 'accept'])->name('invitations.accept');
+    Route::post('invitations/{invitation}/accept', [TeamInvitationController::class, 'accept'])->name('invitations.accept');
     Route::delete('invitations/{invitation}', [TeamInvitationController::class, 'decline'])->name('invitations.decline');
 });
 

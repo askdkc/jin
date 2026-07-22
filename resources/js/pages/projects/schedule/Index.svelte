@@ -47,7 +47,9 @@
     import {
         defaultScheduleEventTimes,
         halfHourOptions,
+        scheduleEventDaySegment,
         scheduleEventEnd,
+        scheduleEventLastDisplayDate,
     } from '@/lib/schedule-event-time';
     import type { ProjectScheduleEvent, ScheduleGridDay } from '@/types';
 
@@ -125,7 +127,11 @@
         return new Date(Date.UTC(year, monthNumber - 1, day)).getUTCDay();
     };
     const eventsForDate = (value: string): ProjectScheduleEvent[] =>
-        events.filter((event) => event.startsAt.slice(0, 10) === value);
+        events.filter(
+            (event) =>
+                scheduleEventDaySegment(event.startsAt, event.endsAt, value) !==
+                null,
+        );
 
     const shortDateFormatter = new Intl.DateTimeFormat('ja-JP', {
         month: 'numeric',
@@ -214,7 +220,8 @@
         );
         const lastDay = Math.min(
             ganttDayCount - 1,
-            epochDay(endsAt.slice(0, 10)) - epochDay(rangeStart),
+            epochDay(scheduleEventLastDisplayDate(endsAt)) -
+                epochDay(rangeStart),
         );
 
         return `${firstDay + 1} / ${lastDay + 2}`;
@@ -332,22 +339,46 @@
     const currentTimeLabel = $derived(
         `${String(currentNow.getHours()).padStart(2, '0')}:${String(currentNow.getMinutes()).padStart(2, '0')}`,
     );
-    const eventStartMinute = (event: ProjectScheduleEvent): number => {
-        const start = new Date(event.startsAt);
-
-        return start.getHours() * 60 + start.getMinutes();
-    };
-    const eventStyle = (event: ProjectScheduleEvent): string => {
-        const startsAt = new Date(event.startsAt);
-        const endsAt = new Date(event.endsAt);
-        const startMinute = eventStartMinute(event);
-        const duration = Math.max(
-            30,
-            (endsAt.getTime() - startsAt.getTime()) / 60_000,
+    const eventStyle = (
+        event: ProjectScheduleEvent,
+        displayDate: string,
+    ): string => {
+        const segment = scheduleEventDaySegment(
+            event.startsAt,
+            event.endsAt,
+            displayDate,
         );
-        const visibleDuration = Math.min(duration, 24 * 60 - startMinute);
 
-        return `top: ${(startMinute / 60) * hourHeight}px; height: ${Math.max(24, (visibleDuration / 60) * hourHeight)}px;`;
+        if (!segment) {
+            return '';
+        }
+
+        const top = (segment.startMinute / 60) * hourHeight;
+        const height = Math.min(
+            timelineHeight - top,
+            Math.max(
+                24,
+                ((segment.endMinute - segment.startMinute) / 60) * hourHeight,
+            ),
+        );
+
+        return `top: ${top}px; height: ${height}px;`;
+    };
+    const eventTimeLabel = (
+        event: ProjectScheduleEvent,
+        displayDate: string,
+    ): string => {
+        const segment = scheduleEventDaySegment(
+            event.startsAt,
+            event.endsAt,
+            displayDate,
+        );
+        const formatMinute = (value: number): string =>
+            `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
+
+        return segment
+            ? `${formatMinute(segment.startMinute)}–${formatMinute(segment.endMinute)}`
+            : '';
     };
     const scrollTimelineToCurrentTime = (
         node: HTMLElement,
@@ -780,6 +811,11 @@
                                 class="pointer-events-none relative z-10 mt-1 space-y-1"
                             >
                                 {#each day.events.slice(0, 3) as event (event.id)}
+                                    {@const segment = scheduleEventDaySegment(
+                                        event.startsAt,
+                                        event.endsAt,
+                                        day.date,
+                                    )}
                                     <Link
                                         href={ScheduleEventController.show([
                                             currentTeam.slug,
@@ -792,7 +828,8 @@
                                         <span class="font-semibold"
                                             >{event.title}</span
                                         >
-                                        {#if !event.allDay}<br /><span
+                                        {#if !event.allDay && segment?.startsOnDate}<br
+                                            /><span
                                                 class="text-muted-foreground"
                                                 >{new Intl.DateTimeFormat(
                                                     'ja-JP',
@@ -924,7 +961,7 @@
                                             event.id,
                                         ])}
                                         class="absolute inset-x-1 z-10 overflow-hidden rounded-md border border-primary/40 bg-primary/15 px-1.5 py-1 text-left text-xs shadow-sm hover:bg-primary/25 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
-                                        style={eventStyle(event)}
+                                        style={eventStyle(event, day.date)}
                                         title={event.title}
                                     >
                                         <span
@@ -933,12 +970,9 @@
                                         >
                                         <span
                                             class="block truncate text-[10px] text-muted-foreground"
-                                            >{event.startsAt.slice(
-                                                11,
-                                                16,
-                                            )}–{event.endsAt.slice(
-                                                11,
-                                                16,
+                                            >{eventTimeLabel(
+                                                event,
+                                                day.date,
                                             )}</span
                                         >
                                     </Link>

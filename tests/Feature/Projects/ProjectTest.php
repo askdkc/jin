@@ -247,6 +247,7 @@ test('project home summarizes the latest work', function () {
         'path' => "projects/{$project->id}/attachments/pasted-image.png",
         'original_name' => '貼り付け画像.png',
         'mime_type' => 'image/png',
+        'is_inline' => true,
     ]);
     $materialFolder = MaterialFolder::factory()
         ->for($project)

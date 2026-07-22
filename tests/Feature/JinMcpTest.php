@@ -96,3 +96,25 @@ test('jin mcp refuses an actor outside the team', function () {
 
     expect((string) $response->content())->toContain('見つかりません');
 });
+
+test('jin mcp refuses a zero duration schedule event', function () {
+    $owner = User::factory()->create(['email' => 'schedule-agent@example.test']);
+    $team = Team::factory()->create(['slug' => 'mcp-schedule-team']);
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($owner);
+
+    $response = (new CreateWorkspaceItemTool)->handle(new Request([
+        'team_slug' => $team->slug,
+        'user_email' => $owner->email,
+        'project_id' => $project->id,
+        'kind' => 'event',
+        'title' => 'ゼロ時間予定',
+        'starts_at' => '2026-08-20 10:00:00',
+        'ends_at' => '2026-08-20 10:00:00',
+    ]));
+
+    expect((string) $response->content())
+        ->toContain('終了日時は開始日時より後にしてください。')
+        ->and($project->scheduleEvents()->exists())->toBeFalse();
+});

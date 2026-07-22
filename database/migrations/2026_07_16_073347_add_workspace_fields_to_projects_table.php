@@ -28,6 +28,7 @@ return new class extends Migration
         Schema::table('projects', function (Blueprint $table) {
             $table->dropConstrainedForeignId('project_folder_id');
             $table->dropConstrainedForeignId('lead_id');
+            $table->dropIndex(['status']);
             $table->dropColumn(['phase', 'status', 'enabled_tools']);
         });
     }

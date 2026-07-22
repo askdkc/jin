@@ -110,7 +110,15 @@ class CardTableController extends Controller
         CardTable $cardTable,
     ): RedirectResponse {
         Gate::authorize('delete', $cardTable);
-        $cardTable->delete();
+        DB::transaction(function () use ($cardTable): void {
+            InlineAttachments::detachMany(
+                (new Card)->getMorphClass(),
+                Card::query()
+                    ->whereHas('cardColumn', fn ($query) => $query->where('card_table_id', $cardTable->id))
+                    ->pluck('id'),
+            );
+            $cardTable->delete();
+        });
 
         return to_route('projects.card-tables.index', [$currentTeam, $project]);
     }
@@ -184,10 +192,13 @@ class CardTableController extends Controller
         CardColumn $cardColumn,
     ): RedirectResponse {
         Gate::authorize('delete', $cardTable);
-        $cardColumn->delete();
-        $this->normalizeColumnPositions(
-            $cardTable->cardColumns()->orderBy('position')->orderBy('id')->pluck('id'),
-        );
+        DB::transaction(function () use ($cardColumn, $cardTable): void {
+            InlineAttachments::detachMany((new Card)->getMorphClass(), $cardColumn->cards()->pluck('id'));
+            $cardColumn->delete();
+            $this->normalizeColumnPositions(
+                $cardTable->cardColumns()->orderBy('position')->orderBy('id')->pluck('id'),
+            );
+        });
 
         return to_route('projects.card-tables.index', [$currentTeam, $project]);
     }
@@ -229,23 +240,25 @@ class CardTableController extends Controller
         Card $card,
     ): RedirectResponse {
         $version = (int) $request->validated('version');
-        $updated = Card::query()
-            ->whereKey($card->id)
-            ->where('version', $version)
-            ->update([
-                ...$request->safe()->except('version'),
-                'version' => $version + 1,
-            ]);
+        DB::transaction(function () use ($request, $project, $card, $version): void {
+            $updated = Card::query()
+                ->whereKey($card->id)
+                ->where('version', $version)
+                ->update([
+                    ...$request->safe()->except('version'),
+                    'version' => $version + 1,
+                ]);
 
-        $this->throwVersionConflictWhen($updated === 0);
+            $this->throwVersionConflictWhen($updated === 0);
 
-        $card->refresh();
-        InlineAttachments::syncFromBody(
-            $card,
-            $project,
-            $request->user()->id,
-            $card->description,
-        );
+            $card->refresh();
+            InlineAttachments::syncFromBody(
+                $card,
+                $project,
+                $request->user()->id,
+                $card->description,
+            );
+        });
 
         return to_route('projects.card-tables.index', [$currentTeam, $project]);
     }
@@ -327,10 +340,13 @@ class CardTableController extends Controller
         Gate::authorize('view', $cardTable);
         abort_unless($card->created_by === $request->user()->id || Gate::allows('delete', $cardTable), 403);
 
-        $card->delete();
-        $this->normalizeCardPositions(
-            $cardColumn->cards()->orderBy('position')->orderBy('id')->pluck('id'),
-        );
+        DB::transaction(function () use ($card, $cardColumn): void {
+            InlineAttachments::detach($card);
+            $card->delete();
+            $this->normalizeCardPositions(
+                $cardColumn->cards()->orderBy('position')->orderBy('id')->pluck('id'),
+            );
+        });
 
         return to_route('projects.card-tables.index', [$currentTeam, $project]);
     }

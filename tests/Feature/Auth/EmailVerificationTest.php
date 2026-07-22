@@ -13,6 +13,14 @@ test('email verification screen can be rendered', function () {
     $response->assertOk();
 });
 
+test('unverified users are redirected from verified routes', function () {
+    $user = User::factory()->unverified()->create();
+
+    $this->actingAs($user)
+        ->get(route('dashboard', $user->personalTeam()))
+        ->assertRedirect(route('verification.notice'));
+});
+
 test('email can be verified', function () {
     $user = User::factory()->unverified()->create();
     $team = $user->personalTeam();
@@ -68,6 +76,7 @@ test('email is not verified with invalid user id', function () {
 
 test('verified user is redirected to dashboard from verification prompt', function () {
     $user = User::factory()->create();
+    $team = $user->personalTeam();
 
     Event::fake();
 
@@ -75,6 +84,9 @@ test('verified user is redirected to dashboard from verification prompt', functi
 
     Event::assertNotDispatched(Verified::class);
     $response->assertRedirect('/dashboard');
+
+    $this->get('/dashboard')
+        ->assertRedirect(route('dashboard', $team));
 });
 
 test('already verified user visiting verification link is redirected without firing event again', function () {

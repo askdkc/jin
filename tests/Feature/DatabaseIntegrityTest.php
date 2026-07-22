@@ -1,5 +1,8 @@
 <?php
 
+use App\Models\Document;
+use App\Models\Project;
+use App\Models\StoredFile;
 use App\Models\Team;
 use App\Models\TeamInvitation;
 use App\Models\User;
@@ -53,6 +56,59 @@ test('email addresses are stored in canonical form', function () {
 
     expect($user->email)->toBe('member@example.com')
         ->and($invitation->email)->toBe('invited@example.com');
+});
+
+test('the default chat channel backfill is idempotent', function () {
+    $user = User::factory()->create();
+    $project = Project::factory()->for($user, 'creator')->create();
+    $migration = require database_path('migrations/2026_07_16_202254_backfill_default_chat_channels.php');
+
+    $migration->up();
+    $migration->down();
+    $migration->up();
+
+    expect($project->chatChannels()->where('name', 'general')->count())->toBe(1);
+});
+
+test('existing unverified users are backfilled without an unsafe rollback', function () {
+    $user = User::factory()->unverified()->create();
+    $migration = require database_path('migrations/2026_07_22_000001_backfill_existing_user_email_verification.php');
+
+    $migration->up();
+    expect($user->fresh()->email_verified_at)->not->toBeNull();
+
+    $migration->down();
+    expect($user->fresh()->email_verified_at)->not->toBeNull();
+});
+
+test('stored file inline classification backfill is data-safe and idempotent', function () {
+    $user = User::factory()->create();
+    $project = Project::factory()->for($user, 'creator')->create();
+    $document = Document::factory()->for($project)->for($user, 'creator')->create();
+    $referenced = StoredFile::factory()->for($project)->for($user, 'uploader')->create([
+        'attachable_type' => $document->getMorphClass(),
+        'attachable_id' => $document->id,
+        'is_inline' => false,
+    ]);
+    $unreferenced = StoredFile::factory()->for($project)->for($user, 'uploader')->create([
+        'attachable_type' => $document->getMorphClass(),
+        'attachable_id' => $document->id,
+        'is_inline' => false,
+    ]);
+    $neutral = StoredFile::factory()->for($project)->for($user, 'uploader')->create([
+        'is_inline' => false,
+    ]);
+    $document->update([
+        'body' => "<a href=\"/projects/{$project->id}/files/{$referenced->id}/preview\">inline</a>",
+    ]);
+    $migration = require database_path('migrations/2026_07_22_000003_backfill_stored_file_inline_flag.php');
+
+    $migration->up();
+    $migration->up();
+
+    expect($referenced->fresh()->is_inline)->toBeTrue()
+        ->and($unreferenced->fresh()->is_inline)->toBeFalse()
+        ->and($neutral->fresh()->is_inline)->toBeFalse();
 });
 
 test('dropping voice notes deletes their stored blobs first', function () {

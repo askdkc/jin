@@ -6,6 +6,7 @@ use App\Enums\ActivityType;
 use App\Http\Requests\Phase3\SaveMessageBoardPostReactionRequest;
 use App\Http\Requests\Phase3\SaveMessageBoardPostRequest;
 use App\Models\Activity;
+use App\Models\Comment;
 use App\Models\MessageBoardPost;
 use App\Models\Project;
 use App\Models\StoredFile;
@@ -108,12 +109,12 @@ class MessageBoardController extends Controller
             ]);
             $post->subscribers()->attach($request->user()->id);
 
+            InlineAttachments::syncFromBody($post, $project, $request->user()->id, $post->body);
             Activity::record($project, $request->user(), ActivityType::MessageCreated, $post, $post->title);
 
             return $post;
         });
 
-        InlineAttachments::syncFromBody($post, $project, $request->user()->id, $post->body);
         $this->notifyMentions($project, $request->user(), $post);
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Message posted.')]);
@@ -127,14 +128,21 @@ class MessageBoardController extends Controller
         Project $project,
         MessageBoardPost $messageBoardPost,
     ): RedirectResponse {
-        $messageBoardPost->update($request->validated());
+        $messageBoardPost = DB::transaction(function () use ($request, $project, $messageBoardPost): MessageBoardPost {
+            $messageBoardPost = MessageBoardPost::query()
+                ->lockForUpdate()
+                ->findOrFail($messageBoardPost->id);
+            $messageBoardPost->update($request->validated());
 
-        InlineAttachments::syncFromBody(
-            $messageBoardPost,
-            $project,
-            $request->user()->id,
-            $messageBoardPost->body,
-        );
+            InlineAttachments::syncFromBody(
+                $messageBoardPost,
+                $project,
+                $request->user()->id,
+                $messageBoardPost->body,
+            );
+
+            return $messageBoardPost;
+        });
         $this->notifyMentions($project, $request->user(), $messageBoardPost);
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Message updated.')]);
@@ -158,11 +166,12 @@ class MessageBoardController extends Controller
         abort_unless($this->canManage($messageBoardPost->user_id, $project), 403);
 
         DB::transaction(function () use ($messageBoardPost): void {
+            InlineAttachments::detachMany(
+                (new Comment)->getMorphClass(),
+                $messageBoardPost->comments()->pluck('id'),
+            );
             $messageBoardPost->comments()->delete();
-            $messageBoardPost->attachments()->update([
-                'attachable_type' => null,
-                'attachable_id' => null,
-            ]);
+            InlineAttachments::detach($messageBoardPost);
             $messageBoardPost->delete();
         });
 

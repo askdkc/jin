@@ -26,6 +26,7 @@ use RuntimeException;
  * @property int|null $uploaded_by
  * @property string|null $attachable_type
  * @property int|null $attachable_id
+ * @property bool $is_inline
  * @property string $disk
  * @property string $path
  * @property string $original_name
@@ -43,14 +44,17 @@ use RuntimeException;
  * @property-read Collection<int, Comment> $comments
  * @property-read Collection<int, User> $reactors
  */
-#[Fillable(['project_id', 'material_folder_id', 'uploaded_by', 'attachable_type', 'attachable_id', 'disk', 'path', 'original_name', 'mime_type', 'size', 'checksum', 'preview_path', 'preview_status'])]
+#[Fillable(['project_id', 'material_folder_id', 'uploaded_by', 'attachable_type', 'attachable_id', 'is_inline', 'disk', 'path', 'original_name', 'mime_type', 'size', 'checksum', 'preview_path', 'preview_status'])]
 class StoredFile extends Model
 {
     /** @use HasFactory<StoredFileFactory> */
     use HasFactory;
 
-    /** @var array<string, string> */
-    protected $attributes = ['disk' => 'local'];
+    /** @var array<string, bool|string> */
+    protected $attributes = [
+        'disk' => 'local',
+        'is_inline' => false,
+    ];
 
     protected static function booted(): void
     {
@@ -105,7 +109,15 @@ class StoredFile extends Model
      */
     public function scopeInMaterialLibrary(Builder $query): Builder
     {
-        return $query->where('path', 'not like', '%/attachments/%');
+        return $query
+            ->where('is_inline', false)
+            ->where(function (Builder $query): void {
+                $query->where('path', 'not like', '%/attachments/%')
+                    ->orWhere(function (Builder $query): void {
+                        $query->whereNull('attachable_type')
+                            ->whereNull('attachable_id');
+                    });
+            });
     }
 
     /** @return BelongsTo<Project, $this> */
@@ -144,5 +156,13 @@ class StoredFile extends Model
         return $this->belongsToMany(User::class, 'stored_file_reactions')
             ->withPivot('reaction')
             ->withTimestamps();
+    }
+
+    /** @return array<string, string> */
+    protected function casts(): array
+    {
+        return [
+            'is_inline' => 'boolean',
+        ];
     }
 }

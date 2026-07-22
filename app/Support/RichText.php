@@ -27,12 +27,20 @@ class RichText
 
         // The marker is always the first text inside <pre>/<code>, so it follows a ">".
         $withoutMarker = preg_replace('/>lang:\S+\n/', '>', $html) ?? $html;
+        $withCellSpaces = preg_replace('/<\/(?:td|th)>/i', ' ', $withoutMarker) ?? $withoutMarker;
+        $withBlockBreaks = preg_replace(
+            '/<br\s*\/?>|<\/(?:p|div|li|h[1-6]|blockquote|pre|tr)>/i',
+            "\n",
+            $withCellSpaces,
+        ) ?? $withCellSpaces;
 
-        return trim(html_entity_decode(
-            strip_tags($withoutMarker),
+        $plainText = html_entity_decode(
+            strip_tags($withBlockBreaks),
             ENT_QUOTES | ENT_HTML5,
             'UTF-8',
-        ));
+        );
+
+        return trim(preg_replace('/[ \t]+\n/', "\n", $plainText) ?? $plainText);
     }
 
     public static function sanitize(?string $value): ?string

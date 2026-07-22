@@ -20,10 +20,12 @@
     import ListTodo from 'lucide-svelte/icons/list-todo';
     import MessageSquare from 'lucide-svelte/icons/message-square';
     import Search from 'lucide-svelte/icons/search';
+    import CheckInController from '@/actions/App/Http/Controllers/CheckInController';
     import MessageBoardController from '@/actions/App/Http/Controllers/MessageBoardController';
     import ProjectDocumentController from '@/actions/App/Http/Controllers/ProjectDocumentController';
     import ProjectMaterialController from '@/actions/App/Http/Controllers/ProjectMaterialController';
     import ProjectTodoController from '@/actions/App/Http/Controllers/ProjectTodoController';
+    import ScheduleEventController from '@/actions/App/Http/Controllers/ScheduleEventController';
     import AppHead from '@/components/AppHead.svelte';
     import { Badge } from '@/components/ui/badge';
     import { Button } from '@/components/ui/button';
@@ -73,6 +75,8 @@
             documents: ProjectDocumentController.index,
             files: ProjectMaterialController.index,
             materials: ProjectMaterialController.index,
+            schedule: ScheduleEventController.index,
+            check_ins: CheckInController.index,
         }[target](args);
     };
     const formatDate = (value: string): string =>

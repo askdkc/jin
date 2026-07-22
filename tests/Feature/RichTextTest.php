@@ -62,9 +62,15 @@ it('renders excerpts without the code-fence marker or escaped entities', functio
     $html = "<p>本文です。</p><pre><code>lang:html\n&lt;body&gt;\n&lt;h1&gt;hello&lt;/h1&gt;</code></pre>";
 
     expect(RichText::plainText($html))
-        ->toBe("本文です。<body>\n<h1>hello</h1>")
+        ->toBe("本文です。\n<body>\n<h1>hello</h1>")
         ->not->toContain('lang:html')
         ->not->toContain('&lt;');
+
+    expect(RichText::plainText('<p>一行目</p><p>二行目</p>'))
+        ->toBe("一行目\n二行目");
+
+    expect(RichText::plainText('<table><tr><th>Name</th><th>Status</th></tr><tr><td>Foo</td><td>Done</td></tr></table>'))
+        ->toBe("Name Status\nFoo Done");
 
     expect(RichText::plainText(null))->toBe('');
 });

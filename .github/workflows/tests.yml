@@ -35,7 +35,7 @@ jobs:
         with:
           php-version: ${{ matrix.php-version }}
           tools: composer:v2
-          coverage: xdebug
+          coverage: none
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
@@ -43,7 +43,7 @@ jobs:
           node-version: '22'
 
       - name: Install Node Dependencies
-        run: npm i
+        run: npm ci
 
       - name: Install Dependencies
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
@@ -53,6 +53,15 @@ jobs:
 
       - name: Generate Application Key
         run: php artisan key:generate
+
+      - name: Test Migrations
+        env:
+          DB_DATABASE: ${{ runner.temp }}/migration-test.sqlite
+        run: |
+          touch "$DB_DATABASE"
+          php artisan migrate:fresh --force
+          php artisan migrate:reset --force
+          php artisan migrate --force
 
       - name: Build Assets
         run: npm run build
@@ -111,6 +120,7 @@ jobs:
         run: |
           cp .env.example .env
           php artisan key:generate
+          touch "$DB_DATABASE"
           php artisan migrate --force
 
       - name: Wait for ONLYOFFICE
@@ -119,9 +129,9 @@ jobs:
             if curl -fsS --connect-timeout 2 --max-time 3 \
               http://127.0.0.1:8081/healthcheck 2>/dev/null |
               tr -d '[:space:]' |
-              grep -Eiq '^(true|ok)$'; then
+              grep -Eiq '^(true|ok)$' &&
               curl -fsS --connect-timeout 2 --max-time 10 \
-                http://127.0.0.1:8081/web-apps/apps/api/documents/api.js >/dev/null
+                http://127.0.0.1:8081/web-apps/apps/api/documents/api.js >/dev/null; then
               exit 0
             fi
             sleep 2
@@ -129,9 +139,6 @@ jobs:
 
           echo 'ONLYOFFICE did not become ready within 240 seconds.' >&2
           exit 1
-
-      - name: Run ONLYOFFICE Contract Test
-        run: php artisan test --compact tests/Integration/OnlyOfficeDocumentServerTest.php
 
       - name: Run ONLYOFFICE DocumentServer Test
         env:

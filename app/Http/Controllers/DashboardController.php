@@ -10,6 +10,7 @@ use App\Models\TeamInvitation;
 use App\Models\Todo;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
 use Inertia\Inertia;
@@ -17,6 +18,17 @@ use Inertia\Response;
 
 class DashboardController extends Controller
 {
+    public function redirectToCurrentTeam(Request $request): RedirectResponse
+    {
+        $user = $request->user();
+        abort_unless($user instanceof User, 403);
+
+        $team = $user->currentTeam ?? $user->personalTeam();
+        abort_unless($team instanceof Team, 403);
+
+        return to_route('dashboard', ['current_team' => $team->slug]);
+    }
+
     public function __invoke(Request $request, Team $currentTeam): Response
     {
         Gate::authorize('viewAny', [Project::class, $currentTeam]);

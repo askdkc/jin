@@ -88,6 +88,28 @@ test('team invitations can be created by admins', function () {
     $response->assertRedirect(route('teams.edit', $team));
 });
 
+test('admins cannot invite team owners', function () {
+    Notification::fake();
+
+    $owner = User::factory()->create();
+    $admin = User::factory()->create();
+    $team = Team::factory()->create();
+
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($admin, ['role' => TeamRole::Admin->value]);
+
+    $response = $this
+        ->actingAs($admin)
+        ->post(route('teams.invitations.store', $team), [
+            'email' => 'invited@example.com',
+            'role' => TeamRole::Owner->value,
+        ]);
+
+    $response->assertSessionHasErrors('role');
+
+    expect($team->invitations()->where('email', 'invited@example.com')->exists())->toBeFalse();
+});
+
 test('existing team members cannot be invited', function () {
     Notification::fake();
 
@@ -185,15 +207,43 @@ test('team invitations can be accepted', function () {
         'invited_by' => $owner->id,
     ]);
 
+    $this->actingAs($invitedUser)
+        ->get(route('invitations.accept', $invitation))
+        ->assertMethodNotAllowed();
+
+    expect($invitedUser->fresh()->belongsToTeam($team))->toBeFalse();
+
     $response = $this
         ->actingAs($invitedUser)
-        ->get(route('invitations.accept', $invitation));
+        ->post(route('invitations.accept', $invitation));
 
     $response->assertRedirect(route('dashboard'));
     $response->assertInertiaFlash('toast', ['type' => 'success', 'message' => __('Invitation accepted.')]);
 
     expect($invitedUser->fresh()->belongsToTeam($team))->toBeTrue();
     expect($invitation->fresh()->accepted_at)->not->toBeNull();
+});
+
+test('legacy owner invitations cannot be accepted', function () {
+    $owner = User::factory()->create();
+    $invitedUser = User::factory()->create(['email' => 'invited@example.com']);
+    $team = Team::factory()->create();
+
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+
+    $invitation = TeamInvitation::factory()->create([
+        'team_id' => $team->id,
+        'email' => $invitedUser->email,
+        'role' => TeamRole::Owner,
+        'invited_by' => $owner->id,
+    ]);
+
+    $this->actingAs($invitedUser)
+        ->post(route('invitations.accept', $invitation))
+        ->assertSessionHasErrors('invitation');
+
+    expect($invitedUser->fresh()->belongsToTeam($team))->toBeFalse()
+        ->and($invitation->fresh()->accepted_at)->toBeNull();
 });
 
 test('team invitations can be declined by the invited user', function () {
@@ -283,7 +333,7 @@ test('team invitations cannot be accepted by uninvited user', function () {
 
     $response = $this
         ->actingAs($uninvitedUser)
-        ->get(route('invitations.accept', $invitation));
+        ->post(route('invitations.accept', $invitation));
 
     $response->assertSessionHasErrors('invitation');
 
@@ -305,7 +355,7 @@ test('expired invitations cannot be accepted', function () {
 
     $response = $this
         ->actingAs($invitedUser)
-        ->get(route('invitations.accept', $invitation));
+        ->post(route('invitations.accept', $invitation));
 
     $response->assertSessionHasErrors('invitation');
 

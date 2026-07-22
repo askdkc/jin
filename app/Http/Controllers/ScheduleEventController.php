@@ -144,10 +144,12 @@ class ScheduleEventController extends Controller
             'canEdit' => $canManageProject || $event->created_by === $userId,
         ];
 
-        $events = $project->scheduleEvents()
+        $overlappingEvents = fn (CarbonImmutable $start, CarbonImmutable $end) => $project->scheduleEvents()
+            ->where('starts_at', '<=', $end)
+            ->where('ends_at', '>', $start);
+
+        $events = $overlappingEvents($rangeStart, $rangeEnd)
             ->with('creator:id,name')
-            ->where('starts_at', '<=', $rangeEnd)
-            ->where('ends_at', '>=', $rangeStart)
             ->orderBy('starts_at')
             ->get()
             ->map($mapEvent);
@@ -158,9 +160,8 @@ class ScheduleEventController extends Controller
             $gridStart = $month->startOfWeek(CarbonImmutable::SUNDAY);
             $gridEnd = $month->endOfMonth()->endOfWeek(CarbonImmutable::SATURDAY);
 
-            $gridEvents = $project->scheduleEvents()
+            $gridEvents = $overlappingEvents($gridStart, $gridEnd)
                 ->with('creator:id,name')
-                ->whereBetween('starts_at', [$gridStart, $gridEnd])
                 ->orderBy('starts_at')
                 ->get()
                 ->map($mapEvent);
@@ -185,7 +186,7 @@ class ScheduleEventController extends Controller
     }
 
     /**
-     * @param  Collection<int, covariant array{startsAt: string}>  $events
+     * @param  Collection<int, covariant array{startsAt: string, endsAt: string}>  $events
      * @return list<list<array<string, mixed>>>
      */
     private function buildCalendarGrid(CarbonImmutable $gridStart, CarbonImmutable $gridEnd, CarbonImmutable $month, $events): array
@@ -199,6 +200,7 @@ class ScheduleEventController extends Controller
 
             for ($i = 0; $i < 7; $i++) {
                 $dateKey = $cursor->toDateString();
+                $nextDateKey = $cursor->addDay()->toDateString();
 
                 $week[] = [
                     'date' => $dateKey,
@@ -206,7 +208,8 @@ class ScheduleEventController extends Controller
                     'inCurrentMonth' => $cursor->month === $month->month,
                     'isToday' => $dateKey === $today,
                     'monthLabel' => $cursor->day === 1 ? $cursor->translatedFormat('M j, Y') : null,
-                    'events' => $events->filter(fn (array $event): bool => str_starts_with($event['startsAt'], $dateKey))->values()->all(),
+                    'events' => $events->filter(fn (array $event): bool => $event['startsAt'] < "{$nextDateKey}T00:00"
+                        && $event['endsAt'] > "{$dateKey}T00:00")->values()->all(),
                 ];
 
                 $cursor = $cursor->addDay();
@@ -235,21 +238,20 @@ class ScheduleEventController extends Controller
                 'recurrence_group_id' => $groupId,
             ]);
 
-            Activity::record($project, $request->user(), ActivityType::ScheduleCreated, $event, $event->title);
-
             if ($recurrence !== null && $recurrenceUntil !== null && $groupId !== null) {
                 $this->createRecurringOccurrences($project, $data, $recurrence, $groupId, $recurrenceUntil);
             }
 
+            InlineAttachments::syncFromBody(
+                $event,
+                $project,
+                $request->user()->id,
+                $event->details,
+            );
+            Activity::record($project, $request->user(), ActivityType::ScheduleCreated, $event, $event->title);
+
             return $event;
         });
-
-        InlineAttachments::syncFromBody(
-            $event,
-            $project,
-            $request->user()->id,
-            $event->details,
-        );
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Event created.')]);
 
@@ -284,6 +286,11 @@ class ScheduleEventController extends Controller
         $startsAt = CarbonImmutable::parse($data['starts_at']);
         $durationMinutes = $startsAt->diffInMinutes(CarbonImmutable::parse($data['ends_at']));
         $until = CarbonImmutable::parse($recurrenceUntil)->endOfDay();
+        $details = $data['details'] ?? null;
+        $occurrenceData = [
+            ...$data,
+            'details' => InlineAttachments::withoutFileReferences(is_string($details) ? $details : null),
+        ];
 
         for ($i = 1; $i <= self::MAX_RECURRING_OCCURRENCES; $i++) {
             $nextStart = match ($recurrence) {
@@ -297,7 +304,7 @@ class ScheduleEventController extends Controller
             }
 
             $project->scheduleEvents()->create([
-                ...$data,
+                ...$occurrenceData,
                 'starts_at' => $nextStart,
                 'ends_at' => $nextStart->addMinutes($durationMinutes),
                 'recurrence' => $recurrence,
@@ -312,14 +319,23 @@ class ScheduleEventController extends Controller
         Project $project,
         ScheduleEvent $scheduleEvent,
     ): RedirectResponse {
-        $scheduleEvent->update($request->validated());
+        $data = $request->validated();
+        $scheduleEvent = DB::transaction(function () use ($data, $scheduleEvent, $project, $request): ScheduleEvent {
+            $lockedEvent = ScheduleEvent::query()
+                ->whereKey($scheduleEvent->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        InlineAttachments::syncFromBody(
-            $scheduleEvent,
-            $project,
-            $request->user()->id,
-            $scheduleEvent->details,
-        );
+            $lockedEvent->update($data);
+            InlineAttachments::syncFromBody(
+                $lockedEvent,
+                $project,
+                $request->user()->id,
+                $lockedEvent->details,
+            );
+
+            return $lockedEvent;
+        });
 
         return to_route('projects.schedule.index', [$currentTeam, $project, 'month' => $scheduleEvent->starts_at->format('Y-m')]);
     }
@@ -333,8 +349,12 @@ class ScheduleEventController extends Controller
         abort_unless($scheduleEvent->created_by === request()->user()->id || Gate::allows('update', $project), 403);
 
         $month = $scheduleEvent->starts_at->format('Y-m');
-        $scheduleEvent->comments()->delete();
-        $scheduleEvent->delete();
+        DB::transaction(function () use ($scheduleEvent): void {
+            InlineAttachments::detach($scheduleEvent);
+            InlineAttachments::detachMany((new Comment)->getMorphClass(), $scheduleEvent->comments()->pluck('id'));
+            $scheduleEvent->comments()->delete();
+            $scheduleEvent->delete();
+        });
 
         return to_route('projects.schedule.index', [$currentTeam, $project, 'month' => $month]);
     }

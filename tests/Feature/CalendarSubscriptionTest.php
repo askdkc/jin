@@ -60,7 +60,7 @@ test('calendar feed contains only projects currently visible to its client owner
 
     ScheduleEvent::factory()->for($allClientsProject)->for($owner, 'creator')->create([
         'title' => '打合せ,確認;A\\B',
-        'details' => "1行目\n2行目",
+        'details' => '<p>1行目</p><p>2行目 &lt;確認&gt;</p>',
         'starts_at' => '2026-08-05 10:00:00',
         'ends_at' => '2026-08-05 11:00:00',
     ]);
@@ -89,12 +89,13 @@ test('calendar feed contains only projects currently visible to its client owner
         ->toContain("BEGIN:VCALENDAR\r\n")
         ->toContain('X-WR-CALNAME:共有\,チーム')
         ->toContain('SUMMARY:打合せ\,確認\;A\\\\B')
-        ->toContain('DESCRIPTION:全体共有\n1行目\n2行目')
+        ->toContain('DESCRIPTION:全体共有\n1行目\n2行目 <確認>')
         ->toContain('DTSTART:20260805T010000Z')
         ->toContain('DTEND:20260805T020000Z')
         ->toContain('SUMMARY:個別予定')
         ->toContain('DTSTART;VALUE=DATE:20260806')
         ->toContain('DTEND;VALUE=DATE:20260807')
+        ->not->toContain('<p>')
         ->not->toContain('社内機密予定');
 });
 

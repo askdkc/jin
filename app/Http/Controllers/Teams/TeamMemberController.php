@@ -8,6 +8,7 @@ use App\Http\Requests\Teams\UpdateTeamMemberRequest;
 use App\Models\Team;
 use App\Models\User;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Inertia\Inertia;
 
@@ -20,12 +21,15 @@ class TeamMemberController extends Controller
     {
         Gate::authorize('updateMember', $team);
 
+        $membership = $team->memberships()
+            ->where('user_id', $user->id)
+            ->firstOrFail();
+
+        abort_if($membership->role === TeamRole::Owner, 403, __('The team owner role cannot be changed.'));
+
         $newRole = TeamRole::from($request->validated('role'));
 
-        $team->memberships()
-            ->where('user_id', $user->id)
-            ->firstOrFail()
-            ->update(['role' => $newRole]);
+        $membership->update(['role' => $newRole]);
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Member role updated.')]);
 
@@ -39,15 +43,34 @@ class TeamMemberController extends Controller
     {
         Gate::authorize('removeMember', $team);
 
-        abort_if($team->owner()?->is($user), 403, __('The team owner cannot be removed.'));
+        DB::transaction(function () use ($team, $user): void {
+            $member = User::query()->lockForUpdate()->findOrFail($user->id);
+            $membership = $team->memberships()
+                ->where('user_id', $member->id)
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        $team->memberships()
-            ->where('user_id', $user->id)
-            ->delete();
+            abort_if($membership->role === TeamRole::Owner, 403, __('The team owner cannot be removed.'));
 
-        if ($user->isCurrentTeam($team)) {
-            $user->switchTeam($user->personalTeam());
-        }
+            $personalTeam = $member->personalTeam();
+            $fallbackTeam = $member->isCurrentTeam($team)
+                ? ($personalTeam !== null && ! $personalTeam->is($team)
+                    ? $personalTeam
+                    : $member->fallbackTeam($team))
+                : null;
+
+            $membership->delete();
+
+            if (! $member->isCurrentTeam($team)) {
+                return;
+            }
+
+            if ($fallbackTeam !== null && $member->switchTeam($fallbackTeam)) {
+                return;
+            }
+
+            $member->update(['current_team_id' => null]);
+        });
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Member removed.')]);
 

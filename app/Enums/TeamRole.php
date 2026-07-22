@@ -65,6 +65,11 @@ enum TeamRole: string
         return $this->level() >= $role->level();
     }
 
+    public function isAssignable(): bool
+    {
+        return $this !== self::Owner;
+    }
+
     /**
      * Get the roles that can be assigned to team members (excludes Owner).
      *
@@ -73,9 +78,15 @@ enum TeamRole: string
     public static function assignable(): array
     {
         return collect(self::cases())
-            ->filter(fn (self $role) => $role !== self::Owner)
+            ->filter(fn (self $role) => $role->isAssignable())
             ->map(fn (self $role) => ['value' => $role->value, 'label' => $role->label()])
             ->values()
             ->toArray();
+    }
+
+    /** @return list<string> */
+    public static function assignableValues(): array
+    {
+        return array_column(self::assignable(), 'value');
     }
 }

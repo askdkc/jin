@@ -7,6 +7,7 @@ use App\Models\CalendarSubscription;
 use App\Models\Project;
 use App\Models\ScheduleEvent;
 use App\Models\Team;
+use App\Support\RichText;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\RedirectResponse;
@@ -90,9 +91,10 @@ class CalendarSubscriptionController extends Controller
 
         foreach ($events as $event) {
             $description = $event->project->name;
+            $details = RichText::plainText($event->details);
 
-            if ($event->details !== null && $event->details !== '') {
-                $description .= "\n".$event->details;
+            if ($details !== '') {
+                $description .= "\n".$details;
             }
 
             $lines = [

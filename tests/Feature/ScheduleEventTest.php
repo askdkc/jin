@@ -42,6 +42,86 @@ test('project participants can create and view events for a selected month', fun
             ->where('events.0.startsAt', '2026-08-03T10:00'));
 });
 
+test('an event must end after it starts', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+
+    $this->actingAs($owner)
+        ->post(route('projects.schedule.store', [$team, $project]), [
+            'title' => 'Zero duration',
+            'starts_at' => '2026-08-03T10:00',
+            'ends_at' => '2026-08-03T10:00',
+            'all_day' => false,
+        ])
+        ->assertSessionHasErrors('ends_at');
+
+    expect($project->scheduleEvents()->exists())->toBeFalse();
+});
+
+test('legacy zero or negative duration events are normalized idempotently and remain visible', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $negativeDurationEvent = ScheduleEvent::factory()->for($project)->for($owner, 'creator')->create([
+        'starts_at' => '2026-08-03 10:00:00',
+        'ends_at' => '2026-08-03 09:00:00',
+    ]);
+    $zeroDurationEvent = ScheduleEvent::factory()->for($project)->for($owner, 'creator')->create([
+        'starts_at' => '2026-08-03 11:00:00',
+        'ends_at' => '2026-08-03 11:00:00',
+    ]);
+    $migration = require database_path('migrations/2026_07_22_133848_normalize_legacy_schedule_event_durations.php');
+
+    $migration->up();
+    $migration->down();
+    $migration->up();
+
+    expect($negativeDurationEvent->fresh()->ends_at->format('Y-m-d H:i:s'))->toBe('2026-08-03 10:30:00')
+        ->and($zeroDurationEvent->fresh()->ends_at->format('Y-m-d H:i:s'))->toBe('2026-08-03 11:30:00');
+
+    $this->actingAs($owner)
+        ->get(route('projects.schedule.index', [$team, $project, 'view' => 'day', 'date' => '2026-08-03']))
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('events', 2)
+            ->where('events.0.startsAt', '2026-08-03T10:00')
+            ->where('events.0.endsAt', '2026-08-03T10:30')
+            ->where('events.1.startsAt', '2026-08-03T11:00')
+            ->where('events.1.endsAt', '2026-08-03T11:30'));
+});
+
+test('the month grid shows a cross-month event on every overlapping day', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $event = ScheduleEvent::factory()->for($project)->for($owner, 'creator')->create([
+        'starts_at' => '2026-07-25 23:00:00',
+        'ends_at' => '2026-08-02 00:00:00',
+    ]);
+
+    $this->actingAs($owner)
+        ->get(route('projects.schedule.index', [$team, $project, 'month' => '2026-08']))
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('events', 1)
+            ->where('weeks', fn ($weeks): bool => $weeks
+                ->flatten(1)
+                ->filter(fn (array $day): bool => collect($day['events'])->contains('id', $event->id))
+                ->pluck('date')
+                ->values()
+                ->all() === [
+                    '2026-07-26',
+                    '2026-07-27',
+                    '2026-07-28',
+                    '2026-07-29',
+                    '2026-07-30',
+                    '2026-07-31',
+                    '2026-08-01',
+                ]));
+});
+
 test('project participants can open an event detail and add comments and reactions', function () {
     $owner = User::factory()->create();
     $member = User::factory()->create();

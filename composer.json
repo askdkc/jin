@@ -67,9 +67,11 @@
         ],
         "ci:check": [
             "Composer\\Config::disableProcessTimeout",
+            "@php artisan wayfinder:generate --with-form --no-interaction",
             "npm run lint:check",
             "npm run format:check",
             "npm run types:check",
+            "npm run test:schedule-time",
             "@test"
         ],
         "types:check": [

@@ -13,6 +13,7 @@ use App\Models\Todo;
 use App\Models\TodoList;
 use App\Models\User;
 use App\Support\StoredFilePreviewGenerator;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
@@ -43,6 +44,7 @@ test('materials library is served from the files URL with ordered folders and fi
         'path' => "projects/{$project->id}/attachments/pasted-image.png",
         'original_name' => '貼り付け画像.png',
         'mime_type' => 'image/png',
+        'is_inline' => true,
     ]);
 
     $libraryUrl = route('projects.materials.index', [
@@ -316,6 +318,115 @@ test('deleting a stored file removes its blobs and comments without breaking act
             ->where('activities.0.id', $activity->id)
             ->where('activities.0.target', 'files')
             ->where('activities.0.subjectId', null));
+});
+
+test('a deletion interrupted after removing the blob is completed after its lease expires', function () {
+    Storage::fake('local');
+
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'path' => 'projects/test/interrupted.pdf',
+        'original_name' => 'interrupted.pdf',
+    ]);
+    Storage::disk('local')->put($file->path, 'pdf');
+    $failFinalization = true;
+    Event::listen(
+        'eloquent.deleting: '.StoredFile::class,
+        function (StoredFile $deleting) use ($file, &$failFinalization): void {
+            if ($failFinalization && $deleting->is($file)) {
+                $failFinalization = false;
+
+                throw new RuntimeException('Forced finalization failure.');
+            }
+        },
+    );
+
+    $this->withoutExceptionHandling();
+
+    expect(fn () => $this->actingAs($owner)
+        ->delete(route('projects.files.destroy', [$team, $project, $file])))
+        ->toThrow(RuntimeException::class, 'Forced finalization failure.');
+
+    Storage::disk('local')->assertMissing($file->path);
+    expect($file->fresh()?->preview_status)->toBe('deleting');
+    $file->forceFill(['updated_at' => now()->subSeconds(61)])->saveQuietly();
+
+    $this->withExceptionHandling();
+    $this->actingAs($owner)
+        ->delete(route('projects.files.destroy', [$team, $project, $file]))
+        ->assertRedirect();
+
+    expect($file->fresh())->toBeNull();
+});
+
+test('a deleting file is retried only after its lease expires while the blob still exists', function () {
+    Storage::fake('local');
+
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $inProgress = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'path' => 'projects/test/in-progress.pdf',
+        'original_name' => 'in-progress.pdf',
+    ]);
+    $stale = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'path' => 'projects/test/stale.pdf',
+        'original_name' => 'stale.pdf',
+    ]);
+    Storage::disk('local')->put($inProgress->path, 'pdf');
+    Storage::disk('local')->put($stale->path, 'pdf');
+    $inProgress->forceFill([
+        'preview_status' => 'deleting',
+        'updated_at' => now(),
+    ])->saveQuietly();
+    $stale->forceFill([
+        'preview_status' => 'deleting',
+        'updated_at' => now()->subSeconds(61),
+    ])->saveQuietly();
+
+    $this->actingAs($owner)
+        ->delete(route('projects.files.destroy', [$team, $project, $inProgress]))
+        ->assertRedirect();
+    $this->actingAs($owner)
+        ->delete(route('projects.files.destroy', [$team, $project, $stale]))
+        ->assertRedirect();
+
+    Storage::disk('local')->assertExists($inProgress->path);
+    Storage::disk('local')->assertMissing($stale->path);
+    expect($inProgress->fresh()?->preview_status)->toBe('deleting')
+        ->and($stale->fresh())->toBeNull();
+});
+
+test('a storage deletion failure restores the file only while the same lease is held', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'path' => 'projects/test/failing.pdf',
+        'original_name' => 'failing.pdf',
+    ]);
+    $file->forceFill([
+        'preview_path' => 'previews/failing.webp',
+        'preview_status' => 'ready',
+    ])->saveQuietly();
+    $disk = Mockery::mock(FilesystemAdapter::class);
+    $disk->shouldReceive('exists')->twice()->with($file->path)->andReturnTrue();
+    $disk->shouldReceive('delete')->once()->with($file->path)->andReturnFalse();
+    Storage::shouldReceive('disk')->twice()->with('local')->andReturn($disk);
+
+    $this->withoutExceptionHandling();
+
+    expect(fn () => $this->actingAs($owner)
+        ->delete(route('projects.files.destroy', [$team, $project, $file])))
+        ->toThrow(RuntimeException::class, 'File deletion failed.');
+
+    expect($file->fresh()?->preview_path)->toBe('previews/failing.webp')
+        ->and($file->fresh()?->preview_status)->toBe('ready');
 });
 
 test('deleting an inline file removes its rich text reference', function () {
@@ -816,6 +927,7 @@ test('final deletion CAS leaves a changed stored file and its relations untouche
     $finalizeDeletion = new ReflectionMethod(ProjectFileController::class, 'finalizeDeletion');
     expect($finalizeDeletion->invoke(new ProjectFileController, $file->id, [
         'path' => $expectedPath,
+        'lease_token' => (string) $file->getRawOriginal('updated_at'),
     ]))->toBeFalse();
 
     expect($file->fresh()->path)->toBe('projects/test/new-report.pdf')

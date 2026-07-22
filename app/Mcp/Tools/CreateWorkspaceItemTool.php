@@ -127,8 +127,8 @@ class CreateWorkspaceItemTool extends Tool
     /** @param array<string, mixed> $input */
     private function createEvent(Project $project, User $user, array $input): ScheduleEvent|Response
     {
-        if (strtotime($input['ends_at']) < strtotime($input['starts_at'])) {
-            return Response::error('終了日時は開始日時以降にしてください。');
+        if (strtotime($input['ends_at']) <= strtotime($input['starts_at'])) {
+            return Response::error('終了日時は開始日時より後にしてください。');
         }
 
         return DB::transaction(function () use ($input, $project, $user) {

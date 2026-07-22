@@ -4,6 +4,7 @@ use App\Enums\TeamRole;
 use App\Models\Team;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Inertia\Testing\AssertableInertia as Assert;
 
 test('the teams index page can be rendered', function () {
@@ -336,6 +337,31 @@ test('leaving current team switches to alphabetically first remaining team', fun
     expect($member->fresh()->current_team_id)->toEqual($alphaTeam->id);
 });
 
+test('leaving a team rolls back when switching the current team fails', function () {
+    $owner = User::factory()->create();
+    $member = User::factory()->create();
+    $team = Team::factory()->create();
+
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $member->update(['current_team_id' => $team->id]);
+
+    Event::listen('eloquent.updating: '.User::class, function (User $updating) use ($member): void {
+        if ($updating->is($member)) {
+            throw new RuntimeException('Forced current-team update failure.');
+        }
+    });
+
+    $this->withoutExceptionHandling();
+
+    expect(fn () => $this->actingAs($member)
+        ->delete(route('teams.leave', $team)))
+        ->toThrow(RuntimeException::class, 'Forced current-team update failure.');
+
+    expect($member->fresh()->belongsToTeam($team))->toBeTrue()
+        ->and($member->fresh()->current_team_id)->toBe($team->id);
+});
+
 test('personal teams cannot be left', function () {
     $user = User::factory()->create();
     $personalTeam = $user->personalTeam();
@@ -443,7 +469,7 @@ test('users can switch teams', function () {
         ->actingAs($user)
         ->post(route('teams.switch', $team));
 
-    $response->assertRedirect();
+    $response->assertRedirect(route('dashboard', ['current_team' => $team->slug]));
 
     expect($user->fresh()->current_team_id)->toEqual($team->id);
 });

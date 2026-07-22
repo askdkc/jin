@@ -35,6 +35,7 @@ test('project participants can attach private files to messages', function () {
     expect($attachment)
         ->attachable_type->toBe(MessageBoardPost::class)
         ->attachable_id->toBe($post->id)
+        ->is_inline->toBeFalse()
         ->uploaded_by->toBe($member->id);
     Storage::disk('local')->assertExists($attachment->path);
 
@@ -70,6 +71,16 @@ test('project participants can attach files to todos', function () {
     $attachment = StoredFile::query()->firstOrFail();
 
     expect($attachment)
+        ->attachable_type->toBe(Todo::class)
+        ->attachable_id->toBe($todo->id)
+        ->is_inline->toBeFalse();
+
+    $this->patch(route('projects.todos.update', [$team, $project, $list, $todo]), [
+        'title' => $todo->title,
+        'details' => '<p>本文だけを更新</p>',
+    ])->assertRedirect();
+
+    expect($attachment->fresh())
         ->attachable_type->toBe(Todo::class)
         ->attachable_id->toBe($todo->id);
 
@@ -128,12 +139,22 @@ test('a file dropped into the editor uploads inline and is linked once the messa
 
     expect($attachment)
         ->attachable_type->toBeNull()
-        ->attachable_id->toBeNull();
+        ->attachable_id->toBeNull()
+        ->is_inline->toBeTrue();
+
+    $ordinaryAttachment = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'path' => "projects/{$project->id}/attachments/ordinary.pdf",
+    ]);
+    $ordinaryPreviewUrl = route(
+        'projects.files.preview',
+        [$team, $project, $ordinaryAttachment],
+        absolute: false,
+    );
 
     $this->actingAs($owner)
         ->post(route('projects.messages.store', [$team, $project]), [
             'title' => '企画のお知らせ',
-            'body' => "<p>資料を添付しました。</p><p><a href=\"{$response['previewUrl']}\">📎 企画書.pdf</a></p>",
+            'body' => "<p>資料を添付しました。</p><p><a href=\"{$response['previewUrl']}\">📎 企画書.pdf</a><a href=\"{$ordinaryPreviewUrl}\">ordinary.pdf</a></p>",
         ])
         ->assertRedirect();
 
@@ -141,7 +162,11 @@ test('a file dropped into the editor uploads inline and is linked once the messa
 
     expect($attachment->fresh())
         ->attachable_type->toBe(MessageBoardPost::class)
-        ->attachable_id->toBe($post->id);
+        ->attachable_id->toBe($post->id)
+        ->and($ordinaryAttachment->fresh())
+        ->attachable_type->toBeNull()
+        ->attachable_id->toBeNull()
+        ->is_inline->toBeFalse();
 });
 
 test('authorized project members can use inline uploads without the messages tool', function () {
@@ -227,11 +252,12 @@ test('deleting a message keeps its attachment in project files', function () {
     $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
     $project = Project::factory()->for($team)->for($owner, 'creator')->create();
     $post = MessageBoardPost::factory()->for($project)->for($owner)->create();
-    Storage::disk('local')->put('projects/test/retained.pdf', 'retained');
+    $path = "projects/{$project->id}/attachments/retained.pdf";
+    Storage::disk('local')->put($path, 'retained');
     $attachment = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
         'attachable_type' => MessageBoardPost::class,
         'attachable_id' => $post->id,
-        'path' => 'projects/test/retained.pdf',
+        'path' => $path,
     ]);
 
     $this->actingAs($owner)
@@ -240,6 +266,9 @@ test('deleting a message keeps its attachment in project files', function () {
 
     expect($attachment->fresh())
         ->attachable_type->toBeNull()
-        ->attachable_id->toBeNull();
+        ->attachable_id->toBeNull()
+        ->is_inline->toBeFalse()
+        ->and(StoredFile::query()->inMaterialLibrary()->whereKey($attachment->id)->exists())
+        ->toBeTrue();
     Storage::disk('local')->assertExists($attachment->path);
 });

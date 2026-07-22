@@ -3,6 +3,7 @@
 use App\Enums\TeamRole;
 use App\Models\Team;
 use App\Models\User;
+use Illuminate\Support\Facades\Event;
 
 test('team member roles can be updated by owners', function () {
     $owner = User::factory()->create();
@@ -78,17 +79,38 @@ test('team members cannot be removed by non owners', function () {
 
 test('team owner cannot be removed', function () {
     $owner = User::factory()->create();
+    $legacyOwner = User::factory()->create();
     $team = Team::factory()->create();
 
     $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($legacyOwner, ['role' => TeamRole::Owner->value]);
 
     $response = $this
         ->actingAs($owner)
-        ->delete(route('teams.members.destroy', [$team, $owner]));
+        ->delete(route('teams.members.destroy', [$team, $legacyOwner]));
 
     $response->assertForbidden();
 
-    expect($owner->fresh()->belongsToTeam($team))->toBeTrue();
+    expect($legacyOwner->fresh()->belongsToTeam($team))->toBeTrue();
+});
+
+test('team owner role cannot be changed', function () {
+    $owner = User::factory()->create();
+    $legacyOwner = User::factory()->create();
+    $team = Team::factory()->create();
+
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($legacyOwner, ['role' => TeamRole::Owner->value]);
+
+    $response = $this
+        ->actingAs($owner)
+        ->patch(route('teams.members.update', [$team, $legacyOwner]), [
+            'role' => TeamRole::Admin->value,
+        ]);
+
+    $response->assertForbidden();
+
+    expect($team->members()->where('user_id', $legacyOwner->id)->first()->pivot->role->value)->toEqual(TeamRole::Owner->value);
 });
 
 test('team member role cannot be set to owner', function () {
@@ -126,4 +148,49 @@ test('removed member current team is set to personal team', function () {
         ->delete(route('teams.members.destroy', [$team, $member]));
 
     expect($member->fresh()->current_team_id)->toEqual($personalTeam->id);
+});
+
+test('removing a member from another personal team never keeps that removed team current', function () {
+    $owner = User::factory()->create();
+    $team = $owner->personalTeam();
+    $member = User::factory()->create();
+    $memberPersonalTeam = $member->personalTeam();
+
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $member->update(['current_team_id' => $team->id]);
+
+    // Without explicitly excluding the target, personalTeam() resolves this older team first.
+    expect($member->personalTeam()?->is($team))->toBeTrue();
+
+    $this->actingAs($owner)
+        ->delete(route('teams.members.destroy', [$team, $member]))
+        ->assertRedirect(route('teams.edit', $team));
+
+    expect($member->fresh()->belongsToTeam($team))->toBeFalse()
+        ->and($member->fresh()->current_team_id)->toBe($memberPersonalTeam->id);
+});
+
+test('member removal rolls back when switching the current team fails', function () {
+    $owner = User::factory()->create();
+    $member = User::factory()->create();
+    $team = Team::factory()->create();
+
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $member->update(['current_team_id' => $team->id]);
+
+    Event::listen('eloquent.updating: '.User::class, function (User $updating) use ($member): void {
+        if ($updating->is($member)) {
+            throw new RuntimeException('Forced current-team update failure.');
+        }
+    });
+
+    $this->withoutExceptionHandling();
+
+    expect(fn () => $this->actingAs($owner)
+        ->delete(route('teams.members.destroy', [$team, $member])))
+        ->toThrow(RuntimeException::class, 'Forced current-team update failure.');
+
+    expect($member->fresh()->belongsToTeam($team))->toBeTrue()
+        ->and($member->fresh()->current_team_id)->toBe($team->id);
 });

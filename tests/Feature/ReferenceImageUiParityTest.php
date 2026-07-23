@@ -24,10 +24,27 @@ test('reference image pages keep their feature-specific semantic hierarchy', fun
             '/\{#each activeTodos as todo.*<details[^>]*>.*\{#each completedTodos as todo/s',
             $todos,
         ) === 1,
-        'kanban stable accent palette' => str_contains($kanban, 'columnAccentClasses')
-            && str_contains($kanban, 'columnAccent(columnIndex)'),
+        'kanban stable accent palette' => str_contains($kanban, 'const columnAccents = [')
+            && array_reduce(
+                range(1, 5),
+                fn (bool $matches, int $index): bool => $matches
+                    && str_contains(
+                        $kanban,
+                        "{ bar: 'bg-chart-{$index}', tint: 'bg-chart-{$index}/15' }",
+                    ),
+                true,
+            )
+            && str_contains(
+                $kanban,
+                'columnAccents[index % columnAccents.length]',
+            )
+            && str_contains($kanban, 'columnAccent(columnIndex).tint')
+            && preg_match(
+                '/columnAccent\(columnIndex\)\s*\.bar/',
+                $kanban,
+            ) === 1,
         'kanban collapsed vertical rail' => preg_match(
-            '/\{#if column\.collapsed\}.*writing-mode:\s*vertical-rl/s',
+            '/\{#snippet collapsedStrip\(.*writing-mode:\s*vertical-rl.*\{#each collapsedColumns as column.*\{@render collapsedStrip\(/s',
             $kanban,
         ) === 1,
         'gantt weekend today and grid layers' => preg_match(

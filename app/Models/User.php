@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Concerns\HasTeams;
 use Database\Factories\UserFactory;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Illuminate\Database\Eloquent\Attributes\Appends;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Casts\Attribute;
@@ -15,6 +16,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Fortify\Contracts\PasskeyUser;
 use Laravel\Fortify\PasskeyAuthenticatable;
 use Laravel\Fortify\TwoFactorAuthenticatable;
@@ -22,6 +24,10 @@ use Laravel\Fortify\TwoFactorAuthenticatable;
 /**
  * @property int $id
  * @property string $name
+ * @property string|null $job_title
+ * @property string|null $location
+ * @property string|null $status
+ * @property string|null $avatar_path
  * @property string $email
  * @property Carbon|null $email_verified_at
  * @property string $password
@@ -33,6 +39,7 @@ use Laravel\Fortify\TwoFactorAuthenticatable;
  * @property array<string, mixed>|null $notification_preferences
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
+ * @property-read string|null $avatar
  * @property-read Team|null $currentTeam
  * @property-read Collection<int, Team> $ownedTeams
  * @property-read Collection<int, Membership> $teamMemberships
@@ -47,8 +54,9 @@ use Laravel\Fortify\TwoFactorAuthenticatable;
  * @property-read Collection<int, DirectMessage> $sentDirectMessages
  * @property-read Collection<int, DirectMessage> $receivedDirectMessages
  */
-#[Fillable(['name', 'email', 'password', 'current_team_id', 'notification_preferences'])]
-#[Hidden(['password', 'two_factor_secret', 'two_factor_recovery_codes', 'remember_token'])]
+#[Fillable(['name', 'job_title', 'location', 'status', 'avatar_path', 'email', 'password', 'current_team_id', 'notification_preferences'])]
+#[Hidden(['password', 'avatar_path', 'two_factor_secret', 'two_factor_recovery_codes', 'remember_token'])]
+#[Appends(['avatar'])]
 class User extends Authenticatable implements MustVerifyEmail, PasskeyUser
 {
     /** @var array<string, bool|string|array<int, int>> */
@@ -73,6 +81,10 @@ class User extends Authenticatable implements MustVerifyEmail, PasskeyUser
     protected static function booted(): void
     {
         static::deleting(function (User $user): void {
+            if ($user->avatar_path) {
+                Storage::disk('public')->delete($user->avatar_path);
+            }
+
             $user->personalNoteAttachments()
                 ->each(fn (PersonalNoteAttachment $attachment) => $attachment->delete());
         });
@@ -216,6 +228,16 @@ class User extends Authenticatable implements MustVerifyEmail, PasskeyUser
     {
         return Attribute::make(
             set: fn (string $value): string => strtolower(trim($value)),
+        );
+    }
+
+    /** @return Attribute<string|null, never> */
+    protected function avatar(): Attribute
+    {
+        return Attribute::make(
+            get: fn (): ?string => $this->avatar_path
+                ? Storage::disk('public')->url($this->avatar_path)
+                : null,
         );
     }
 

@@ -4,6 +4,7 @@
     import AppShell from '@/components/AppShell.svelte';
     import AppSidebar from '@/components/AppSidebar.svelte';
     import AppSidebarHeader from '@/components/AppSidebarHeader.svelte';
+    import ProfileDialog from '@/components/ProfileDialog.svelte';
     import { Toaster } from '@/components/ui/sonner';
     import type { BreadcrumbItem } from '@/types';
 
@@ -22,5 +23,6 @@
         <AppSidebarHeader {breadcrumbs} />
         {@render children?.()}
     </AppContent>
+    <ProfileDialog />
     <Toaster />
 </AppShell>

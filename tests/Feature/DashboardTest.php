@@ -233,6 +233,8 @@ test('dashboard groups incomplete assigned todos by deadline and lists active pr
             ->where('permissions.canCreateProject', true)
             ->where('permissions.canInviteMembers', true)
             ->where('permissions.canManageTeam', true)
+            ->has('availableRoles', 3)
+            ->where('availableRoles.0.value', TeamRole::Admin->value)
             ->missing('myTodos'));
 });
 
@@ -257,7 +259,8 @@ test('dashboard hides project work after a member leaves the project', function 
             ->has('myWork.today', 0)
             ->has('myWork.thisWeek', 0)
             ->has('myWork.later', 0)
-            ->has('myProjects', 0));
+            ->has('myProjects', 0)
+            ->has('availableRoles', 0));
 });
 
 test('dashboard includes upcoming events from visible projects for the personal dock', function () {

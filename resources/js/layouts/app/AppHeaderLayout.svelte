@@ -3,6 +3,7 @@
     import type { Snippet } from 'svelte';
     import AppContent from '@/components/AppContent.svelte';
     import AppHeader from '@/components/AppHeader.svelte';
+    import ProfileDialog from '@/components/ProfileDialog.svelte';
     import AppShell from '@/components/AppShell.svelte';
     import { Toaster } from '@/components/ui/sonner';
     import WorkspaceBottomNav from '@/components/WorkspaceBottomNav.svelte';
@@ -31,5 +32,6 @@
             <WorkspaceBottomNav {currentTeam} />
         {/key}
     {/if}
+    <ProfileDialog />
     <Toaster />
 </AppShell>

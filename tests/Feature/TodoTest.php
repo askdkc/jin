@@ -134,7 +134,18 @@ test('todos can be created with subtasks and completion watchers in one request'
         ->post(route('projects.todos.store', [$team, $project, $list]), [
             'title' => 'リリース準備',
             'completion_notify_ids' => [$member->id],
-            'subtasks' => ['チェックリスト作成', '最終確認'],
+            'subtasks' => [
+                [
+                    'title' => 'チェックリスト作成',
+                    'assignee_id' => $member->id,
+                    'due_on' => '2026-08-02',
+                ],
+                [
+                    'title' => '最終確認',
+                    'assignee_id' => null,
+                    'due_on' => null,
+                ],
+            ],
         ])
         ->assertRedirect()
         ->assertSessionHasNoErrors();
@@ -143,7 +154,9 @@ test('todos can be created with subtasks and completion watchers in one request'
 
     expect($todo->completion_notify_ids)->toBe([$member->id])
         ->and($todo->subtasks()->orderBy('position')->pluck('title')->all())
-        ->toBe(['チェックリスト作成', '最終確認']);
+        ->toBe(['チェックリスト作成', '最終確認'])
+        ->and($todo->subtasks()->orderBy('position')->first()->assignee_id)->toBe($member->id)
+        ->and($todo->subtasks()->orderBy('position')->first()->due_on?->toDateString())->toBe('2026-08-02');
 
     $outsider = User::factory()->create();
 
@@ -153,6 +166,17 @@ test('todos can be created with subtasks and completion watchers in one request'
             'completion_notify_ids' => [$outsider->id],
         ])
         ->assertSessionHasErrors('completion_notify_ids.0');
+
+    $this->actingAs($owner)
+        ->post(route('projects.todos.store', [$team, $project, $list]), [
+            'title' => 'サブタスク担当者が不正',
+            'subtasks' => [[
+                'title' => '外部ユーザーには割り当てられない',
+                'assignee_id' => $outsider->id,
+                'due_on' => null,
+            ]],
+        ])
+        ->assertSessionHasErrors('subtasks.0.assignee_id');
 });
 
 test('todo assignees must participate in the project', function () {
@@ -383,6 +407,8 @@ test('project participants can create complete and view subtasks', function () {
         ->from($showRoute)
         ->post(route('projects.todos.subtasks.store', [$team, $project, $list, $todo]), [
             'title' => 'モバイル表示を確認する',
+            'assignee_id' => $owner->id,
+            'due_on' => '2026-08-03',
         ])
         ->assertRedirect($showRoute);
 
@@ -391,7 +417,22 @@ test('project participants can create complete and view subtasks', function () {
     expect($subtask)
         ->todo_list_id->toBe($list->id)
         ->parent_id->toBe($todo->id)
-        ->created_by->toBe($member->id);
+        ->created_by->toBe($member->id)
+        ->assignee_id->toBe($owner->id)
+        ->and($subtask->due_on?->toDateString())->toBe('2026-08-03');
+
+    $outsider = User::factory()->create();
+
+    $this->from($showRoute)
+        ->post(route('projects.todos.subtasks.store', [$team, $project, $list, $todo]), [
+            'title' => 'プロジェクト外の担当者',
+            'assignee_id' => $outsider->id,
+            'due_on' => '2026-08-04',
+        ])
+        ->assertRedirect($showRoute)
+        ->assertSessionHasErrors('assignee_id');
+
+    expect($todo->subtasks()->count())->toBe(1);
 
     $this->get($showRoute)
         ->assertOk()
@@ -399,6 +440,9 @@ test('project participants can create complete and view subtasks', function () {
             ->where('todo.title', '公開準備')
             ->where('todo.subtasks.0.title', 'モバイル表示を確認する')
             ->where('todo.subtasks.0.completed', false)
+            ->where('todo.subtasks.0.assigneeId', $owner->id)
+            ->where('todo.subtasks.0.assigneeName', $owner->name)
+            ->where('todo.subtasks.0.dueOn', '2026-08-03')
             ->where('todo.subtasks.0.canEdit', true)
             ->missing('todo.subtasks.1'));
 

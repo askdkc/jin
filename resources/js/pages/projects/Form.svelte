@@ -125,25 +125,29 @@
                     </div>
                 </div>
 
-                <div class="grid gap-4 sm:grid-cols-2">
-                    <div class="grid gap-2">
-                        <Label for="project_folder_id">{t('Folder')}</Label>
-                        <select
-                            id="project_folder_id"
-                            name="project_folder_id"
-                            class="border-input focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full rounded-md border bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:ring-[3px]"
-                        >
-                            <option value="">{t('No folder')}</option>
-                            {#each projectFolders as folder (folder.id)}
-                                <option
-                                    value={folder.id}
-                                    selected={project?.folder?.id === folder.id}
-                                    >{folder.name}</option
-                                >
-                            {/each}
-                        </select>
-                        <InputError message={errors.project_folder_id} />
-                    </div>
+                <div
+                    class={project ? 'grid gap-4 sm:grid-cols-2' : 'grid gap-4'}
+                >
+                    {#if project}
+                        <div class="grid gap-2">
+                            <Label for="project_folder_id">{t('Folder')}</Label>
+                            <select
+                                id="project_folder_id"
+                                name="project_folder_id"
+                                class="border-input focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full rounded-md border bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:ring-[3px]"
+                            >
+                                <option value="">{t('No folder')}</option>
+                                {#each projectFolders as folder (folder.id)}
+                                    <option
+                                        value={folder.id}
+                                        selected={project.folder?.id ===
+                                            folder.id}>{folder.name}</option
+                                    >
+                                {/each}
+                            </select>
+                            <InputError message={errors.project_folder_id} />
+                        </div>
+                    {/if}
 
                     <div class="grid gap-2">
                         <Label for="lead_id">{t('Project lead')}</Label>
@@ -164,48 +168,50 @@
                         <InputError message={errors.lead_id} />
                     </div>
 
-                    <div class="grid gap-2">
-                        <Label for="phase">{t('Phase')}</Label>
-                        <Input
-                            id="phase"
-                            name="phase"
-                            value={project?.phase ?? ''}
-                            maxlength={100}
-                            placeholder={t('e.g. Design, Review, Launch')}
-                        />
-                        <InputError message={errors.phase} />
-                    </div>
+                    {#if project}
+                        <div class="grid gap-2">
+                            <Label for="phase">{t('Phase')}</Label>
+                            <Input
+                                id="phase"
+                                name="phase"
+                                value={project.phase ?? ''}
+                                maxlength={100}
+                                placeholder={t('e.g. Design, Review, Launch')}
+                            />
+                            <InputError message={errors.phase} />
+                        </div>
 
-                    <div class="grid gap-2">
-                        <Label for="status">{t('Status')}</Label>
-                        <select
-                            id="status"
-                            name="status"
-                            class="border-input focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full rounded-md border bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:ring-[3px]"
-                        >
-                            <option
-                                value="on_track"
-                                selected={(project?.status ?? 'on_track') ===
-                                    'on_track'}>{t('On track')}</option
+                        <div class="grid gap-2">
+                            <Label for="status">{t('Status')}</Label>
+                            <select
+                                id="status"
+                                name="status"
+                                class="border-input focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full rounded-md border bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:ring-[3px]"
                             >
-                            <option
-                                value="at_risk"
-                                selected={project?.status === 'at_risk'}
-                                >{t('At risk')}</option
-                            >
-                            <option
-                                value="off_track"
-                                selected={project?.status === 'off_track'}
-                                >{t('Off track')}</option
-                            >
-                            <option
-                                value="complete"
-                                selected={project?.status === 'complete'}
-                                >{t('Complete')}</option
-                            >
-                        </select>
-                        <InputError message={errors.status} />
-                    </div>
+                                <option
+                                    value="on_track"
+                                    selected={project.status === 'on_track'}
+                                    >{t('On track')}</option
+                                >
+                                <option
+                                    value="at_risk"
+                                    selected={project.status === 'at_risk'}
+                                    >{t('At risk')}</option
+                                >
+                                <option
+                                    value="off_track"
+                                    selected={project.status === 'off_track'}
+                                    >{t('Off track')}</option
+                                >
+                                <option
+                                    value="complete"
+                                    selected={project.status === 'complete'}
+                                    >{t('Complete')}</option
+                                >
+                            </select>
+                            <InputError message={errors.status} />
+                        </div>
+                    {/if}
                 </div>
             </section>
 

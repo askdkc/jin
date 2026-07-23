@@ -454,6 +454,7 @@
                     currentTeam.slug,
                     project.id,
                 ])}
+                resetOnSuccess
                 class="mx-3 mb-3 space-y-2 rounded-lg border border-sidebar-border bg-sidebar-accent/40 p-3"
             >
                 {#snippet children({ errors, processing })}

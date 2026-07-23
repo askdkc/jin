@@ -7,6 +7,7 @@ use App\Models\Todo;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\Rule;
 
 class StoreSubtaskRequest extends FormRequest
 {
@@ -31,8 +32,19 @@ class StoreSubtaskRequest extends FormRequest
      */
     public function rules(): array
     {
+        $project = $this->route('project');
+
         return [
             'title' => ['required', 'string', 'max:255'],
+            'assignee_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('project_user', 'user_id')->where(
+                    'project_id',
+                    $project instanceof Project ? $project->id : 0,
+                ),
+            ],
+            'due_on' => ['nullable', 'date_format:Y-m-d'],
         ];
     }
 }

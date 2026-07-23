@@ -327,7 +327,7 @@
                                             data-state={props['data-state']}
                                             data-test="member-role-trigger"
                                         >
-                                            {member.role_label}
+                                            {t(member.role_label)}
                                             <ChevronDown
                                                 class="ml-2 h-4 w-4 opacity-50"
                                             />
@@ -350,7 +350,7 @@
                                                         );
                                                     }}
                                                 >
-                                                    {role.label}
+                                                    {t(role.label)}
                                                 </button>
                                             {/snippet}
                                         </DropdownMenuItem>
@@ -359,7 +359,7 @@
                             </DropdownMenu>
                         {:else}
                             <Badge variant="secondary"
-                                >{member.role_label}</Badge
+                                >{t(member.role_label)}</Badge
                             >
                         {/if}
 
@@ -422,7 +422,7 @@
                                     {invitation.email}
                                 </div>
                                 <div class="text-sm text-muted-foreground">
-                                    {invitation.role_label}
+                                    {t(invitation.role_label)}
                                 </div>
                             </div>
                         </div>

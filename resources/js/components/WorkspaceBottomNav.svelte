@@ -20,10 +20,15 @@
     import ProjectTodoController from '@/actions/App/Http/Controllers/ProjectTodoController';
     import WorkspaceCalendarController from '@/actions/App/Http/Controllers/WorkspaceCalendarController';
     import AppLogoIcon from '@/components/AppLogoIcon.svelte';
+    import UserMenuContent from '@/components/UserMenuContent.svelte';
     import { Button } from '@/components/ui/button';
+    import {
+        DropdownMenu,
+        DropdownMenuContent,
+        DropdownMenuTrigger,
+    } from '@/components/ui/dropdown-menu';
     import { getEcho } from '@/lib/echo';
     import { t } from '@/lib/i18n';
-    import { dashboard } from '@/routes';
     import { show } from '@/routes/projects';
     import type { Team, WorkspacePing } from '@/types';
 
@@ -46,6 +51,7 @@
     const people = $derived(page.props.navigationPeople ?? []);
     // Recipients are mutable, so refresh them with pings before enabling a send.
     const pingsLazyData = ['workspaceBar.pings', 'navigationPeople'];
+    const currentUser = $derived(page.props.auth.user);
     const currentUserId = $derived(page.props.auth.user.id);
     const unreadNotifications = $derived(
         workspace.notifications.filter((item) => !item.read).length,
@@ -841,13 +847,32 @@
     aria-label={t('Personal menu')}
 >
     <div
-        class="mx-auto grid h-12 max-w-[96rem] grid-cols-[1fr_auto] items-stretch px-2 sm:grid-cols-[3.5rem_1fr_3.5rem] sm:px-0"
+        class="mx-auto grid h-12 max-w-[96rem] grid-cols-[1fr_auto] items-stretch px-4 sm:grid-cols-[3.5rem_1fr_3.5rem]"
     >
-        <Link
-            href={dashboard.url(currentTeam.slug)}
-            class="hidden items-center sm:flex"
-            aria-label={t('Dashboard')}><AppLogoIcon class="size-8" /></Link
-        >
+        <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+                {#snippet children(props)}
+                    <button
+                        type="button"
+                        class="hidden h-full items-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex"
+                        onclick={props.onclick}
+                        aria-expanded={props['aria-expanded']}
+                        data-state={props['data-state']}
+                        aria-label={t('Account menu')}
+                    >
+                        <AppLogoIcon class="size-8" />
+                    </button>
+                {/snippet}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+                side="top"
+                align="start"
+                sideOffset={8}
+                class="w-64"
+            >
+                <UserMenuContent user={currentUser} />
+            </DropdownMenuContent>
+        </DropdownMenu>
         <div class="flex min-w-0 items-stretch justify-center">
             {#each dockItems as item (item.panel)}
                 <button

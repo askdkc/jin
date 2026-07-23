@@ -1,7 +1,7 @@
 <script lang="ts">
     import { Link, router } from '@inertiajs/svelte';
     import LogOut from 'lucide-svelte/icons/log-out';
-    import Settings from 'lucide-svelte/icons/settings';
+    import UserRound from 'lucide-svelte/icons/user-round';
     import {
         DropdownMenuGroup,
         DropdownMenuItem,
@@ -10,9 +10,8 @@
     } from '@/components/ui/dropdown-menu';
     import UserInfo from '@/components/UserInfo.svelte';
     import { t } from '@/lib/i18n';
-    import { toUrl } from '@/lib/utils';
+    import { profileDialog } from '@/lib/profile-dialog.svelte';
     import { logout } from '@/routes';
-    import { edit } from '@/routes/profile';
     import type { User } from '@/types';
 
     let {
@@ -27,6 +26,13 @@
             router.flushAll();
         };
     }
+
+    function handleProfile(propsOnClick?: () => void) {
+        return () => {
+            propsOnClick?.();
+            requestAnimationFrame(() => profileDialog.show());
+        };
+    }
 </script>
 
 <DropdownMenuLabel class="p-0 font-normal">
@@ -38,15 +44,15 @@
 <DropdownMenuGroup>
     <DropdownMenuItem asChild>
         {#snippet children(props)}
-            <Link
+            <button
+                type="button"
                 class={props.class}
-                href={toUrl(edit())}
-                prefetch
-                onclick={props.onClick}
+                onclick={handleProfile(props.onClick)}
+                data-test="open-profile-dialog"
             >
-                <Settings class="mr-2 h-4 w-4" />
-                {t('Settings')}
-            </Link>
+                <UserRound />
+                {t('Profile')}
+            </button>
         {/snippet}
     </DropdownMenuItem>
 </DropdownMenuGroup>
@@ -60,7 +66,7 @@
             onclick={handleLogout(props.onClick)}
             data-test="logout-button"
         >
-            <LogOut class="mr-2 h-4 w-4" />
+            <LogOut />
             {t('Log out')}
         </Link>
     {/snippet}

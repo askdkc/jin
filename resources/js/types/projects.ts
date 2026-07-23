@@ -525,6 +525,9 @@ export type ProjectSubtask = {
     id: number;
     title: string;
     completed: boolean;
+    assigneeId: number | null;
+    assigneeName: string | null;
+    dueOn: string | null;
     canEdit: boolean;
 };
 

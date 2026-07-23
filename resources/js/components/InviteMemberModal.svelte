@@ -36,8 +36,10 @@
     let formKey = $state(0);
 
     const inviteRoleLabel = $derived(
-        availableRoles.find((role) => role.value === inviteRole)?.label ??
-            'Select a role',
+        t(
+            availableRoles.find((role) => role.value === inviteRole)?.label ??
+                'Select a role',
+        ),
     );
 
     function handleOpenChange(value: boolean) {
@@ -93,9 +95,9 @@
                                     {#each availableRoles as role (role.value)}
                                         <SelectItem
                                             value={role.value}
-                                            label={role.label}
+                                            label={t(role.label)}
                                         >
-                                            {role.label}
+                                            {t(role.label)}
                                         </SelectItem>
                                     {/each}
                                 </SelectContent>

@@ -29,7 +29,6 @@
     import ChevronsLeft from 'lucide-svelte/icons/chevrons-left';
     import ChevronsRight from 'lucide-svelte/icons/chevrons-right';
     import Ellipsis from 'lucide-svelte/icons/ellipsis';
-    import GripVertical from 'lucide-svelte/icons/grip-vertical';
     import Pencil from 'lucide-svelte/icons/pencil';
     import Plus from 'lucide-svelte/icons/plus';
     import Search from 'lucide-svelte/icons/search';
@@ -99,16 +98,15 @@
             ? page.props.errors.version
             : null,
     );
-    const columnAccentClasses = [
-        'bg-chart-1',
-        'bg-chart-2',
-        'bg-chart-3',
-        'bg-chart-4',
-        'bg-chart-5',
+    const columnAccents = [
+        { bar: 'bg-chart-1', tint: 'bg-chart-1/15' },
+        { bar: 'bg-chart-2', tint: 'bg-chart-2/15' },
+        { bar: 'bg-chart-3', tint: 'bg-chart-3/15' },
+        { bar: 'bg-chart-4', tint: 'bg-chart-4/15' },
+        { bar: 'bg-chart-5', tint: 'bg-chart-5/15' },
     ] as const;
-    const columnAccent = (index: number): string =>
-        columnAccentClasses[index % columnAccentClasses.length] ??
-        columnAccentClasses[0];
+    const columnAccent = (index: number) =>
+        columnAccents[index % columnAccents.length] ?? columnAccents[0];
     const memberInitial = (name: string | null): string =>
         name?.trim().slice(0, 1).toLocaleUpperCase('ja-JP') || '?';
     const confirmDelete = (): boolean =>
@@ -206,6 +204,63 @@
             },
         );
     };
+    // Menu items can't nest <Form>: the dropdown unmounts on click, which
+    // cancels the native submit. Use router calls instead.
+    const deleteTable = (table: ProjectCardTable): void => {
+        if (!confirmDelete()) {
+            return;
+        }
+
+        router.delete(
+            CardTableController.destroyTable([
+                currentTeam.slug,
+                project.id,
+                table.id,
+            ]).url,
+            { preserveScroll: true },
+        );
+    };
+    const deleteColumn = (tableId: number, columnId: number): void => {
+        if (!confirmDelete()) {
+            return;
+        }
+
+        router.delete(
+            CardTableController.destroyColumn([
+                currentTeam.slug,
+                project.id,
+                tableId,
+                columnId,
+            ]).url,
+            { preserveScroll: true },
+        );
+    };
+    const toggleColumnCollapsed = (tableId: number, columnId: number): void =>
+        router.patch(
+            CardTableController.toggleColumn([
+                currentTeam.slug,
+                project.id,
+                tableId,
+                columnId,
+            ]).url,
+            {},
+            { preserveScroll: true },
+        );
+    const moveColumnTo = (
+        tableId: number,
+        columnId: number,
+        targetPosition: number,
+    ): void =>
+        router.patch(
+            CardTableController.moveColumn([
+                currentTeam.slug,
+                project.id,
+                tableId,
+                columnId,
+            ]).url,
+            { target_position: targetPosition },
+            { preserveScroll: true },
+        );
     const startDragging = (
         event: DragEvent,
         tableId: number,
@@ -269,6 +324,284 @@
 
 <AppHead title={currentTeam.menuNames.cardTable} />
 
+{#snippet columnMenu(
+    table: ProjectCardTable,
+    column: ProjectCardColumn,
+    columnIndex: number,
+)}
+    <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+            {#snippet children(triggerProps)}
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onclick={triggerProps.onclick}
+                    aria-expanded={triggerProps['aria-expanded']}
+                    data-state={triggerProps['data-state']}
+                    aria-label={t('Column settings')}
+                >
+                    <Ellipsis />
+                </Button>
+            {/snippet}
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+            <DropdownMenuGroup>
+                <DropdownMenuItem asChild>
+                    {#snippet children(itemProps)}
+                        <button
+                            type="button"
+                            class={itemProps.class}
+                            onclick={() => {
+                                itemProps.onClick?.();
+                                openCreateCard(table.id, column.id);
+                            }}
+                        >
+                            <Plus aria-hidden="true" />
+                            {t('Add card')}
+                        </button>
+                    {/snippet}
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                    {#snippet children(itemProps)}
+                        <button
+                            type="button"
+                            class={itemProps.class}
+                            onclick={() => {
+                                itemProps.onClick?.();
+                                openRenameColumn(table.id, column);
+                            }}
+                        >
+                            <Pencil aria-hidden="true" />
+                            {t('Rename')}
+                        </button>
+                    {/snippet}
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                    {#snippet children(itemProps)}
+                        <button
+                            type="button"
+                            class={itemProps.class}
+                            onclick={() => {
+                                itemProps.onClick?.();
+                                toggleColumnCollapsed(table.id, column.id);
+                            }}
+                        >
+                            <ChevronsLeft aria-hidden="true" />
+                            {t('Collapse column')}
+                        </button>
+                    {/snippet}
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                    {#snippet children(itemProps)}
+                        <button
+                            type="button"
+                            class={itemProps.class}
+                            disabled={columnIndex === 0}
+                            onclick={() => {
+                                itemProps.onClick?.();
+                                moveColumnTo(
+                                    table.id,
+                                    column.id,
+                                    Math.max(columnIndex - 1, 0),
+                                );
+                            }}
+                        >
+                            <ChevronsLeft aria-hidden="true" />
+                            {t('Move left')}
+                        </button>
+                    {/snippet}
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                    {#snippet children(itemProps)}
+                        <button
+                            type="button"
+                            class={itemProps.class}
+                            disabled={columnIndex === table.columns.length - 1}
+                            onclick={() => {
+                                itemProps.onClick?.();
+                                moveColumnTo(
+                                    table.id,
+                                    column.id,
+                                    columnIndex + 1,
+                                );
+                            }}
+                        >
+                            <ChevronsRight aria-hidden="true" />
+                            {t('Move right')}
+                        </button>
+                    {/snippet}
+                </DropdownMenuItem>
+            </DropdownMenuGroup>
+            {#if column.canDelete}
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                    <DropdownMenuItem asChild>
+                        {#snippet children(itemProps)}
+                            <button
+                                type="button"
+                                class={itemProps.class}
+                                onclick={() => {
+                                    itemProps.onClick?.();
+                                    deleteColumn(table.id, column.id);
+                                }}
+                            >
+                                <Trash2 aria-hidden="true" />
+                                {t('Delete column')}
+                            </button>
+                        {/snippet}
+                    </DropdownMenuItem>
+                </DropdownMenuGroup>
+            {/if}
+        </DropdownMenuContent>
+    </DropdownMenu>
+{/snippet}
+
+{#snippet columnHeader(
+    table: ProjectCardTable,
+    column: ProjectCardColumn,
+    columnIndex: number,
+    visibleCount: number,
+)}
+    <header class="flex items-center justify-between gap-3 px-4 pt-4 pb-3">
+        <h2
+            id={`column-${column.id}`}
+            class="min-w-0 break-words font-semibold"
+        >
+            {column.name}
+            <span class="font-normal text-muted-foreground">
+                ({visibleCount})
+            </span>
+        </h2>
+        {@render columnMenu(table, column, columnIndex)}
+    </header>
+{/snippet}
+
+{#snippet cardArticle(
+    table: ProjectCardTable,
+    column: ProjectCardColumn,
+    card: ProjectCard,
+    className: string,
+)}
+    <article
+        class={cn('group rounded-lg border bg-card shadow-sm', className)}
+        draggable="true"
+        ondragstart={(event) =>
+            startDragging(event, table.id, column.id, card.id, card.version)}
+        ondragend={() => (draggedCard = null)}
+        ondragover={(event) => allowDrop(event, table.id)}
+        ondrop={(event) =>
+            dropCard(
+                event,
+                table.id,
+                column.id,
+                originalCardPosition(column, card.id),
+            )}
+    >
+        <div class="flex items-start gap-2 px-3 py-3">
+            <button
+                type="button"
+                class="min-w-0 flex-1 text-left"
+                onclick={() => openEditCard(table.id, column.id, card)}
+            >
+                <span class="block break-words text-sm font-medium">
+                    {card.title}
+                </span>
+                <span
+                    class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
+                >
+                    {#if card.creatorName}
+                        <span>
+                            {t('By :name', { name: card.creatorName })}
+                        </span>
+                    {/if}
+                    {#if card.dueOn}
+                        <span class="inline-flex items-center gap-1">
+                            <CalendarDays class="size-3.5" aria-hidden="true" />
+                            {card.dueOn}
+                        </span>
+                    {/if}
+                </span>
+            </button>
+            {#if card.assigneeName}
+                <Avatar class="size-8 shrink-0">
+                    <AvatarFallback>
+                        {memberInitial(card.assigneeName)}
+                    </AvatarFallback>
+                </Avatar>
+            {/if}
+        </div>
+    </article>
+{/snippet}
+
+{#snippet emptySlot(
+    table: ProjectCardTable,
+    column: ProjectCardColumn,
+    className: string,
+)}
+    <button
+        type="button"
+        class={cn('rounded-md border border-dashed', className)}
+        aria-label={t('Add card')}
+        onclick={() => openCreateCard(table.id, column.id)}
+        ondragover={(event) => allowDrop(event, table.id)}
+        ondrop={(event) => dropCard(event, table.id, column.id)}
+    >
+        {#if filterText}
+            <span class="text-sm text-muted-foreground">
+                {t('No matching cards')}
+            </span>
+        {/if}
+    </button>
+{/snippet}
+
+{#snippet collapsedStrip(
+    table: ProjectCardTable,
+    column: ProjectCardColumn,
+    columnIndex: number,
+)}
+    <section
+        class={cn(
+            'flex w-12 shrink-0 flex-col items-center gap-3 rounded-lg px-2 py-4',
+            columnAccent(columnIndex).tint,
+        )}
+        aria-labelledby={`column-${column.id}`}
+        ondragover={(event) => allowDrop(event, table.id)}
+        ondrop={(event) => dropCard(event, table.id, column.id)}
+    >
+        <Form
+            {...CardTableController.toggleColumn.form([
+                currentTeam.slug,
+                project.id,
+                table.id,
+                column.id,
+            ])}
+        >
+            {#snippet children({ processing })}
+                <Button
+                    type="submit"
+                    variant="ghost"
+                    size="icon"
+                    disabled={processing}
+                    aria-label={t('Expand column')}
+                >
+                    <ChevronsRight />
+                </Button>
+            {/snippet}
+        </Form>
+        <span class="text-xs text-muted-foreground">
+            ({visibleCards(column).length})
+        </span>
+        <h2
+            id={`column-${column.id}`}
+            class="font-semibold whitespace-nowrap"
+            style="writing-mode: vertical-rl"
+        >
+            {column.name}
+        </h2>
+    </section>
+{/snippet}
+
 <div class="min-h-full bg-muted/40 px-0 pb-8 sm:px-5 sm:pt-2 lg:px-6">
     <main
         class="mx-auto min-h-[calc(100dvh-7rem)] w-full max-w-[120rem] overflow-hidden bg-card shadow-sm"
@@ -312,151 +645,27 @@
             {#each tables as table (table.id)}
                 <section aria-labelledby={`card-table-${table.id}`}>
                     <header class="border-b px-5 py-6 sm:px-8">
-                        <div
-                            class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"
+                        <h1
+                            id={`card-table-${table.id}`}
+                            class="break-words text-3xl font-bold tracking-tight sm:text-4xl"
                         >
-                            <div class="min-w-0">
-                                <h1
-                                    id={`card-table-${table.id}`}
-                                    class="break-words text-3xl font-bold tracking-tight sm:text-4xl"
+                            {table.name}
+                        </h1>
+                        <div class="mt-4 flex flex-wrap items-center gap-2">
+                            {#if table.columns[0]}
+                                <Button
+                                    type="button"
+                                    onclick={() =>
+                                        openCreateCard(
+                                            table.id,
+                                            table.columns[0].id,
+                                        )}
                                 >
-                                    {table.name}
-                                </h1>
-                                <div class="mt-4 flex flex-wrap gap-2">
-                                    {#if table.columns[0]}
-                                        <Button
-                                            type="button"
-                                            onclick={() =>
-                                                openCreateCard(
-                                                    table.id,
-                                                    table.columns[0].id,
-                                                )}
-                                        >
-                                            <Plus data-icon="inline-start" />
-                                            {t('Add a card')}
-                                        </Button>
-                                    {/if}
-                                    <Button
-                                        type="button"
-                                        variant="outline"
-                                        onclick={() => openNewColumn(table.id)}
-                                    >
-                                        <Plus data-icon="inline-start" />
-                                        {t('Add column')}
-                                    </Button>
-                                    <DropdownMenu>
-                                        <DropdownMenuTrigger asChild>
-                                            {#snippet children(triggerProps)}
-                                                <Button
-                                                    type="button"
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    onclick={triggerProps.onclick}
-                                                    aria-expanded={triggerProps[
-                                                        'aria-expanded'
-                                                    ]}
-                                                    data-state={triggerProps[
-                                                        'data-state'
-                                                    ]}
-                                                    aria-label={t(
-                                                        'Table settings',
-                                                    )}
-                                                >
-                                                    <Ellipsis />
-                                                </Button>
-                                            {/snippet}
-                                        </DropdownMenuTrigger>
-                                        <DropdownMenuContent align="start">
-                                            <DropdownMenuGroup>
-                                                <DropdownMenuItem asChild>
-                                                    {#snippet children(
-                                                        itemProps,
-                                                    )}
-                                                        <button
-                                                            type="button"
-                                                            class={itemProps.class}
-                                                            onclick={() => {
-                                                                itemProps.onClick?.();
-                                                                openRenameTable(
-                                                                    table,
-                                                                );
-                                                            }}
-                                                        >
-                                                            <Pencil
-                                                                aria-hidden="true"
-                                                            />
-                                                            {t('Rename')}
-                                                        </button>
-                                                    {/snippet}
-                                                </DropdownMenuItem>
-                                                <DropdownMenuItem asChild>
-                                                    {#snippet children(
-                                                        itemProps,
-                                                    )}
-                                                        <button
-                                                            type="button"
-                                                            class={itemProps.class}
-                                                            onclick={() => {
-                                                                itemProps.onClick?.();
-                                                                newTableDialogOpen = true;
-                                                            }}
-                                                        >
-                                                            <Plus
-                                                                aria-hidden="true"
-                                                            />
-                                                            {t('Add table')}
-                                                        </button>
-                                                    {/snippet}
-                                                </DropdownMenuItem>
-                                            </DropdownMenuGroup>
-                                            {#if table.canDelete}
-                                                <DropdownMenuSeparator />
-                                                <DropdownMenuGroup>
-                                                    <Form
-                                                        {...CardTableController.destroyTable.form(
-                                                            [
-                                                                currentTeam.slug,
-                                                                project.id,
-                                                                table.id,
-                                                            ],
-                                                        )}
-                                                        onBefore={confirmDelete}
-                                                    >
-                                                        {#snippet children({
-                                                            processing,
-                                                        })}
-                                                            <DropdownMenuItem
-                                                                asChild
-                                                            >
-                                                                {#snippet children(
-                                                                    itemProps,
-                                                                )}
-                                                                    <button
-                                                                        type="submit"
-                                                                        class={itemProps.class}
-                                                                        disabled={processing}
-                                                                        onclick={() =>
-                                                                            itemProps.onClick?.()}
-                                                                    >
-                                                                        <Trash2
-                                                                            aria-hidden="true"
-                                                                        />
-                                                                        {t(
-                                                                            'Delete table',
-                                                                        )}
-                                                                    </button>
-                                                                {/snippet}
-                                                            </DropdownMenuItem>
-                                                        {/snippet}
-                                                    </Form>
-                                                </DropdownMenuGroup>
-                                            {/if}
-                                        </DropdownMenuContent>
-                                    </DropdownMenu>
-                                </div>
-                            </div>
-
-                            <div class="relative w-full max-w-xs">
+                                    <Plus data-icon="inline-start" />
+                                    {t('Add a card')}
+                                </Button>
+                            {/if}
+                            <div class="relative w-full max-w-3xs">
                                 <Label
                                     for={`card-filter-${table.id}`}
                                     class="sr-only"
@@ -474,6 +683,93 @@
                                     placeholder={t('Filter...')}
                                 />
                             </div>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onclick={() => openNewColumn(table.id)}
+                            >
+                                <Plus data-icon="inline-start" />
+                                {t('Add column')}
+                            </Button>
+                            <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                    {#snippet children(triggerProps)}
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="icon"
+                                            onclick={triggerProps.onclick}
+                                            aria-expanded={triggerProps[
+                                                'aria-expanded'
+                                            ]}
+                                            data-state={triggerProps[
+                                                'data-state'
+                                            ]}
+                                            aria-label={t('Table settings')}
+                                        >
+                                            <Ellipsis />
+                                        </Button>
+                                    {/snippet}
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="start">
+                                    <DropdownMenuGroup>
+                                        <DropdownMenuItem asChild>
+                                            {#snippet children(itemProps)}
+                                                <button
+                                                    type="button"
+                                                    class={itemProps.class}
+                                                    onclick={() => {
+                                                        itemProps.onClick?.();
+                                                        openRenameTable(table);
+                                                    }}
+                                                >
+                                                    <Pencil
+                                                        aria-hidden="true"
+                                                    />
+                                                    {t('Rename')}
+                                                </button>
+                                            {/snippet}
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem asChild>
+                                            {#snippet children(itemProps)}
+                                                <button
+                                                    type="button"
+                                                    class={itemProps.class}
+                                                    onclick={() => {
+                                                        itemProps.onClick?.();
+                                                        newTableDialogOpen = true;
+                                                    }}
+                                                >
+                                                    <Plus aria-hidden="true" />
+                                                    {t('Add table')}
+                                                </button>
+                                            {/snippet}
+                                        </DropdownMenuItem>
+                                    </DropdownMenuGroup>
+                                    {#if table.canDelete}
+                                        <DropdownMenuSeparator />
+                                        <DropdownMenuGroup>
+                                            <DropdownMenuItem asChild>
+                                                {#snippet children(itemProps)}
+                                                    <button
+                                                        type="button"
+                                                        class={itemProps.class}
+                                                        onclick={() => {
+                                                            itemProps.onClick?.();
+                                                            deleteTable(table);
+                                                        }}
+                                                    >
+                                                        <Trash2
+                                                            aria-hidden="true"
+                                                        />
+                                                        {t('Delete table')}
+                                                    </button>
+                                                {/snippet}
+                                            </DropdownMenuItem>
+                                        </DropdownMenuGroup>
+                                    {/if}
+                                </DropdownMenuContent>
+                            </DropdownMenu>
                         </div>
                     </header>
 
@@ -493,514 +789,128 @@
                             </Button>
                         </div>
                     {:else}
-                        <div
-                            class="flex min-h-[35rem] items-stretch overflow-x-auto"
-                        >
-                            {#each table.columns as column, columnIndex (column.id)}
-                                {@const visibleColumnCards =
-                                    visibleCards(column)}
+                        {@const triage = table.columns[0]}
+                        {@const showTriageRow =
+                            triage !== undefined && !triage.collapsed}
+                        {@const boardColumns = showTriageRow
+                            ? table.columns.slice(1)
+                            : table.columns}
+                        {@const expandedColumns = boardColumns.filter(
+                            (column) => !column.collapsed,
+                        )}
+                        {@const collapsedColumns = boardColumns.filter(
+                            (column) => column.collapsed,
+                        )}
+                        <div class="flex flex-col gap-6 px-5 py-6 sm:px-8">
+                            {#if showTriageRow}
+                                {@const triageCards = visibleCards(triage)}
                                 <section
-                                    class={cn(
-                                        'relative shrink-0 border-r last:border-r-0',
-                                        column.collapsed
-                                            ? 'w-14'
-                                            : 'w-[min(26rem,88vw)]',
-                                    )}
-                                    aria-labelledby={`column-${column.id}`}
+                                    aria-labelledby={`column-${triage.id}`}
                                     ondragover={(event) =>
                                         allowDrop(event, table.id)}
                                     ondrop={(event) =>
-                                        dropCard(event, table.id, column.id)}
+                                        dropCard(event, table.id, triage.id)}
                                 >
-                                    <span
-                                        class={cn(
-                                            'absolute inset-x-0 top-0 h-1',
-                                            columnAccent(columnIndex),
-                                        )}
-                                        aria-hidden="true"
-                                    ></span>
+                                    {@render columnHeader(
+                                        table,
+                                        triage,
+                                        0,
+                                        triageCards.length,
+                                    )}
+                                    <div class="flex flex-wrap gap-2">
+                                        {#each triageCards as card (card.id)}
+                                            {@render cardArticle(
+                                                table,
+                                                triage,
+                                                card,
+                                                'w-full sm:w-80',
+                                            )}
+                                        {:else}
+                                            {@render emptySlot(
+                                                table,
+                                                triage,
+                                                'min-h-28 w-full sm:w-80',
+                                            )}
+                                        {/each}
+                                    </div>
+                                </section>
+                            {/if}
 
-                                    {#if column.collapsed}
-                                        <div
-                                            class="flex h-full min-h-[35rem] flex-col items-center gap-3 bg-muted/30 px-2 pt-4"
-                                        >
-                                            <Form
-                                                {...CardTableController.toggleColumn.form(
-                                                    [
-                                                        currentTeam.slug,
-                                                        project.id,
-                                                        table.id,
-                                                        column.id,
-                                                    ],
+                            {#if expandedColumns.length > 0 || collapsedColumns.length > 0}
+                                <div
+                                    class="flex items-start gap-4 overflow-x-auto"
+                                >
+                                    {#each expandedColumns as column (column.id)}
+                                        {@const columnIndex =
+                                            table.columns.indexOf(column)}
+                                        {@const visibleColumnCards =
+                                            visibleCards(column)}
+                                        <section
+                                            class={cn(
+                                                'w-[min(26rem,88vw)] shrink-0 overflow-hidden rounded-lg',
+                                                columnAccent(columnIndex).tint,
+                                            )}
+                                            aria-labelledby={`column-${column.id}`}
+                                            ondragover={(event) =>
+                                                allowDrop(event, table.id)}
+                                            ondrop={(event) =>
+                                                dropCard(
+                                                    event,
+                                                    table.id,
+                                                    column.id,
                                                 )}
-                                            >
-                                                {#snippet children({
-                                                    processing,
-                                                })}
-                                                    <Button
-                                                        type="submit"
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        disabled={processing}
-                                                        aria-label={t(
-                                                            'Expand column',
-                                                        )}
-                                                    >
-                                                        <ChevronsRight />
-                                                    </Button>
-                                                {/snippet}
-                                            </Form>
-                                            <span
-                                                class="text-xs text-muted-foreground"
-                                            >
-                                                {visibleColumnCards.length}
-                                            </span>
-                                            <h2
-                                                id={`column-${column.id}`}
-                                                class="font-semibold whitespace-nowrap"
-                                                style="writing-mode: vertical-rl"
-                                            >
-                                                {column.name}
-                                            </h2>
-                                        </div>
-                                    {:else}
-                                        <div
-                                            class="flex min-h-full flex-col bg-muted/20"
                                         >
-                                            <header
-                                                class="flex items-center justify-between gap-3 px-4 pt-5 pb-3"
-                                            >
-                                                <h2
-                                                    id={`column-${column.id}`}
-                                                    class="min-w-0 break-words font-semibold"
-                                                >
-                                                    {column.name}
-                                                    <span
-                                                        class="font-normal text-muted-foreground"
-                                                    >
-                                                        ({visibleColumnCards.length})
-                                                    </span>
-                                                </h2>
-                                                <div
-                                                    class="flex shrink-0 items-center gap-1"
-                                                >
-                                                    <Form
-                                                        {...CardTableController.toggleColumn.form(
-                                                            [
-                                                                currentTeam.slug,
-                                                                project.id,
-                                                                table.id,
-                                                                column.id,
-                                                            ],
-                                                        )}
-                                                    >
-                                                        {#snippet children({
-                                                            processing,
-                                                        })}
-                                                            <Button
-                                                                type="submit"
-                                                                variant="ghost"
-                                                                size="icon"
-                                                                disabled={processing}
-                                                                aria-label={t(
-                                                                    'Collapse column',
-                                                                )}
-                                                            >
-                                                                <ChevronsLeft />
-                                                            </Button>
-                                                        {/snippet}
-                                                    </Form>
-                                                    <DropdownMenu>
-                                                        <DropdownMenuTrigger
-                                                            asChild
-                                                        >
-                                                            {#snippet children(
-                                                                triggerProps,
-                                                            )}
-                                                                <Button
-                                                                    type="button"
-                                                                    variant="outline"
-                                                                    size="icon"
-                                                                    onclick={triggerProps.onclick}
-                                                                    aria-expanded={triggerProps[
-                                                                        'aria-expanded'
-                                                                    ]}
-                                                                    data-state={triggerProps[
-                                                                        'data-state'
-                                                                    ]}
-                                                                    aria-label={t(
-                                                                        'Column settings',
-                                                                    )}
-                                                                >
-                                                                    <Ellipsis />
-                                                                </Button>
-                                                            {/snippet}
-                                                        </DropdownMenuTrigger>
-                                                        <DropdownMenuContent
-                                                            align="end"
-                                                        >
-                                                            <DropdownMenuGroup>
-                                                                <DropdownMenuItem
-                                                                    asChild
-                                                                >
-                                                                    {#snippet children(
-                                                                        itemProps,
-                                                                    )}
-                                                                        <button
-                                                                            type="button"
-                                                                            class={itemProps.class}
-                                                                            onclick={() => {
-                                                                                itemProps.onClick?.();
-                                                                                openCreateCard(
-                                                                                    table.id,
-                                                                                    column.id,
-                                                                                );
-                                                                            }}
-                                                                        >
-                                                                            <Plus
-                                                                                aria-hidden="true"
-                                                                            />
-                                                                            {t(
-                                                                                'Add card',
-                                                                            )}
-                                                                        </button>
-                                                                    {/snippet}
-                                                                </DropdownMenuItem>
-                                                                <DropdownMenuItem
-                                                                    asChild
-                                                                >
-                                                                    {#snippet children(
-                                                                        itemProps,
-                                                                    )}
-                                                                        <button
-                                                                            type="button"
-                                                                            class={itemProps.class}
-                                                                            onclick={() => {
-                                                                                itemProps.onClick?.();
-                                                                                openRenameColumn(
-                                                                                    table.id,
-                                                                                    column,
-                                                                                );
-                                                                            }}
-                                                                        >
-                                                                            <Pencil
-                                                                                aria-hidden="true"
-                                                                            />
-                                                                            {t(
-                                                                                'Rename',
-                                                                            )}
-                                                                        </button>
-                                                                    {/snippet}
-                                                                </DropdownMenuItem>
-                                                                <Form
-                                                                    {...CardTableController.moveColumn.form(
-                                                                        [
-                                                                            currentTeam.slug,
-                                                                            project.id,
-                                                                            table.id,
-                                                                            column.id,
-                                                                        ],
-                                                                    )}
-                                                                >
-                                                                    {#snippet children({
-                                                                        processing,
-                                                                    })}
-                                                                        <input
-                                                                            type="hidden"
-                                                                            name="target_position"
-                                                                            value={Math.max(
-                                                                                columnIndex -
-                                                                                    1,
-                                                                                0,
-                                                                            )}
-                                                                        />
-                                                                        <DropdownMenuItem
-                                                                            asChild
-                                                                        >
-                                                                            {#snippet children(
-                                                                                itemProps,
-                                                                            )}
-                                                                                <button
-                                                                                    type="submit"
-                                                                                    class={itemProps.class}
-                                                                                    disabled={processing ||
-                                                                                        columnIndex ===
-                                                                                            0}
-                                                                                    onclick={() =>
-                                                                                        itemProps.onClick?.()}
-                                                                                >
-                                                                                    <ChevronsLeft
-                                                                                        aria-hidden="true"
-                                                                                    />
-                                                                                    {t(
-                                                                                        'Move left',
-                                                                                    )}
-                                                                                </button>
-                                                                            {/snippet}
-                                                                        </DropdownMenuItem>
-                                                                    {/snippet}
-                                                                </Form>
-                                                                <Form
-                                                                    {...CardTableController.moveColumn.form(
-                                                                        [
-                                                                            currentTeam.slug,
-                                                                            project.id,
-                                                                            table.id,
-                                                                            column.id,
-                                                                        ],
-                                                                    )}
-                                                                >
-                                                                    {#snippet children({
-                                                                        processing,
-                                                                    })}
-                                                                        <input
-                                                                            type="hidden"
-                                                                            name="target_position"
-                                                                            value={columnIndex +
-                                                                                1}
-                                                                        />
-                                                                        <DropdownMenuItem
-                                                                            asChild
-                                                                        >
-                                                                            {#snippet children(
-                                                                                itemProps,
-                                                                            )}
-                                                                                <button
-                                                                                    type="submit"
-                                                                                    class={itemProps.class}
-                                                                                    disabled={processing ||
-                                                                                        columnIndex ===
-                                                                                            table
-                                                                                                .columns
-                                                                                                .length -
-                                                                                                1}
-                                                                                    onclick={() =>
-                                                                                        itemProps.onClick?.()}
-                                                                                >
-                                                                                    <ChevronsRight
-                                                                                        aria-hidden="true"
-                                                                                    />
-                                                                                    {t(
-                                                                                        'Move right',
-                                                                                    )}
-                                                                                </button>
-                                                                            {/snippet}
-                                                                        </DropdownMenuItem>
-                                                                    {/snippet}
-                                                                </Form>
-                                                            </DropdownMenuGroup>
-                                                            {#if column.canDelete}
-                                                                <DropdownMenuSeparator
-                                                                />
-                                                                <DropdownMenuGroup
-                                                                >
-                                                                    <Form
-                                                                        {...CardTableController.destroyColumn.form(
-                                                                            [
-                                                                                currentTeam.slug,
-                                                                                project.id,
-                                                                                table.id,
-                                                                                column.id,
-                                                                            ],
-                                                                        )}
-                                                                        onBefore={confirmDelete}
-                                                                    >
-                                                                        {#snippet children({
-                                                                            processing,
-                                                                        })}
-                                                                            <DropdownMenuItem
-                                                                                asChild
-                                                                            >
-                                                                                {#snippet children(
-                                                                                    itemProps,
-                                                                                )}
-                                                                                    <button
-                                                                                        type="submit"
-                                                                                        class={itemProps.class}
-                                                                                        disabled={processing}
-                                                                                        onclick={() =>
-                                                                                            itemProps.onClick?.()}
-                                                                                    >
-                                                                                        <Trash2
-                                                                                            aria-hidden="true"
-                                                                                        />
-                                                                                        {t(
-                                                                                            'Delete column',
-                                                                                        )}
-                                                                                    </button>
-                                                                                {/snippet}
-                                                                            </DropdownMenuItem>
-                                                                        {/snippet}
-                                                                    </Form>
-                                                                </DropdownMenuGroup>
-                                                            {/if}
-                                                        </DropdownMenuContent>
-                                                    </DropdownMenu>
-                                                </div>
-                                            </header>
-
+                                            <span
+                                                class={cn(
+                                                    'block h-1',
+                                                    columnAccent(columnIndex)
+                                                        .bar,
+                                                )}
+                                                aria-hidden="true"
+                                            ></span>
+                                            {@render columnHeader(
+                                                table,
+                                                column,
+                                                columnIndex,
+                                                visibleColumnCards.length,
+                                            )}
                                             <div
-                                                class="flex flex-1 flex-col gap-2 px-3 pb-4"
+                                                class="flex flex-col gap-2 px-3 pb-4"
                                             >
                                                 {#each visibleColumnCards as card (card.id)}
-                                                    <article
-                                                        class="group rounded-lg border bg-card shadow-sm"
-                                                        draggable="true"
-                                                        ondragstart={(event) =>
-                                                            startDragging(
-                                                                event,
-                                                                table.id,
-                                                                column.id,
-                                                                card.id,
-                                                                card.version,
-                                                            )}
-                                                        ondragend={() =>
-                                                            (draggedCard =
-                                                                null)}
-                                                        ondragover={(event) =>
-                                                            allowDrop(
-                                                                event,
-                                                                table.id,
-                                                            )}
-                                                        ondrop={(event) =>
-                                                            dropCard(
-                                                                event,
-                                                                table.id,
-                                                                column.id,
-                                                                originalCardPosition(
-                                                                    column,
-                                                                    card.id,
-                                                                ),
-                                                            )}
-                                                    >
-                                                        <div
-                                                            class="flex items-start gap-1"
-                                                        >
-                                                            <GripVertical
-                                                                class="mt-3 size-4 shrink-0 cursor-grab text-muted-foreground"
-                                                                aria-label={t(
-                                                                    'Drag to reorder',
-                                                                )}
-                                                            />
-                                                            <button
-                                                                type="button"
-                                                                class="min-w-0 flex-1 px-1 py-3 text-left"
-                                                                onclick={() =>
-                                                                    openEditCard(
-                                                                        table.id,
-                                                                        column.id,
-                                                                        card,
-                                                                    )}
-                                                            >
-                                                                <span
-                                                                    class="block break-words text-sm font-medium"
-                                                                >
-                                                                    {card.title}
-                                                                </span>
-                                                                <span
-                                                                    class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
-                                                                >
-                                                                    {#if card.creatorName}
-                                                                        <span>
-                                                                            {t(
-                                                                                'By :name',
-                                                                                {
-                                                                                    name: card.creatorName,
-                                                                                },
-                                                                            )}
-                                                                        </span>
-                                                                    {/if}
-                                                                    {#if card.dueOn}
-                                                                        <span
-                                                                            class="inline-flex items-center gap-1"
-                                                                        >
-                                                                            <CalendarDays
-                                                                                class="size-3.5"
-                                                                                aria-hidden="true"
-                                                                            />
-                                                                            {card.dueOn}
-                                                                        </span>
-                                                                    {/if}
-                                                                </span>
-                                                            </button>
-                                                            {#if card.assigneeName}
-                                                                <Avatar
-                                                                    class="mt-2 mr-2 size-8"
-                                                                >
-                                                                    <AvatarFallback
-                                                                    >
-                                                                        {memberInitial(
-                                                                            card.assigneeName,
-                                                                        )}
-                                                                    </AvatarFallback>
-                                                                </Avatar>
-                                                            {/if}
-                                                        </div>
-                                                    </article>
+                                                    {@render cardArticle(
+                                                        table,
+                                                        column,
+                                                        card,
+                                                        '',
+                                                    )}
                                                 {:else}
-                                                    <button
-                                                        type="button"
-                                                        class="min-h-24 rounded-md border border-dashed p-4 text-sm text-muted-foreground"
-                                                        onclick={() =>
-                                                            openCreateCard(
-                                                                table.id,
-                                                                column.id,
-                                                            )}
-                                                        ondragover={(event) =>
-                                                            allowDrop(
-                                                                event,
-                                                                table.id,
-                                                            )}
-                                                        ondrop={(event) =>
-                                                            dropCard(
-                                                                event,
-                                                                table.id,
-                                                                column.id,
-                                                            )}
-                                                    >
-                                                        {filterText
-                                                            ? t(
-                                                                  'No matching cards',
-                                                              )
-                                                            : t('Add card')}
-                                                    </button>
+                                                    {@render emptySlot(
+                                                        table,
+                                                        column,
+                                                        'min-h-24',
+                                                    )}
                                                 {/each}
-
-                                                {#if visibleColumnCards.length > 0}
-                                                    <button
-                                                        type="button"
-                                                        class="min-h-14 rounded-md border border-dashed text-sm text-muted-foreground hover:bg-accent"
-                                                        onclick={() =>
-                                                            openCreateCard(
-                                                                table.id,
-                                                                column.id,
-                                                            )}
-                                                        ondragover={(event) =>
-                                                            allowDrop(
-                                                                event,
-                                                                table.id,
-                                                            )}
-                                                        ondrop={(event) =>
-                                                            dropCard(
-                                                                event,
-                                                                table.id,
-                                                                column.id,
-                                                            )}
-                                                    >
-                                                        <Plus
-                                                            class="mx-auto size-4"
-                                                            aria-hidden="true"
-                                                        />
-                                                        <span class="sr-only">
-                                                            {t('Add card')}
-                                                        </span>
-                                                    </button>
-                                                {/if}
                                             </div>
+                                        </section>
+                                    {/each}
+                                    {#if collapsedColumns.length > 0}
+                                        <div
+                                            class="ml-auto flex gap-2 self-stretch"
+                                        >
+                                            {#each collapsedColumns as column (column.id)}
+                                                {@render collapsedStrip(
+                                                    table,
+                                                    column,
+                                                    table.columns.indexOf(
+                                                        column,
+                                                    ),
+                                                )}
+                                            {/each}
                                         </div>
                                     {/if}
-                                </section>
-                            {/each}
+                                </div>
+                            {/if}
                         </div>
                     {/if}
                 </section>

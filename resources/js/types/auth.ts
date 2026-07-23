@@ -2,7 +2,10 @@ export type User = {
     id: number;
     name: string;
     email: string;
-    avatar?: string;
+    job_title: string | null;
+    location: string | null;
+    status: string | null;
+    avatar: string | null;
     two_factor_enabled?: boolean;
     email_verified_at: string | null;
     created_at: string;

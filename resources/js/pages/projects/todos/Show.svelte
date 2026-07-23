@@ -592,13 +592,32 @@
                                             </button>
                                         {/snippet}
                                     </Form>
-                                    <span
-                                        class:line-through={subtask.completed}
-                                        class:text-muted-foreground={subtask.completed}
-                                        class="min-w-0 flex-1 break-words text-sm"
-                                    >
-                                        {subtask.title}
-                                    </span>
+                                    <div class="min-w-0 flex-1">
+                                        <span
+                                            class:line-through={subtask.completed}
+                                            class:text-muted-foreground={subtask.completed}
+                                            class="block break-words text-sm"
+                                        >
+                                            {subtask.title}
+                                        </span>
+                                        {#if subtask.assigneeName || subtask.dueOn}
+                                            <p
+                                                class="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground"
+                                            >
+                                                {#if subtask.assigneeName}
+                                                    <span
+                                                        >{subtask.assigneeName}</span
+                                                    >
+                                                {/if}
+                                                {#if subtask.dueOn}
+                                                    <time
+                                                        datetime={subtask.dueOn}
+                                                        >{subtask.dueOn}</time
+                                                    >
+                                                {/if}
+                                            </p>
+                                        {/if}
+                                    </div>
                                     {#if subtask.canEdit}
                                         <Form
                                             {...ProjectTodoController.destroyTodo.form(
@@ -635,27 +654,63 @@
                             )}
                             resetOnSuccess
                             onSuccess={() => (subtaskComposerOpen = false)}
-                            class="flex flex-col gap-2 sm:flex-row {todo
-                                .subtasks.length > 0
-                                ? 'mt-3'
-                                : ''}"
+                            class="{todo.subtasks.length > 0 ? 'mt-3' : ''}
+                                space-y-2"
                         >
                             {#snippet children({ errors, processing })}
-                                <div class="min-w-0 flex-1">
-                                    <Label for="new-subtask" class="sr-only"
-                                        >{t('Subtask title')}</Label
-                                    >
+                                <div class="flex items-center gap-2">
+                                    <span
+                                        class="size-4 shrink-0 rounded-full border border-foreground/50"
+                                        aria-hidden="true"
+                                    ></span>
                                     <Input
-                                        id="new-subtask"
                                         name="title"
                                         maxlength={255}
                                         required
                                         autofocus
-                                        placeholder={t('Subtask title')}
+                                        class="h-8 flex-1"
+                                        placeholder={t(
+                                            'Describe this subtask...',
+                                        )}
                                     />
-                                    <InputError message={errors.title} />
                                 </div>
-                                <div class="flex gap-2">
+                                <div class="flex flex-col gap-2 pl-6 text-sm">
+                                    <div class="flex items-center gap-2">
+                                        <Label
+                                            for="new-subtask-assignee"
+                                            class="flex h-8 w-20 shrink-0 items-center justify-end text-right text-sm font-medium"
+                                            >{t('Assignee')}</Label
+                                        >
+                                        <select
+                                            id="new-subtask-assignee"
+                                            name="assignee_id"
+                                            class="border-input h-8 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm"
+                                        >
+                                            <option value=""
+                                                >{t('Unassigned')}</option
+                                            >
+                                            {#each members as member (member.id)}
+                                                <option value={member.id}
+                                                    >{member.name}</option
+                                                >
+                                            {/each}
+                                        </select>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <Label
+                                            for="new-subtask-due"
+                                            class="flex h-8 w-20 shrink-0 items-center justify-end text-right text-sm font-medium"
+                                            >{t('Due date')}</Label
+                                        >
+                                        <Input
+                                            id="new-subtask-due"
+                                            type="date"
+                                            name="due_on"
+                                            class="h-8 max-w-40 text-sm"
+                                        />
+                                    </div>
+                                </div>
+                                <div class="flex gap-2 pl-6">
                                     <Button
                                         type="submit"
                                         size="sm"
@@ -672,6 +727,11 @@
                                         >{t('Cancel')}</Button
                                     >
                                 </div>
+                                <InputError
+                                    message={errors.title ||
+                                        errors.assignee_id ||
+                                        errors.due_on}
+                                />
                             {/snippet}
                         </Form>
                     {:else}

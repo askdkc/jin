@@ -17,12 +17,13 @@ test('team invitations can be created', function () {
 
     $response = $this
         ->actingAs($owner)
+        ->from(route('dashboard', $team))
         ->post(route('teams.invitations.store', $team), [
             'email' => '  INVITED@EXAMPLE.COM  ',
             'role' => TeamRole::Member->value,
         ]);
 
-    $response->assertRedirect(route('teams.edit', $team));
+    $response->assertRedirect(route('dashboard', $team));
 
     $this->assertDatabaseHas('team_invitations', [
         'team_id' => $team->id,

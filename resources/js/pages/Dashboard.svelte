@@ -27,6 +27,7 @@
     import Plus from 'lucide-svelte/icons/plus';
     import Search from 'lucide-svelte/icons/search';
     import Star from 'lucide-svelte/icons/star';
+    import UserPlus from 'lucide-svelte/icons/user-plus';
     import { onMount } from 'svelte';
     import ActivityController from '@/actions/App/Http/Controllers/ActivityController';
     import AdminlandController from '@/actions/App/Http/Controllers/AdminlandController';
@@ -34,6 +35,7 @@
     import ProjectFavoriteController from '@/actions/App/Http/Controllers/ProjectFavoriteController';
     import ProjectTodoController from '@/actions/App/Http/Controllers/ProjectTodoController';
     import AppHead from '@/components/AppHead.svelte';
+    import InviteMemberModal from '@/components/InviteMemberModal.svelte';
     import PendingInvitationsModal from '@/components/PendingInvitationsModal.svelte';
     import { Avatar, AvatarFallback } from '@/components/ui/avatar';
     import { Badge } from '@/components/ui/badge';
@@ -41,7 +43,7 @@
     import { activityAction, activityHref } from '@/lib/activity';
     import { t } from '@/lib/i18n';
     import { getInitials } from '@/lib/initials';
-    import { create, index, show } from '@/routes/projects';
+    import { create, show } from '@/routes/projects';
     import type {
         ActivityItem,
         DashboardInvitation,
@@ -49,6 +51,7 @@
         DashboardProject,
         DashboardTodo,
         ProjectFolder,
+        RoleOption,
     } from '@/types';
 
     type WorkGroup = {
@@ -71,6 +74,7 @@
         myProjects = [],
         projectFolders = [],
         recentActivities = [],
+        availableRoles = [],
         permissions = {
             canCreateProject: false,
             canInviteMembers: false,
@@ -83,12 +87,15 @@
         myProjects?: DashboardProject[];
         projectFolders?: ProjectFolder[];
         recentActivities?: ActivityItem[];
+        availableRoles?: RoleOption[];
         permissions?: {
             canCreateProject: boolean;
             canInviteMembers: boolean;
             canManageTeam: boolean;
         };
     } = $props();
+
+    let inviteDialogOpen = $state(false);
 
     const workGroups = $derived<WorkGroup[]>([
         {
@@ -178,6 +185,14 @@
     <PendingInvitationsModal invitations={pendingInvitations} />
 {/if}
 
+{#if permissions.canInviteMembers}
+    <InviteMemberModal
+        team={currentTeam}
+        {availableRoles}
+        bind:open={inviteDialogOpen}
+    />
+{/if}
+
 <div
     class="min-h-[calc(100dvh-4rem)] bg-[#f5f7f3] pb-28 text-slate-800 dark:bg-[#07151d] dark:text-slate-100"
 >
@@ -214,22 +229,18 @@
                         </Button>
                     {/if}
 
-                    <Button
-                        variant="outline"
-                        asChild
-                        class="h-auto w-full justify-start rounded-xl bg-card px-4 py-3"
-                    >
-                        {#snippet children(buttonProps)}
-                            <Link
-                                {...buttonProps}
-                                href={index(currentTeam.slug)}
-                                class={buttonProps.class}
-                            >
-                                <FolderKanban class="size-4 text-blue-500" />
-                                {t('Projects')}
-                            </Link>
-                        {/snippet}
-                    </Button>
+                    {#if permissions.canInviteMembers}
+                        <Button
+                            type="button"
+                            variant="outline"
+                            class="h-auto w-full justify-start rounded-xl bg-card px-4 py-3"
+                            onclick={() => (inviteDialogOpen = true)}
+                            data-test="dashboard-invite-member-button"
+                        >
+                            <UserPlus data-icon="inline-start" />
+                            {t('Invite users')}
+                        </Button>
+                    {/if}
 
                     {#if permissions.canManageTeam}
                         <Button

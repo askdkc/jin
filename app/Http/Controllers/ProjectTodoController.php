@@ -86,7 +86,7 @@ class ProjectTodoController extends Controller
             'assignee:id,name',
             'creator:id,name',
             'comments' => fn ($query) => $query->with('user:id,name')->oldest(),
-            'subtasks' => fn ($query) => $query->orderBy('position'),
+            'subtasks' => fn ($query) => $query->with('assignee:id,name')->orderBy('position'),
             'attachments' => fn ($query) => $query->with('uploader:id,name')->oldest(),
             'reactors:id,name',
         ]);
@@ -228,10 +228,10 @@ class ProjectTodoController extends Controller
                 'position' => ((int) $todoList->todos()->max('position')) + 1,
             ]);
 
-            foreach (array_values($request->validated('subtasks') ?? []) as $index => $subtaskTitle) {
+            foreach (array_values($request->validated('subtasks') ?? []) as $index => $subtaskData) {
                 $todo->subtasks()->create([
+                    ...$subtaskData,
                     'todo_list_id' => $todoList->id,
-                    'title' => $subtaskTitle,
                     'created_by' => $request->user()->id,
                     'position' => $index + 1,
                 ]);
@@ -504,6 +504,9 @@ class ProjectTodoController extends Controller
                 'id' => $subtask->id,
                 'title' => $subtask->title,
                 'completed' => $subtask->completed_at !== null,
+                'assigneeId' => $subtask->assignee_id,
+                'assigneeName' => $subtask->assignee?->name,
+                'dueOn' => $subtask->due_on?->toDateString(),
                 'canEdit' => $canManageProject || $subtask->created_by === $userId,
             ])->all(),
             'comments' => $todo->comments->map(fn (Comment $comment): array => [

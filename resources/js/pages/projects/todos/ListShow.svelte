@@ -69,6 +69,11 @@
         createdAt: string | null;
         canDelete: boolean;
     };
+    type NewSubtask = {
+        title: string;
+        assignee_id: number | '';
+        due_on: string;
+    };
 
     let {
         currentTeam,
@@ -107,15 +112,30 @@
     const activeTodos = $derived(todos.filter((todo) => !todo.completed));
     const completedTodos = $derived(todos.filter((todo) => todo.completed));
     let addingTodo = $state(false);
-    let newSubtasks = $state<string[]>([]);
+    let newSubtasks = $state<NewSubtask[]>([]);
+    let addTodoDetailsOpen = $state(false);
+    let addTodoSubtasksOpen = $state(false);
     let editingCommentId = $state<number | null>(null);
     let commentComposerOpen = $state(false);
 
     const confirmDelete = (): boolean =>
         window.confirm(t('Are you sure you want to delete this?'));
+    const emptySubtask = (): NewSubtask => ({
+        title: '',
+        assignee_id: '',
+        due_on: '',
+    });
+    const openAddForm = (): void => {
+        addingTodo = true;
+        newSubtasks = [];
+        addTodoDetailsOpen = false;
+        addTodoSubtasksOpen = false;
+    };
     const closeAddForm = (): void => {
         addingTodo = false;
         newSubtasks = [];
+        addTodoDetailsOpen = false;
+        addTodoSubtasksOpen = false;
     };
     const formatDate = (value: string | null): string =>
         value
@@ -285,16 +305,16 @@
                     onSuccess={closeAddForm}
                     transform={(data) => ({
                         ...data,
-                        subtasks: (
-                            (data.subtasks as string[] | undefined) ?? []
-                        ).filter((title) => title.trim() !== ''),
+                        subtasks: newSubtasks.filter(
+                            (subtask) => subtask.title.trim() !== '',
+                        ),
                     })}
-                    class="mt-4 border-y py-5"
+                    class="mt-4 max-w-2xl"
                 >
                     {#snippet children({ errors, processing })}
-                        <div class="flex items-start gap-3">
+                        <div class="flex items-center gap-3">
                             <span
-                                class="mt-2 size-5 shrink-0 rounded border border-foreground/60"
+                                class="size-4 shrink-0 rounded border border-foreground/60"
                                 aria-hidden="true"
                             ></span>
                             <div class="min-w-0 flex-1">
@@ -303,114 +323,248 @@
                                     maxlength={255}
                                     required
                                     autofocus
-                                    class="h-auto border-0 border-b bg-transparent px-0 py-1 text-lg shadow-none focus-visible:ring-0"
+                                    class="h-auto border-0 bg-transparent px-0 py-1 text-base shadow-none focus-visible:ring-0"
                                     placeholder={t('Describe this to-do...')}
                                 />
                                 <InputError message={errors.title} />
                             </div>
                         </div>
 
-                        <div
-                            class="mt-4 grid gap-x-5 gap-y-4 sm:grid-cols-[7rem_minmax(0,1fr)] sm:items-start"
-                        >
-                            <Label
-                                for={`new-todo-assignee-${list.id}`}
-                                class="pt-2 sm:text-right"
-                                >{t('Assignee')}</Label
-                            >
-                            <select
-                                id={`new-todo-assignee-${list.id}`}
-                                name="assignee_id"
-                                class="border-input h-9 rounded-md border bg-background px-3 text-sm"
-                            >
-                                <option value="">{t('Unassigned')}</option>
-                                {#each members as member (member.id)}
-                                    <option value={member.id}
-                                        >{member.name}</option
-                                    >
-                                {/each}
-                            </select>
-
-                            <span class="pt-1 text-sm font-medium sm:text-right"
-                                >{t('When done, notify')}</span
-                            >
-                            <div class="flex flex-wrap gap-x-4 gap-y-2 pt-1">
-                                {#each members as member (member.id)}
-                                    <label
-                                        class="flex items-center gap-2 text-sm"
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            name="completion_notify_ids[]"
-                                            value={member.id}
-                                            class="size-4 rounded accent-primary"
-                                        />
-                                        {member.name}
-                                    </label>
-                                {/each}
+                        <div class="mt-3 flex flex-col gap-2 text-sm">
+                            <div class="flex items-center gap-2">
+                                <Label
+                                    for={`new-todo-assignee-${list.id}`}
+                                    class="flex h-8 w-20 shrink-0 items-center justify-end text-right text-sm font-medium"
+                                    >{t('Assignee')}</Label
+                                >
+                                <select
+                                    id={`new-todo-assignee-${list.id}`}
+                                    name="assignee_id"
+                                    class="border-input h-8 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm"
+                                >
+                                    <option value="">{t('Unassigned')}</option>
+                                    {#each members as member (member.id)}
+                                        <option value={member.id}
+                                            >{member.name}</option
+                                        >
+                                    {/each}
+                                </select>
                             </div>
 
-                            <Label
-                                for={`new-todo-due-${list.id}`}
-                                class="pt-2 sm:text-right"
-                                >{t('Due date')}</Label
-                            >
-                            <Input
-                                id={`new-todo-due-${list.id}`}
-                                type="date"
-                                name="due_on"
-                                class="max-w-56"
-                            />
+                            <div class="flex items-start gap-2">
+                                <span
+                                    class="w-20 shrink-0 pt-1 text-right text-sm font-medium"
+                                    >{t('When done, notify')}</span
+                                >
+                                <div
+                                    class="flex flex-wrap gap-x-4 gap-y-1 pt-1"
+                                >
+                                    {#each members as member (member.id)}
+                                        <label
+                                            class="flex items-center gap-1.5 text-sm"
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                name="completion_notify_ids[]"
+                                                value={member.id}
+                                                class="size-4 rounded accent-primary"
+                                            />
+                                            {member.name}
+                                        </label>
+                                    {/each}
+                                </div>
+                            </div>
 
-                            <span class="pt-1 text-sm font-medium sm:text-right"
-                                >{t('Notes')}</span
-                            >
-                            <div class="min-w-0">
-                                <RichTextEditor
-                                    id={`new-todo-details-${list.id}`}
-                                    name="details"
-                                    placeholder={t('Add extra details...')}
-                                    ariaLabel={t('Notes')}
-                                    mentionables={members}
-                                    attachmentUploadUrl={AttachmentController.uploadInline.url(
-                                        projectRouteArguments,
-                                    )}
+                            <div class="flex items-center gap-2">
+                                <Label
+                                    for={`new-todo-due-${list.id}`}
+                                    class="flex h-8 w-20 shrink-0 items-center justify-end text-right text-sm font-medium"
+                                    >{t('Due date')}</Label
+                                >
+                                <Input
+                                    id={`new-todo-due-${list.id}`}
+                                    type="date"
+                                    name="due_on"
+                                    class="h-8 max-w-40 text-sm"
                                 />
                             </div>
 
-                            <span class="pt-1 text-sm font-medium sm:text-right"
-                                >{t('Subtasks')}</span
-                            >
-                            <div class="flex min-w-0 flex-col gap-2">
-                                {#each newSubtasks as _, index (index)}
-                                    <div class="flex gap-2">
-                                        <Input
-                                            name="subtasks[]"
-                                            maxlength={255}
-                                            bind:value={newSubtasks[index]}
-                                            placeholder={t('Subtask title')}
-                                        />
-                                        <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="sm"
-                                            onclick={() =>
-                                                (newSubtasks =
-                                                    newSubtasks.toSpliced(
-                                                        index,
-                                                        1,
-                                                    ))}>{t('Delete')}</Button
-                                        >
-                                    </div>
-                                {/each}
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    onclick={() =>
-                                        (newSubtasks = [...newSubtasks, ''])}
-                                    >{t('Add subtask')}</Button
+                            <div class="flex items-start gap-2">
+                                <span
+                                    class="w-20 shrink-0 text-right text-sm font-medium"
+                                    >{t('Notes')}</span
                                 >
+                                <div class="min-w-0 flex-1">
+                                    {#if addTodoDetailsOpen}
+                                        <RichTextEditor
+                                            id={`new-todo-details-${list.id}`}
+                                            name="details"
+                                            placeholder={t(
+                                                'Add extra details...',
+                                            )}
+                                            ariaLabel={t('Notes')}
+                                            mentionables={members}
+                                            attachmentUploadUrl={AttachmentController.uploadInline.url(
+                                                projectRouteArguments,
+                                            )}
+                                        />
+                                    {:else}
+                                        <button
+                                            type="button"
+                                            class="text-sm text-muted-foreground hover:text-foreground"
+                                            onclick={() =>
+                                                (addTodoDetailsOpen = true)}
+                                        >
+                                            {t('Add extra details...')}
+                                        </button>
+                                    {/if}
+                                </div>
+                            </div>
+
+                            <div class="flex items-start gap-2">
+                                <span
+                                    class="w-20 shrink-0 text-right text-sm font-medium"
+                                    >{t('Subtasks')}</span
+                                >
+                                <div class="min-w-0 flex-1">
+                                    {#if addTodoSubtasksOpen || newSubtasks.length > 0}
+                                        <div class="flex flex-col gap-2">
+                                            {#each newSubtasks as _, index (index)}
+                                                <div class="space-y-2">
+                                                    <div
+                                                        class="flex items-center gap-2"
+                                                    >
+                                                        <span
+                                                            class="size-4 shrink-0 rounded-full border border-foreground/50"
+                                                            aria-hidden="true"
+                                                        ></span>
+                                                        <Input
+                                                            id={`new-subtask-title-${list.id}-${index}`}
+                                                            name={`subtasks[${index}][title]`}
+                                                            maxlength={255}
+                                                            bind:value={
+                                                                newSubtasks[
+                                                                    index
+                                                                ].title
+                                                            }
+                                                            placeholder={t(
+                                                                'Describe this subtask...',
+                                                            )}
+                                                            class="h-8 min-w-0 flex-1 text-sm"
+                                                        />
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            onclick={() =>
+                                                                (newSubtasks =
+                                                                    newSubtasks.toSpliced(
+                                                                        index,
+                                                                        1,
+                                                                    ))}
+                                                            >{t(
+                                                                'Delete',
+                                                            )}</Button
+                                                        >
+                                                    </div>
+                                                    <div
+                                                        class="flex flex-col gap-2 pl-6"
+                                                    >
+                                                        <div
+                                                            class="flex items-center gap-2"
+                                                        >
+                                                            <Label
+                                                                for={`new-subtask-assignee-${list.id}-${index}`}
+                                                                class="flex h-8 w-20 shrink-0 items-center justify-end text-right text-sm font-medium"
+                                                                >{t(
+                                                                    'Assignee',
+                                                                )}</Label
+                                                            >
+                                                            <select
+                                                                id={`new-subtask-assignee-${list.id}-${index}`}
+                                                                name={`subtasks[${index}][assignee_id]`}
+                                                                bind:value={
+                                                                    newSubtasks[
+                                                                        index
+                                                                    ]
+                                                                        .assignee_id
+                                                                }
+                                                                class="border-input h-8 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm"
+                                                            >
+                                                                <option value=""
+                                                                    >{t(
+                                                                        'Unassigned',
+                                                                    )}</option
+                                                                >
+                                                                {#each members as member (member.id)}
+                                                                    <option
+                                                                        value={member.id}
+                                                                        >{member.name}</option
+                                                                    >
+                                                                {/each}
+                                                            </select>
+                                                        </div>
+                                                        <div
+                                                            class="flex items-center gap-2"
+                                                        >
+                                                            <Label
+                                                                for={`new-subtask-due-${list.id}-${index}`}
+                                                                class="flex h-8 w-20 shrink-0 items-center justify-end text-right text-sm font-medium"
+                                                                >{t(
+                                                                    'Due date',
+                                                                )}</Label
+                                                            >
+                                                            <Input
+                                                                id={`new-subtask-due-${list.id}-${index}`}
+                                                                type="date"
+                                                                name={`subtasks[${index}][due_on]`}
+                                                                bind:value={
+                                                                    newSubtasks[
+                                                                        index
+                                                                    ].due_on
+                                                                }
+                                                                class="h-8 max-w-40 text-sm"
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                    <InputError
+                                                        message={errors[
+                                                            `subtasks.${index}.title`
+                                                        ] ||
+                                                            errors[
+                                                                `subtasks.${index}.assignee_id`
+                                                            ] ||
+                                                            errors[
+                                                                `subtasks.${index}.due_on`
+                                                            ]}
+                                                    />
+                                                </div>
+                                            {/each}
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                onclick={() =>
+                                                    (newSubtasks = [
+                                                        ...newSubtasks,
+                                                        emptySubtask(),
+                                                    ])}
+                                                >{t('Add subtask')}</Button
+                                            >
+                                        </div>
+                                    {:else}
+                                        <button
+                                            type="button"
+                                            class="text-sm text-muted-foreground hover:text-foreground"
+                                            onclick={() => {
+                                                addTodoSubtasksOpen = true;
+                                                newSubtasks = [emptySubtask()];
+                                            }}
+                                        >
+                                            {t('Add subtask')}
+                                        </button>
+                                    {/if}
+                                </div>
                             </div>
                         </div>
 
@@ -420,7 +574,7 @@
                                 errors.completion_notify_ids ||
                                 errors.subtasks}
                         />
-                        <div class="mt-5 flex gap-2">
+                        <div class="mt-4 flex gap-2">
                             <Button
                                 type="submit"
                                 size="sm"
@@ -440,10 +594,7 @@
                 <button
                     type="button"
                     class="mt-3 flex items-center gap-1.5 text-sm font-semibold text-sky-700 hover:underline dark:text-sky-400"
-                    onclick={() => {
-                        addingTodo = true;
-                        newSubtasks = [];
-                    }}
+                    onclick={openAddForm}
                 >
                     <Plus class="size-4" />
                     {t('Add a to-do')}

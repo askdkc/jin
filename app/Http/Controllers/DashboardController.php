@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\TeamRole;
 use App\Models\Activity;
 use App\Models\Project;
 use App\Models\ScheduleEvent;
@@ -84,6 +85,7 @@ class DashboardController extends Controller
                 'name' => $todo->todoList->project->name,
             ],
         ];
+        $canInviteMembers = Gate::allows('inviteMember', $currentTeam);
 
         return Inertia::render('Dashboard', [
             'pendingInvitations' => $pendingInvitations,
@@ -196,9 +198,12 @@ class DashboardController extends Controller
                 ]),
             'permissions' => [
                 'canCreateProject' => Gate::allows('create', [Project::class, $currentTeam]),
-                'canInviteMembers' => Gate::allows('inviteMember', $currentTeam),
+                'canInviteMembers' => $canInviteMembers,
                 'canManageTeam' => Gate::allows('update', $currentTeam),
             ],
+            'availableRoles' => $canInviteMembers
+                ? TeamRole::assignable()
+                : [],
         ]);
     }
 }

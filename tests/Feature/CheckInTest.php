@@ -160,6 +160,10 @@ test('dispatcher creates prompts and advances to the next selected weekday in lo
         CheckInDueNotification::class,
         fn (CheckInDueNotification $notification, array $channels): bool => $notification instanceof ShouldQueue
             && $notification->prompt->check_in_id === $checkIn->id
+            && $notification->viaQueues() === [
+                'database' => 'notifications',
+                'mail' => 'notifications',
+            ]
             && in_array('mail', $channels, true),
     );
 });

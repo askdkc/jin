@@ -6,11 +6,12 @@ use App\Models\Project;
 use App\Models\Todo;
 use App\Models\User;
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use Illuminate\Support\Facades\Notification as NotificationFacade;
 
-class TodoActivityNotification extends Notification
+class TodoActivityNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
@@ -27,7 +28,9 @@ class TodoActivityNotification extends Notification
         public ?User $actor,
         public Project $project,
         public Todo $todo,
-    ) {}
+    ) {
+        $this->afterCommit();
+    }
 
     /** @param array<int, int|null> $recipientIds */
     public static function sendToUsers(
@@ -62,6 +65,15 @@ class TodoActivityNotification extends Notification
                 $this->type === self::Due ? 'assignment_reminder' : 'activity',
             )
             : ['database', 'mail'];
+    }
+
+    /** @return array<string, string> */
+    public function viaQueues(): array
+    {
+        return [
+            'database' => 'notifications',
+            'mail' => 'notifications',
+        ];
     }
 
     /**

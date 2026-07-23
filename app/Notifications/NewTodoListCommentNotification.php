@@ -6,10 +6,11 @@ use App\Models\Project;
 use App\Models\TodoList;
 use App\Models\User;
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
-class NewTodoListCommentNotification extends Notification
+class NewTodoListCommentNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
@@ -17,7 +18,9 @@ class NewTodoListCommentNotification extends Notification
         public User $actor,
         public Project $project,
         public TodoList $todoList,
-    ) {}
+    ) {
+        $this->afterCommit();
+    }
 
     /**
      * @return array<int, string>
@@ -27,6 +30,15 @@ class NewTodoListCommentNotification extends Notification
         return $notifiable instanceof User
             ? $notifiable->notificationChannels()
             : ['database', 'mail'];
+    }
+
+    /** @return array<string, string> */
+    public function viaQueues(): array
+    {
+        return [
+            'database' => 'notifications',
+            'mail' => 'notifications',
+        ];
     }
 
     public function toMail(object $notifiable): MailMessage

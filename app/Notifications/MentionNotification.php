@@ -5,12 +5,13 @@ namespace App\Notifications;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Notification as NotificationFacade;
 
-class MentionNotification extends Notification
+class MentionNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
@@ -26,7 +27,9 @@ class MentionNotification extends Notification
         public Project $project,
         public string $title,
         public ?int $targetId = null,
-    ) {}
+    ) {
+        $this->afterCommit();
+    }
 
     /** @param  Collection<int, User>  $recipients */
     public static function sendToUsers(
@@ -52,6 +55,15 @@ class MentionNotification extends Notification
         return $notifiable instanceof User
             ? $notifiable->notificationChannels('mention')
             : ['database', 'mail'];
+    }
+
+    /** @return array<string, string> */
+    public function viaQueues(): array
+    {
+        return [
+            'database' => 'notifications',
+            'mail' => 'notifications',
+        ];
     }
 
     /**

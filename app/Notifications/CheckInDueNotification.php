@@ -26,6 +26,15 @@ class CheckInDueNotification extends Notification implements ShouldQueue
             : ['database', 'mail'];
     }
 
+    /** @return array<string, string> */
+    public function viaQueues(): array
+    {
+        return [
+            'database' => 'notifications',
+            'mail' => 'notifications',
+        ];
+    }
+
     /**
      * Get the mail representation of the notification.
      */

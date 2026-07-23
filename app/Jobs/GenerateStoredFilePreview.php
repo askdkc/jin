@@ -30,6 +30,7 @@ class GenerateStoredFilePreview implements ShouldQueue
 
     public function __construct(public int $storedFileId, public string $sourcePath)
     {
+        $this->onQueue('previews');
         $this->afterCommit = true;
     }
 

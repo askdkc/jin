@@ -45,9 +45,11 @@ test('invitation email for existing users uses login route', function () {
         'invited_by' => $owner->id,
     ]);
 
-    $mail = (new TeamInvitationNotification($invitation))->toMail($invitedUser);
+    $notification = new TeamInvitationNotification($invitation);
+    $mail = $notification->toMail($invitedUser);
 
-    expect($mail->actionUrl)->toBe(route('login', ['invitation' => $invitation->code]));
+    expect($notification->viaQueues())->toBe(['mail' => 'notifications'])
+        ->and($mail->actionUrl)->toBe(route('login', ['invitation' => $invitation->code]));
     $this->assertStringContainsString('dashboard', implode(' ', $mail->introLines));
 });
 

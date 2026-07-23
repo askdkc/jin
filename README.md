@@ -184,7 +184,7 @@ npm run dev
 ターミナル3（Queue）:
 
 ```bash
-php artisan queue:work --timeout=240
+php artisan queue:work --queue=broadcasts,notifications,previews,default --timeout=240
 ```
 
 ターミナル4（Reverb）:
@@ -506,17 +506,61 @@ QueueとReverbはSupervisorで常駐させます。systemdから各プロセス�
 
 ```bash
 sudo tee /etc/supervisor/conf.d/jin-queue.conf >/dev/null <<EOF
-[program:jin-queue]
-command=/usr/bin/php ${JIN_PATH}/artisan queue:work --sleep=3 --tries=3 --timeout=240
+[program:jin-broadcasts]
+process_name=%(program_name)s_%(process_num)02d
+command=/usr/bin/php ${JIN_PATH}/artisan queue:work --queue=broadcasts --sleep=1 --tries=3 --timeout=60
 directory=${JIN_PATH}
 user=www-data
+numprocs=1
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+stopwaitsecs=70
+redirect_stderr=true
+stdout_logfile=${JIN_PATH}/storage/logs/broadcast-worker-%(process_num)02d.log
+
+[program:jin-notifications]
+process_name=%(program_name)s_%(process_num)02d
+command=/usr/bin/php ${JIN_PATH}/artisan queue:work --queue=notifications --sleep=1 --tries=3 --timeout=60
+directory=${JIN_PATH}
+user=www-data
+numprocs=1
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+stopwaitsecs=70
+redirect_stderr=true
+stdout_logfile=${JIN_PATH}/storage/logs/notification-worker-%(process_num)02d.log
+
+[program:jin-previews]
+process_name=%(program_name)s_%(process_num)02d
+command=/usr/bin/php ${JIN_PATH}/artisan queue:work --queue=previews --sleep=1 --tries=25 --timeout=240
+directory=${JIN_PATH}
+user=www-data
+numprocs=8
 autostart=true
 autorestart=true
 stopasgroup=true
 killasgroup=true
 stopwaitsecs=300
 redirect_stderr=true
-stdout_logfile=${JIN_PATH}/storage/logs/queue-worker.log
+stdout_logfile=${JIN_PATH}/storage/logs/preview-worker-%(process_num)02d.log
+
+[program:jin-default]
+process_name=%(program_name)s_%(process_num)02d
+command=/usr/bin/php ${JIN_PATH}/artisan queue:work --queue=default --sleep=3 --tries=3 --timeout=60
+directory=${JIN_PATH}
+user=www-data
+numprocs=1
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+stopwaitsecs=70
+redirect_stderr=true
+stdout_logfile=${JIN_PATH}/storage/logs/default-worker-%(process_num)02d.log
 EOF
 
 sudo tee /etc/supervisor/conf.d/jin-reverb.conf >/dev/null <<EOF
@@ -536,13 +580,15 @@ EOF
 sudo systemctl enable --now nginx php8.4-fpm supervisor
 sudo supervisorctl reread
 sudo supervisorctl update
-sudo supervisorctl status jin-queue jin-reverb
+sudo supervisorctl status "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-default:*" jin-reverb
 
 printf '%s\n' \
   "* * * * * www-data cd ${JIN_PATH} && /usr/bin/php artisan schedule:run >/dev/null 2>&1" | \
   sudo tee /etc/cron.d/jin-scheduler >/dev/null
 sudo chmod 644 /etc/cron.d/jin-scheduler
 ```
+
+`jin-previews`はPDF変換を最大8件並列処理します。CPUコア数、RAM、PDFサイズを監視し、負荷が高い場合は`numprocs`を下げてください。標準構成のSQLiteとdatabase Queueで8ワーカーを動かすと書き込みロックが競合する可能性があります。`database is locked`が発生する場合は`numprocs`を2〜4へ下げるか、QueueをRedisへ移行してください。
 
 #### OS再起動時の自動起動
 
@@ -553,10 +599,10 @@ sudo systemctl enable nginx php8.4-fpm supervisor
 
 systemctl is-enabled nginx php8.4-fpm supervisor
 systemctl is-active ds-converter ds-docservice
-sudo supervisorctl status jin-queue jin-reverb
+sudo supervisorctl status "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-default:*" jin-reverb
 ```
 
-期待値はNginx、PHP-FPM、Supervisorが`enabled`、ds系serviceが`active`、Supervisor側が両方`RUNNING`です。macOS開発は引き続きDocker Desktopのrestart policyを使います。
+期待値はNginx、PHP-FPM、Supervisorが`enabled`、ds系serviceが`active`、Supervisor配下の全プロセスが`RUNNING`です。macOS開発は引き続きDocker Desktopのrestart policyを使います。
 
 ### 8. 公開前に疎通と安全性を確認する
 
@@ -568,7 +614,7 @@ cd "$JIN_PATH"
 php artisan app:production-check
 composer check-platform-reqs --no-dev
 sudo systemctl --no-pager --full status nginx php8.4-fpm supervisor ds-converter ds-docservice
-sudo supervisorctl status jin-queue jin-reverb
+sudo supervisorctl status "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-default:*" jin-reverb
 ```
 
 `app:production-check`はHTTPS、デバッグ、Queue、Reverb、Cookieなどの本番設定が安全でない場合に失敗します。
@@ -583,7 +629,7 @@ Officeプレビューが`Download failed`になる場合は、DocumentServerか�
 
   cd "$JIN_PATH"
   php artisan down --retry=60
-  sudo supervisorctl stop jin-queue jin-reverb
+  sudo supervisorctl stop "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-default:*" jin-reverb
   git pull --ff-only
   composer install --no-dev --optimize-autoloader
   npm ci
@@ -593,7 +639,7 @@ Officeプレビューが`Download failed`になる場合は、DocumentServerか�
   php artisan optimize
   php artisan app:production-check
   sudo systemctl reload php8.4-fpm
-  sudo supervisorctl start jin-queue jin-reverb
+  sudo supervisorctl start "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-default:*" jin-reverb
   php artisan up
 )
 ```

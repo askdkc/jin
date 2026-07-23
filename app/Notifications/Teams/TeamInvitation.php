@@ -30,6 +30,12 @@ class TeamInvitation extends Notification implements ShouldQueue
         return ['mail'];
     }
 
+    /** @return array<string, string> */
+    public function viaQueues(): array
+    {
+        return ['mail' => 'notifications'];
+    }
+
     /**
      * Get the mail representation of the notification.
      */

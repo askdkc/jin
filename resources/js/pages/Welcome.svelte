@@ -69,7 +69,7 @@
 
     const screens = [
         {
-            image: '/images/landing/project.webp',
+            image: '/images/landing/project.webp?v=20260724',
             eyebrow: 'PROJECT HOME',
             title: '必要なものが、最初から同じ場所にある',
             description:
@@ -82,7 +82,7 @@
             imageOrder: '',
         },
         {
-            image: '/images/landing/calendar.webp',
+            image: '/images/landing/calendar.webp?v=20260724',
             eyebrow: 'CALENDAR & LINEUP',
             title: '今日の予定から数か月先の陣形まで',
             description:
@@ -95,7 +95,7 @@
             imageOrder: 'lg:order-2',
         },
         {
-            image: '/images/landing/materials.webp',
+            image: '/images/landing/materials.webp?v=20260724',
             eyebrow: 'MATERIALS',
             title: '資料は置くだけ。閲覧まで迷わせない',
             description:
@@ -279,7 +279,7 @@
                             >
                         </div>
                         <img
-                            src="/images/landing/dashboard.webp"
+                            src="/images/landing/dashboard.webp?v=20260724"
                             alt="JINのダッシュボード。プロジェクト一覧と最近の更新を一画面で確認できる"
                             width="1440"
                             height="900"

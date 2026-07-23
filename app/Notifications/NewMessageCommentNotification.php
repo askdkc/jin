@@ -6,10 +6,11 @@ use App\Models\MessageBoardPost;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
-class NewMessageCommentNotification extends Notification
+class NewMessageCommentNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
@@ -20,7 +21,9 @@ class NewMessageCommentNotification extends Notification
         public User $actor,
         public Project $project,
         public MessageBoardPost $messageBoardPost,
-    ) {}
+    ) {
+        $this->afterCommit();
+    }
 
     /**
      * Get the notification's delivery channels.
@@ -32,6 +35,15 @@ class NewMessageCommentNotification extends Notification
         return $notifiable instanceof User
             ? $notifiable->notificationChannels()
             : ['database', 'mail'];
+    }
+
+    /** @return array<string, string> */
+    public function viaQueues(): array
+    {
+        return [
+            'database' => 'notifications',
+            'mail' => 'notifications',
+        ];
     }
 
     /**

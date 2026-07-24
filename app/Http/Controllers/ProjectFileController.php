@@ -13,9 +13,9 @@ use App\Models\Project;
 use App\Models\StoredFile;
 use App\Models\Team;
 use App\Models\User;
-use App\Support\InlineAttachments;
 use App\Support\OnlyOfficeDocumentTypeResolver;
 use App\Support\Reactions;
+use App\Support\StoredFileDeletion;
 use App\Support\StoredFilePreviewDispatcher;
 use App\Support\StoredFilePreviewGenerator;
 use Illuminate\Http\RedirectResponse;
@@ -34,8 +34,6 @@ use Throwable;
 
 class ProjectFileController extends Controller
 {
-    private const DELETION_LEASE_SECONDS = 60;
-
     public function store(StoreProjectFileRequest $request, Team $currentTeam, Project $project): RedirectResponse
     {
         $files = $request->file('files');
@@ -352,141 +350,18 @@ class ProjectFileController extends Controller
         return back();
     }
 
-    public function destroy(Team $currentTeam, Project $project, StoredFile $storedFile): RedirectResponse
-    {
+    public function destroy(
+        Team $currentTeam,
+        Project $project,
+        StoredFile $storedFile,
+        StoredFileDeletion $deletion,
+    ): RedirectResponse {
         Gate::authorize('view', $project);
         abort_unless($storedFile->uploaded_by === request()->user()->id || Gate::allows('update', $project), 403);
 
-        $deletion = DB::transaction(function () use ($storedFile): ?array {
-            $current = StoredFile::query()
-                ->whereKey($storedFile->id)
-                ->lockForUpdate()
-                ->first();
-
-            if ($current === null) {
-                return null;
-            }
-
-            $retrying = $current->preview_status === 'deleting';
-
-            if ($retrying
-                && $current->updated_at?->isAfter(now()->subSeconds(self::DELETION_LEASE_SECONDS))) {
-                return null;
-            }
-
-            $deletion = [
-                'disk' => $current->disk,
-                'path' => $current->path,
-                'original_name' => $current->original_name,
-                'preview_path' => $retrying ? null : $current->preview_path,
-                'preview_status' => $retrying ? null : $current->preview_status,
-            ];
-
-            $current->update([
-                'preview_path' => null,
-                'preview_status' => 'deleting',
-            ]);
-
-            return [
-                ...$deletion,
-                'lease_token' => (string) $current->getRawOriginal('updated_at'),
-            ];
-        });
-
-        if ($deletion === null) {
-            return back();
-        }
-
-        $disk = Storage::disk($deletion['disk']);
-
-        try {
-            if ($disk->exists($deletion['path']) && ! $disk->delete($deletion['path'])) {
-                if (Storage::disk($deletion['disk'])->exists($deletion['path'])) {
-                    throw new RuntimeException('File deletion failed.');
-                }
-            }
-        } catch (Throwable $exception) {
-            $this->restoreAfterDeletionFailure($storedFile->id, $deletion);
-
-            throw $exception;
-        }
-
-        StoredFilePreviewGenerator::cleanup(
-            $disk,
-            $storedFile->id,
-            $deletion['path'],
-            $deletion['preview_path'],
-            includeLegacy: true,
-        );
-
-        $this->finalizeDeletion($storedFile->id, $deletion);
+        $deletion->delete($storedFile->id);
 
         return back();
-    }
-
-    /** @param array{path: string, lease_token: string} $deletion */
-    private function finalizeDeletion(int $storedFileId, array $deletion): bool
-    {
-        return DB::transaction(function () use ($storedFileId, $deletion): bool {
-            $current = StoredFile::query()
-                ->whereKey($storedFileId)
-                ->lockForUpdate()
-                ->first();
-
-            if ($current === null
-                || $current->path !== $deletion['path']
-                || $current->preview_status !== 'deleting'
-                || (string) $current->getRawOriginal('updated_at') !== $deletion['lease_token']) {
-                return false;
-            }
-
-            InlineAttachments::removeFromBody($current);
-            InlineAttachments::detachMany((new Comment)->getMorphClass(), $current->comments()->pluck('id'));
-            $current->comments()->delete();
-            // Bound the morph lookup to this project so the existing project index limits the scan.
-            Activity::query()
-                ->where('project_id', $current->project_id)
-                ->where('subject_type', $current->getMorphClass())
-                ->where('subject_id', $current->id)
-                ->get()
-                ->each(fn (Activity $activity) => $activity->update([
-                    'metadata' => [...$activity->metadata, 'subjectDeleted' => true],
-                ]));
-            $current->delete();
-
-            return true;
-        });
-    }
-
-    /** @param array{disk: string, path: string, original_name: string, preview_path: string|null, preview_status: string|null, lease_token: string} $deletion */
-    private function restoreAfterDeletionFailure(int $storedFileId, array $deletion): void
-    {
-        DB::transaction(function () use ($storedFileId, $deletion): void {
-            $current = StoredFile::query()
-                ->whereKey($storedFileId)
-                ->where('path', $deletion['path'])
-                ->where('preview_status', 'deleting')
-                ->where('updated_at', $deletion['lease_token'])
-                ->lockForUpdate()
-                ->first();
-
-            if ($current === null) {
-                return;
-            }
-
-            $needsRegeneration = StoredFilePreviewGenerator::supports($deletion['original_name'])
-                && $deletion['preview_status'] !== 'ready';
-
-            $current->update([
-                'preview_path' => $deletion['preview_path'],
-                'preview_status' => $needsRegeneration ? 'pending' : $deletion['preview_status'],
-            ]);
-
-            if ($needsRegeneration) {
-                app(StoredFilePreviewDispatcher::class)
-                    ->dispatchAfterCommit($storedFileId, $deletion['path']);
-            }
-        });
     }
 
     private function csvAsUtf8(string $contents): string

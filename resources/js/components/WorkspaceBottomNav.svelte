@@ -20,13 +20,13 @@
     import ProjectTodoController from '@/actions/App/Http/Controllers/ProjectTodoController';
     import WorkspaceCalendarController from '@/actions/App/Http/Controllers/WorkspaceCalendarController';
     import AppLogoIcon from '@/components/AppLogoIcon.svelte';
-    import UserMenuContent from '@/components/UserMenuContent.svelte';
     import { Button } from '@/components/ui/button';
     import {
         DropdownMenu,
         DropdownMenuContent,
         DropdownMenuTrigger,
     } from '@/components/ui/dropdown-menu';
+    import UserMenuContent from '@/components/UserMenuContent.svelte';
     import { getEcho } from '@/lib/echo';
     import { t } from '@/lib/i18n';
     import { show } from '@/routes/projects';

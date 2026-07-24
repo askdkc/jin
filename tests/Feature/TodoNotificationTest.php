@@ -1,13 +1,17 @@
 <?php
 
 use App\Enums\TeamRole;
+use App\Jobs\QueueTodoDueReminder;
 use App\Models\Project;
 use App\Models\Team;
 use App\Models\Todo;
 use App\Models\TodoList;
+use App\Models\TodoReminderDelivery;
 use App\Models\User;
 use App\Notifications\TodoActivityNotification;
+use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Queue;
 use Inertia\Testing\AssertableInertia as Assert;
 
 test('todo assignment comments and completion notify related users except the actor', function () {
@@ -154,4 +158,186 @@ test('due todo reminders respect the assignees reminder setting', function () {
         ->assertSuccessful();
 
     expect($assignee->notifications()->count())->toBe(0);
+});
+
+test('asynchronous due reminder commands create and queue one durable delivery', function () {
+    Queue::fake();
+    $owner = User::factory()->create();
+    $assignee = User::factory()->create([
+        'notification_preferences' => [
+            ...User::DEFAULT_NOTIFICATION_PREFERENCES,
+            'in_app' => false,
+            'email' => true,
+        ],
+    ]);
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($assignee, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([$owner->id, $assignee->id]);
+    $list = TodoList::factory()->for($project)->create();
+    $todo = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->for($assignee, 'assignee')->create([
+        'due_on' => today(),
+    ]);
+
+    $this->artisan('todos:send-due-reminders')->assertSuccessful();
+    $this->artisan('todos:send-due-reminders')->assertSuccessful();
+
+    expect(TodoReminderDelivery::query()->count())->toBe(1)
+        ->and(TodoReminderDelivery::query()->sole()->todo_id)->toBe($todo->id);
+    Queue::assertPushed(QueueTodoDueReminder::class, 1);
+});
+
+test('due reminder jobs revalidate the current recipient access and reminder date', function () {
+    Notification::fake();
+    $owner = User::factory()->create();
+    $previousAssignee = User::factory()->create();
+    $currentAssignee = User::factory()->create();
+    $removedAssignee = User::factory()->create();
+    $pastAssignee = User::factory()->create();
+    $team = Team::factory()->create();
+
+    foreach ([$owner, $previousAssignee, $currentAssignee, $removedAssignee, $pastAssignee] as $user) {
+        $team->members()->attach($user, [
+            'role' => $user->is($owner) ? TeamRole::Owner->value : TeamRole::Member->value,
+        ]);
+    }
+
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([
+        $owner->id,
+        $previousAssignee->id,
+        $currentAssignee->id,
+        $removedAssignee->id,
+        $pastAssignee->id,
+    ]);
+    $list = TodoList::factory()->for($project)->create();
+    $reassignedTodo = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->for($currentAssignee, 'assignee')->create([
+        'due_on' => today(),
+    ]);
+    $accessRevokedTodo = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->for($removedAssignee, 'assignee')->create([
+        'due_on' => today(),
+    ]);
+    $pastTodo = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->for($pastAssignee, 'assignee')->create([
+        'due_on' => today()->subDay(),
+    ]);
+    $project->members()->detach($removedAssignee);
+
+    $deliveries = collect([
+        TodoReminderDelivery::query()->create([
+            'todo_id' => $reassignedTodo->id,
+            'user_id' => $previousAssignee->id,
+            'reminder_on' => today(),
+            'dispatched_at' => now(),
+        ]),
+        TodoReminderDelivery::query()->create([
+            'todo_id' => $accessRevokedTodo->id,
+            'user_id' => $removedAssignee->id,
+            'reminder_on' => today(),
+            'dispatched_at' => now(),
+        ]),
+        TodoReminderDelivery::query()->create([
+            'todo_id' => $pastTodo->id,
+            'user_id' => $pastAssignee->id,
+            'reminder_on' => today()->subDay(),
+            'dispatched_at' => now(),
+        ]),
+    ]);
+
+    $deliveries->each(fn (TodoReminderDelivery $delivery) => (new QueueTodoDueReminder($delivery->id))->handle());
+
+    Notification::assertNothingSent();
+    expect($deliveries->map(fn (TodoReminderDelivery $delivery): ?string => $delivery->refresh()->skip_reason)->all())
+        ->toBe([
+            'assignee_changed',
+            'project_access_revoked',
+            'reminder_date_expired',
+        ])
+        ->and($deliveries->every(fn (TodoReminderDelivery $delivery): bool => $delivery->refresh()->queued_at === null))
+        ->toBeTrue();
+});
+
+test('due reminder jobs reclaim stale processing without sending twice', function () {
+    Notification::fake();
+    $owner = User::factory()->create();
+    $assignee = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($assignee, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([$owner->id, $assignee->id]);
+    $list = TodoList::factory()->for($project)->create();
+    $todo = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->for($assignee, 'assignee')->create([
+        'due_on' => today(),
+    ]);
+    $delivery = TodoReminderDelivery::query()->create([
+        'todo_id' => $todo->id,
+        'user_id' => $assignee->id,
+        'reminder_on' => today(),
+        'dispatched_at' => now(),
+        'processing_at' => now(),
+    ]);
+    $job = new QueueTodoDueReminder($delivery->id);
+
+    $job->handle();
+    Notification::assertNothingSent();
+
+    $this->travel(5)->minutes();
+    $job->handle();
+    $job->handle();
+
+    expect(Notification::sent($assignee, TodoActivityNotification::class))->toHaveCount(1)
+        ->and($delivery->refresh()->processing_at)->toBeNull()
+        ->and($delivery->queued_at)->not->toBeNull()
+        ->and($delivery->skipped_at)->toBeNull();
+});
+
+test('pending due reminder dispatch failures return a failure and retry later the same day', function () {
+    $owner = User::factory()->create();
+    $assignee = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($assignee, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([$owner->id, $assignee->id]);
+    $list = TodoList::factory()->for($project)->create();
+    $todo = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->for($assignee, 'assignee')->create([
+        'due_on' => today(),
+    ]);
+    $delivery = TodoReminderDelivery::query()->create([
+        'todo_id' => $todo->id,
+        'user_id' => $assignee->id,
+        'reminder_on' => today(),
+    ]);
+    $unavailableBus = Mockery::mock(Dispatcher::class);
+    $unavailableBus->shouldReceive('dispatch')
+        ->once()
+        ->andThrow(new RuntimeException('queue unavailable'));
+    $this->app->instance(Dispatcher::class, $unavailableBus);
+
+    $this->artisan('todos:dispatch-pending-reminders')
+        ->expectsOutputToContain('Failed to queue 1 pending to-do reminder deliveries.')
+        ->assertFailed();
+
+    expect($delivery->refresh()->dispatched_at)->toBeNull()
+        ->and($delivery->last_error)->toBe('queue unavailable');
+
+    $recoveredBus = Mockery::mock(Dispatcher::class);
+    $recoveredBus->shouldReceive('dispatch')
+        ->once()
+        ->with(Mockery::type(QueueTodoDueReminder::class))
+        ->andReturn(1);
+    $this->app->instance(Dispatcher::class, $recoveredBus);
+
+    $this->artisan('todos:dispatch-pending-reminders')->assertSuccessful();
+
+    expect($delivery->refresh()->dispatched_at)->not->toBeNull()
+        ->and($delivery->last_error)->toBeNull();
+});
+
+test('pending due reminder dispatcher is registered with the scheduler', function () {
+    $this->artisan('schedule:list')
+        ->expectsOutputToContain('todos:send-due-reminders')
+        ->expectsOutputToContain('todos:dispatch-pending-reminders')
+        ->assertSuccessful();
 });

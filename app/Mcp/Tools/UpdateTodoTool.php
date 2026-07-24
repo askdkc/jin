@@ -3,12 +3,11 @@
 namespace App\Mcp\Tools;
 
 use App\Enums\ActivityType;
+use App\Mcp\McpContext;
 use App\Models\Activity;
-use App\Models\Project;
-use App\Models\Team;
 use App\Models\Todo;
-use App\Models\User;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
+use Illuminate\Support\Facades\Gate;
 use Laravel\Mcp\Request;
 use Laravel\Mcp\Response;
 use Laravel\Mcp\Server\Attributes\Description;
@@ -17,11 +16,12 @@ use Laravel\Mcp\Server\Tool;
 #[Description('権限範囲内の任務について、名称、担当者、期限、完了状態を更新します。')]
 class UpdateTodoTool extends Tool
 {
+    public function __construct(private McpContext $context) {}
+
     public function handle(Request $request): Response
     {
         $input = $request->validate([
             'team_slug' => ['required', 'string', 'max:255'],
-            'user_email' => ['required', 'email'],
             'project_id' => ['required', 'integer'],
             'todo_id' => ['required', 'integer'],
             'title' => ['nullable', 'string', 'max:255'],
@@ -29,19 +29,21 @@ class UpdateTodoTool extends Tool
             'due_on' => ['nullable', 'date_format:Y-m-d'],
             'completed' => ['nullable', 'boolean'],
         ]);
-        $team = Team::query()->where('slug', $input['team_slug'])->first();
-        $user = $team?->members()->where('email', strtolower($input['user_email']))->first();
-        $project = $team && $user
-            ? Project::query()->visibleTo($user, $team)->whereKey($input['project_id'])->first()
-            : null;
-        $todo = $project
-            ? Todo::query()
-                ->whereHas('todoList', fn ($query) => $query->where('project_id', $project->id))
-                ->find($input['todo_id'])
-            : null;
+        $context = $this->context->project($request, $input['team_slug'], (int) $input['project_id']);
+        $todo = $context === null
+            ? null
+            : Todo::query()
+                ->whereHas('todoList', fn ($query) => $query->where('project_id', $context[2]->id))
+                ->find($input['todo_id']);
 
-        if (! $team || ! $user instanceof User || ! $project || ! $todo instanceof Todo) {
-            return Response::error('チーム、所属ユーザー、プロジェクト、または任務が見つかりません。');
+        if ($context === null || ! $todo instanceof Todo) {
+            return Response::error('認証済み利用者が閲覧できるチーム、プロジェクト、または任務が見つかりません。');
+        }
+
+        [, $user, $project] = $context;
+
+        if (Gate::forUser($user)->denies('update', $todo)) {
+            return Response::error('この任務を更新する権限がありません。');
         }
 
         $changes = [];
@@ -52,10 +54,10 @@ class UpdateTodoTool extends Tool
 
         if (array_key_exists('assignee_email', $input)) {
             $assignee = filled($input['assignee_email'])
-                ? $project->members()->where('email', strtolower($input['assignee_email']))->first()
+                ? $project->members()->where('email', mb_strtolower($input['assignee_email']))->first()
                 : null;
 
-            if (filled($input['assignee_email']) && ! $assignee instanceof User) {
+            if (filled($input['assignee_email']) && $assignee === null) {
                 return Response::error('担当者はプロジェクトメンバーではありません。');
             }
 
@@ -102,7 +104,6 @@ class UpdateTodoTool extends Tool
     {
         return [
             'team_slug' => $schema->string()->description('対象チームのslug')->required(),
-            'user_email' => $schema->string()->description('操作主体となる所属ユーザーのメールアドレス')->required(),
             'project_id' => $schema->integer()->description('対象プロジェクトID')->required(),
             'todo_id' => $schema->integer()->description('対象任務ID')->required(),
             'title' => $schema->string()->description('新しい任務名'),

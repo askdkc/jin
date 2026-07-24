@@ -4,6 +4,7 @@ use App\Enums\TeamAuditEvent;
 use App\Models\TeamAuditLog;
 use App\Models\TeamInvitation;
 use Illuminate\Console\Command;
+use Illuminate\Encryption\Encrypter;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schedule;
@@ -17,15 +18,62 @@ Artisan::command('app:production-check', function (): int {
         config('reverb.apps.apps.0.key'),
         config('reverb.apps.apps.0.secret'),
     ];
+    $configuredKey = (string) config('app.key');
+    $decodedKey = str_starts_with($configuredKey, 'base64:')
+        ? base64_decode(substr($configuredKey, 7), true)
+        : $configuredKey;
+    $onlyOfficeEnabled = config('onlyoffice.enabled') === true;
+    $onlyOfficeSecret = (string) config('onlyoffice.jwt_secret');
+    $onlyOfficeMaxFileSize = (int) config('onlyoffice.max_file_size');
+    $documentServerMaxDownload = (int) config('onlyoffice.document_server_max_download_bytes');
+    $uploadMaxFileMegabytes = (int) config('uploads.max_file_megabytes');
+    $uploadMaxFiles = (int) config('uploads.max_files_per_request');
+    $uploadMaxRequestMegabytes = (int) config('uploads.max_request_megabytes');
+    $mailDriver = (string) config('mail.default');
+    $mailHost = strtolower((string) config('mail.mailers.smtp.host'));
+    $mailPort = (int) config('mail.mailers.smtp.port');
+    $mailScheme = (string) config('mail.mailers.smtp.scheme');
+    $mailUsername = (string) config('mail.mailers.smtp.username');
+    $mailPassword = (string) config('mail.mailers.smtp.password');
+    $mailFrom = (string) config('mail.from.address');
 
     $checks = [
         'APP_ENV must be production.' => config('app.env') === 'production',
         'APP_DEBUG must be false.' => config('app.debug') === false,
-        'APP_KEY must be configured.' => filled(config('app.key')),
+        'APP_KEY must be a valid key for the configured cipher.' => is_string($decodedKey)
+            && Encrypter::supported($decodedKey, (string) config('app.cipher')),
         'APP_URL must use HTTPS.' => str_starts_with((string) config('app.url'), 'https://'),
+        'DB_CONNECTION must be pgsql.' => config('database.default') === 'pgsql',
         'BROADCAST_CONNECTION must be reverb.' => config('broadcasting.default') === 'reverb',
-        'QUEUE_CONNECTION must use an asynchronous driver.' => ! in_array(config('queue.default'), ['sync', 'null', 'deferred', 'background'], true),
-        'CACHE_STORE must be persistent.' => ! in_array(config('cache.default'), ['array', 'null'], true),
+        'QUEUE_CONNECTION must be redis.' => config('queue.default') === 'redis',
+        'CACHE_STORE must be redis.' => config('cache.default') === 'redis',
+        'SESSION_DRIVER must be redis.' => config('session.driver') === 'redis',
+        'MAIL_MAILER must deliver mail.' => ! in_array($mailDriver, ['array', 'log'], true),
+        'MAIL_HOST must use a configured SMTP provider.' => $mailDriver !== 'smtp'
+            || ($mailHost !== '' && ! in_array($mailHost, ['127.0.0.1', '::1', 'localhost'], true)),
+        'MAIL_PORT must be a valid SMTP port.' => $mailDriver !== 'smtp'
+            || ($mailPort >= 1 && $mailPort <= 65535),
+        'MAIL_SCHEME must be smtp or smtps.' => $mailDriver !== 'smtp'
+            || in_array($mailScheme, ['smtp', 'smtps'], true),
+        'MAIL_USERNAME and MAIL_PASSWORD must be configured for SMTP.' => $mailDriver !== 'smtp'
+            || ($mailUsername !== '' && $mailPassword !== ''),
+        'MAIL_FROM_ADDRESS must not use an example domain.' => $mailFrom !== ''
+            && ! str_ends_with(strtolower($mailFrom), '@example.com'),
+        'UPLOAD_MAX_FILE_MB must be at least 1.' => $uploadMaxFileMegabytes >= 1,
+        'UPLOAD_MAX_FILES must be at least 1.' => $uploadMaxFiles >= 1,
+        'UPLOAD_MAX_REQUEST_MB must be at least UPLOAD_MAX_FILE_MB.' => $uploadMaxRequestMegabytes >= $uploadMaxFileMegabytes,
+        'ONLYOFFICE configuration must be complete when enabled.' => ! $onlyOfficeEnabled
+            || (filter_var(config('onlyoffice.document_server_url'), FILTER_VALIDATE_URL) !== false
+                && str_starts_with((string) config('onlyoffice.public_url'), 'https://')
+                && filter_var(config('onlyoffice.internal_url'), FILTER_VALIDATE_URL) !== false
+                && strlen($onlyOfficeSecret) >= 32
+                && filled(config('onlyoffice.instance_id'))),
+        'ONLYOFFICE_MAX_FILE_SIZE_BYTES must not exceed UPLOAD_MAX_FILE_MB.' => ! $onlyOfficeEnabled
+            || ($onlyOfficeMaxFileSize > 0
+                && $onlyOfficeMaxFileSize <= $uploadMaxFileMegabytes * 1024 * 1024),
+        'ONLYOFFICE_MAX_FILE_SIZE_BYTES must not exceed Document Server maxDownloadBytes.' => ! $onlyOfficeEnabled
+            || ($documentServerMaxDownload > 0
+                && $onlyOfficeMaxFileSize <= $documentServerMaxDownload),
         'ALLOWED_IPS must not be empty or contain a wildcard when IP restriction is enabled.' => config('access.enabled') === false
             || (is_array($allowedIps) && $allowedIps !== [] && ! in_array('*', $allowedIps, true)),
         'TRUSTED_PROXIES must not contain a wildcard.' => is_array($trustedProxies) && ! in_array('*', $trustedProxies, true),
@@ -85,15 +133,26 @@ Schedule::command('todos:send-due-reminders')
     ->dailyAt('08:00')
     ->timezone(config('app.timezone'))
     ->withoutOverlapping()
-    ->description('Notify assignees about incomplete to-dos due today');
+    ->description('Create reminder deliveries for incomplete to-dos due today');
+
+Schedule::command('todos:dispatch-pending-reminders')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->description('Queue pending to-do reminder deliveries');
 
 Schedule::command('check-ins:dispatch')
     ->everyFiveMinutes()
     ->withoutOverlapping()
     ->description('Create due check-in prompts and queue notifications');
 
-Schedule::command('model:prune --model=App\\Models\\PersonalNoteAttachment')
+Schedule::command('personal-note-attachments:prune')
     ->daily()
     ->withoutOverlapping()
     ->name('prune-orphaned-personal-note-attachments')
     ->description('Prune orphaned personal-note attachments');
+
+Schedule::command('stored-files:prune-inline')
+    ->daily()
+    ->withoutOverlapping()
+    ->name('prune-orphaned-inline-stored-files')
+    ->description('Prune abandoned inline project files');

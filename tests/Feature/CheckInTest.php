@@ -3,17 +3,21 @@
 use App\Enums\ActivityType;
 use App\Enums\CheckInFrequency;
 use App\Enums\TeamRole;
+use App\Jobs\QueueCheckInDueNotification;
 use App\Models\Activity;
 use App\Models\CheckIn;
+use App\Models\CheckInNotificationDelivery;
 use App\Models\CheckInPrompt;
 use App\Models\Project;
 use App\Models\Team;
 use App\Models\User;
 use App\Notifications\CheckInDueNotification;
 use Carbon\CarbonImmutable;
+use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Queue;
 use Inertia\Testing\AssertableInertia as Assert;
 
 test('project participants can create recurring check-ins for project members', function () {
@@ -500,8 +504,109 @@ test('check-in creators and project managers can pause or delete schedules', fun
     expect($checkIn->fresh())->toBeNull();
 });
 
+test('check-in notification delivery remains durable while the queue is asynchronous', function () {
+    Queue::fake();
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($owner);
+    $checkIn = CheckIn::factory()->for($project)->for($owner, 'creator')->create([
+        'next_run_at' => now()->subMinute(),
+    ]);
+    $checkIn->targets()->attach($owner);
+
+    $this->artisan('check-ins:dispatch')->assertSuccessful();
+    $this->artisan('check-ins:dispatch')->assertSuccessful();
+
+    expect(CheckInNotificationDelivery::query()->count())->toBe(1)
+        ->and(CheckInNotificationDelivery::query()->sole()->check_in_prompt_id)
+        ->toBe(CheckInPrompt::query()->sole()->id);
+    Queue::assertPushed(QueueCheckInDueNotification::class, 1);
+});
+
 test('check-in dispatcher is registered with the scheduler', function () {
     $this->artisan('schedule:list')
         ->expectsOutputToContain('check-ins:dispatch')
         ->assertSuccessful();
+});
+
+test('check-in notification jobs reclaim stale processing without sending twice', function () {
+    Notification::fake();
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($owner);
+    $checkIn = CheckIn::factory()->for($project)->for($owner, 'creator')->create();
+    $checkIn->targets()->attach($owner);
+    $prompt = CheckInPrompt::factory()->for($checkIn)->for($owner)->create();
+    $delivery = CheckInNotificationDelivery::query()->create([
+        'check_in_prompt_id' => $prompt->id,
+        'dispatched_at' => now(),
+        'processing_at' => now(),
+    ]);
+    $job = new QueueCheckInDueNotification($delivery->id);
+
+    $job->handle();
+    Notification::assertNothingSent();
+
+    $this->travel(5)->minutes();
+    $job->handle();
+    $job->handle();
+
+    expect(Notification::sent($owner, CheckInDueNotification::class))->toHaveCount(1)
+        ->and($delivery->refresh()->processing_at)->toBeNull()
+        ->and($delivery->queued_at)->not->toBeNull()
+        ->and($delivery->skipped_at)->toBeNull();
+});
+
+test('check-in notification jobs skip users removed from the target list', function () {
+    Notification::fake();
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($owner);
+    $checkIn = CheckIn::factory()->for($project)->for($owner, 'creator')->create();
+    $prompt = CheckInPrompt::factory()->for($checkIn)->for($owner)->create();
+    $delivery = CheckInNotificationDelivery::query()->create([
+        'check_in_prompt_id' => $prompt->id,
+        'dispatched_at' => now(),
+    ]);
+
+    (new QueueCheckInDueNotification($delivery->id))->handle();
+
+    Notification::assertNothingSent();
+    expect($delivery->refresh()->queued_at)->toBeNull()
+        ->and($delivery->skipped_at)->not->toBeNull()
+        ->and($delivery->skip_reason)->toBe('target_removed');
+});
+
+test('check-in dispatch failures return a failed command and keep the delivery pending', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($owner);
+    $checkIn = CheckIn::factory()->for($project)->for($owner, 'creator')->create([
+        'next_run_at' => now()->addDay(),
+    ]);
+    $checkIn->targets()->attach($owner);
+    $prompt = CheckInPrompt::factory()->for($checkIn)->for($owner)->create();
+    $delivery = CheckInNotificationDelivery::query()->create([
+        'check_in_prompt_id' => $prompt->id,
+    ]);
+    $bus = Mockery::mock(Dispatcher::class);
+    $bus->shouldReceive('dispatch')
+        ->once()
+        ->andThrow(new RuntimeException('queue unavailable'));
+    $this->app->instance(Dispatcher::class, $bus);
+
+    $this->artisan('check-ins:dispatch')
+        ->expectsOutputToContain('Failed to queue 1 check-in notification deliveries.')
+        ->assertFailed();
+
+    expect($delivery->refresh()->dispatched_at)->toBeNull()
+        ->and($delivery->last_error)->toBe('queue unavailable');
 });

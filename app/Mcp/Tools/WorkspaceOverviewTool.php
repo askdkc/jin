@@ -2,32 +2,32 @@
 
 namespace App\Mcp\Tools;
 
+use App\Mcp\McpContext;
 use App\Models\Project;
-use App\Models\Team;
 use App\Models\Todo;
-use App\Models\User;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Laravel\Mcp\Request;
 use Laravel\Mcp\Response;
 use Laravel\Mcp\Server\Attributes\Description;
 use Laravel\Mcp\Server\Tool;
 
-#[Description('利用者が閲覧できるJINのプロジェクト、未完了任務、直近予定をまとめて返します。')]
+#[Description('認証済み利用者が閲覧できるJINのプロジェクト、未完了任務、直近予定をまとめて返します。')]
 class WorkspaceOverviewTool extends Tool
 {
+    public function __construct(private McpContext $context) {}
+
     public function handle(Request $request): Response
     {
         $input = $request->validate([
             'team_slug' => ['required', 'string', 'max:255'],
-            'user_email' => ['required', 'email'],
         ]);
-        $team = Team::query()->where('slug', $input['team_slug'])->first();
-        $user = $team?->members()->where('email', strtolower($input['user_email']))->first();
+        $context = $this->context->team($request, $input['team_slug']);
 
-        if (! $team || ! $user instanceof User) {
-            return Response::error('チームまたは所属ユーザーが見つかりません。');
+        if ($context === null) {
+            return Response::error('認証済み利用者が所属するチームが見つかりません。');
         }
 
+        [$team, $user] = $context;
         $projects = Project::query()
             ->visibleTo($user, $team)
             ->whereNull('archived_at')
@@ -89,7 +89,6 @@ class WorkspaceOverviewTool extends Tool
     {
         return [
             'team_slug' => $schema->string()->description('対象チームのslug')->required(),
-            'user_email' => $schema->string()->description('操作主体となる所属ユーザーのメールアドレス')->required(),
         ];
     }
 }

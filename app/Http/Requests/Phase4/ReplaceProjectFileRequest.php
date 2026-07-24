@@ -43,7 +43,7 @@ class ReplaceProjectFileRequest extends FormRequest
         return [
             'file' => [
                 'required',
-                File::types($fileTypes)->max('10mb'),
+                File::types($fileTypes)->max((int) config('uploads.max_file_megabytes') * 1024),
                 'extensions:'.$extension,
             ],
         ];

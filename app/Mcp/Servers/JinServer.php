@@ -14,7 +14,7 @@ use Laravel\Mcp\Server\Attributes\Version;
 
 #[Name('Jin Server')]
 #[Version('1.0.0')]
-#[Instructions('JINのプロジェクト、任務、掲示、資料、予定、会話を参照・検索し、利用者の権限範囲で作成・更新します。各ツールにはチームslugと操作主体のメールアドレスが必要です。')]
+#[Instructions('JINのプロジェクト、任務、掲示、資料、予定、会話を参照・検索し、このlocal MCPプロセスに固定された認証済み利用者の権限範囲で作成・更新します。各ツールには対象チームのslugが必要です。')]
 class JinServer extends Server
 {
     protected array $tools = [

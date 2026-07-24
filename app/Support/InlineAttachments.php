@@ -14,7 +14,9 @@ use App\Models\Todo;
 use DOMDocument;
 use DOMElement;
 use DOMXPath;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Validation\ValidationException;
 
 class InlineAttachments
 {
@@ -30,10 +32,12 @@ class InlineAttachments
         $matches = [];
         preg_match_all('/\/files\/(\d+)/', $body ?? '', $matches);
         $fileIds = array_values(array_unique(array_map('intval', $matches[1])));
+        $morphClass = $attachable->getMorphClass();
+        $attachableId = $attachable->getKey();
 
         $attachedInlineFiles = StoredFile::query()
-            ->where('attachable_type', $attachable->getMorphClass())
-            ->where('attachable_id', $attachable->getKey())
+            ->where('attachable_type', $morphClass)
+            ->where('attachable_id', $attachableId)
             ->where('is_inline', true);
 
         if ($fileIds === []) {
@@ -52,17 +56,45 @@ class InlineAttachments
                 'attachable_id' => null,
             ]);
 
-        StoredFile::query()
+        $claimableFileIds = StoredFile::query()
             ->where('project_id', $project->id)
             ->where('uploaded_by', $uploaderId)
             ->where('is_inline', true)
             ->whereIn('id', $fileIds)
+            ->pluck('id')
+            ->map(fn (int|string $id): int => (int) $id)
+            ->all();
+
+        StoredFile::query()
+            ->whereIn('id', $claimableFileIds)
             ->whereNull('attachable_type')
             ->whereNull('attachable_id')
+            ->where(function (Builder $query): void {
+                $query->whereNull('preview_status')
+                    ->orWhere('preview_status', '!=', 'deleting');
+            })
             ->update([
-                'attachable_type' => $attachable->getMorphClass(),
-                'attachable_id' => $attachable->getKey(),
+                'attachable_type' => $morphClass,
+                'attachable_id' => $attachableId,
             ]);
+
+        $attachedFileIds = StoredFile::query()
+            ->whereIn('id', $claimableFileIds)
+            ->where('attachable_type', $morphClass)
+            ->where('attachable_id', $attachableId)
+            ->where(function (Builder $query): void {
+                $query->whereNull('preview_status')
+                    ->orWhere('preview_status', '!=', 'deleting');
+            })
+            ->pluck('id')
+            ->map(fn (int|string $id): int => (int) $id)
+            ->all();
+
+        if (array_diff($claimableFileIds, $attachedFileIds) !== []) {
+            throw ValidationException::withMessages([
+                (self::bodyAttribute($attachable) ?? 'attachments') => __('One or more inline attachments are no longer available. Remove them and try again.'),
+            ]);
+        }
     }
 
     public static function detach(Model $attachable): void
@@ -91,15 +123,7 @@ class InlineAttachments
     public static function removeFromBody(StoredFile $file): void
     {
         $attachable = $file->attachable;
-        $attribute = match (true) {
-            $attachable instanceof Document => 'body',
-            $attachable instanceof ScheduleEvent => 'details',
-            $attachable instanceof Card => 'description',
-            $attachable instanceof CheckInPrompt => 'answer',
-            $attachable instanceof Todo => 'details',
-            $attachable instanceof Comment, $attachable instanceof MessageBoardPost => 'body',
-            default => null,
-        };
+        $attribute = $attachable instanceof Model ? self::bodyAttribute($attachable) : null;
 
         if ($attribute === null) {
             return;
@@ -126,6 +150,19 @@ class InlineAttachments
         }
 
         return self::removeFileReferences($body);
+    }
+
+    private static function bodyAttribute(Model $attachable): ?string
+    {
+        return match (true) {
+            $attachable instanceof Document => 'body',
+            $attachable instanceof ScheduleEvent => 'details',
+            $attachable instanceof Card => 'description',
+            $attachable instanceof CheckInPrompt => 'answer',
+            $attachable instanceof Todo => 'details',
+            $attachable instanceof Comment, $attachable instanceof MessageBoardPost => 'body',
+            default => null,
+        };
     }
 
     private static function removeFileReferences(string $body, ?string $needle = null): string

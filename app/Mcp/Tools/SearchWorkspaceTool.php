@@ -2,13 +2,12 @@
 
 namespace App\Mcp\Tools;
 
+use App\Mcp\McpContext;
 use App\Models\Document;
 use App\Models\MessageBoardPost;
 use App\Models\Project;
 use App\Models\StoredFile;
-use App\Models\Team;
 use App\Models\Todo;
-use App\Models\User;
 use App\Support\RichText;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\Support\Str;
@@ -17,23 +16,24 @@ use Laravel\Mcp\Response;
 use Laravel\Mcp\Server\Attributes\Description;
 use Laravel\Mcp\Server\Tool;
 
-#[Description('JIN全体のプロジェクト、任務、掲示、ドキュメント、ファイルを権限範囲内で横断検索します。')]
+#[Description('JIN全体のプロジェクト、任務、掲示、ドキュメント、ファイルを認証済み利用者の権限範囲内で横断検索します。')]
 class SearchWorkspaceTool extends Tool
 {
+    public function __construct(private McpContext $context) {}
+
     public function handle(Request $request): Response
     {
         $input = $request->validate([
             'team_slug' => ['required', 'string', 'max:255'],
-            'user_email' => ['required', 'email'],
             'query' => ['required', 'string', 'min:1', 'max:200'],
         ]);
-        $team = Team::query()->where('slug', $input['team_slug'])->first();
-        $user = $team?->members()->where('email', strtolower($input['user_email']))->first();
+        $context = $this->context->team($request, $input['team_slug']);
 
-        if (! $team || ! $user instanceof User) {
-            return Response::error('チームまたは所属ユーザーが見つかりません。');
+        if ($context === null) {
+            return Response::error('認証済み利用者が所属するチームが見つかりません。');
         }
 
+        [$team, $user] = $context;
         $projectIds = Project::query()
             ->visibleTo($user, $team)
             ->whereNull('archived_at')
@@ -115,7 +115,6 @@ class SearchWorkspaceTool extends Tool
     {
         return [
             'team_slug' => $schema->string()->description('対象チームのslug')->required(),
-            'user_email' => $schema->string()->description('操作主体となる所属ユーザーのメールアドレス')->required(),
             'query' => $schema->string()->description('検索文字列')->required(),
         ];
     }

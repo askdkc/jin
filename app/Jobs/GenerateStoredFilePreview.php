@@ -26,6 +26,9 @@ class GenerateStoredFilePreview implements ShouldQueue
 
     public int $timeout = 240;
 
+    /** @var list<int> */
+    public array $backoff = [15, 60, 300, 900, 1800];
+
     public bool $failOnTimeout = true;
 
     public function __construct(public int $storedFileId, public string $sourcePath)
@@ -96,30 +99,19 @@ class GenerateStoredFilePreview implements ShouldQueue
                 return;
             }
         } catch (Throwable $exception) {
-            Log::warning('Stored file preview generation failed.', [
+            Log::warning('Stored file preview generation attempt failed.', [
                 'stored_file_id' => $this->storedFileId,
                 'source_path' => $this->sourcePath,
                 'exception' => $exception::class,
             ]);
 
-            $failed = StoredFile::query()
-                ->whereKey($this->storedFileId)
-                ->where('path', $this->sourcePath)
-                ->where('preview_status', 'processing')
-                ->update([
-                    'preview_path' => null,
-                    'preview_status' => 'failed',
-                ]);
+            StoredFilePreviewGenerator::cleanup($disk, $this->storedFileId, $this->sourcePath);
 
-            if ($failed === 1) {
-                StoredFilePreviewGenerator::cleanup($disk, $this->storedFileId, $this->sourcePath);
-            } else {
-                $this->cleanupIfSourceIsStale($disk);
-            }
+            throw $exception;
         }
     }
 
-    public function failed(?Throwable $exception): void
+    public function failed(?Throwable $_exception): void
     {
         $storedFile = StoredFile::query()->find($this->storedFileId);
         $disk = Storage::disk($storedFile->disk ?? config('filesystems.default', 'local'));

@@ -2,13 +2,13 @@
 
 namespace App\Models;
 
+use App\Jobs\DeletePersonalNoteAttachmentFile;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Prunable;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Storage;
 
 /**
  * @property int $id
@@ -22,6 +22,7 @@ use Illuminate\Support\Facades\Storage;
  * @property int $size
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
+ * @property Carbon|null $deleted_at
  * @property-read PersonalNote|null $personalNote
  * @property-read Team $team
  * @property-read User $uploader
@@ -29,12 +30,16 @@ use Illuminate\Support\Facades\Storage;
 #[Fillable(['team_id', 'uploaded_by', 'personal_note_id', 'disk', 'path', 'original_name', 'mime_type', 'size'])]
 class PersonalNoteAttachment extends Model
 {
-    use Prunable;
+    use SoftDeletes;
 
     protected static function booted(): void
     {
-        static::deleting(function (PersonalNoteAttachment $attachment): void {
-            Storage::disk($attachment->disk)->delete($attachment->path);
+        static::softDeleted(function (PersonalNoteAttachment $attachment): void {
+            DeletePersonalNoteAttachmentFile::dispatch(
+                $attachment->id,
+                $attachment->disk,
+                $attachment->path,
+            );
         });
     }
 
@@ -56,10 +61,13 @@ class PersonalNoteAttachment extends Model
         return $this->belongsTo(User::class, 'uploaded_by');
     }
 
-    /** @return Builder<static> */
-    public function prunable(): Builder
+    /**
+     * @param  Builder<static>  $query
+     * @return Builder<static>
+     */
+    public function scopeAbandoned(Builder $query): Builder
     {
-        return static::query()
+        return $query
             ->whereNull('personal_note_id')
             ->where('created_at', '<', now()->subHours(24));
     }

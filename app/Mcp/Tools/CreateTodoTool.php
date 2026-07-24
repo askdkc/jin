@@ -3,11 +3,9 @@
 namespace App\Mcp\Tools;
 
 use App\Enums\ActivityType;
+use App\Mcp\McpContext;
 use App\Models\Activity;
-use App\Models\Project;
-use App\Models\Team;
 use App\Models\Todo;
-use App\Models\User;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\Support\Facades\DB;
 use Laravel\Mcp\Request;
@@ -15,40 +13,32 @@ use Laravel\Mcp\Response;
 use Laravel\Mcp\Server\Attributes\Description;
 use Laravel\Mcp\Server\Tool;
 
-#[Description('指定プロジェクトの未分類任務に新しい任務を作成します。利用者のプロジェクト閲覧権限を検証します。')]
+#[Description('指定プロジェクトの未分類任務に新しい任務を作成します。認証済み利用者のプロジェクト閲覧権限を検証します。')]
 class CreateTodoTool extends Tool
 {
+    public function __construct(private McpContext $context) {}
+
     public function handle(Request $request): Response
     {
         $input = $request->validate([
             'team_slug' => ['required', 'string', 'max:255'],
-            'user_email' => ['required', 'email'],
             'project_id' => ['required', 'integer'],
             'title' => ['required', 'string', 'max:255'],
             'assignee_email' => ['nullable', 'email'],
             'due_on' => ['nullable', 'date_format:Y-m-d'],
         ]);
-        $team = Team::query()->where('slug', $input['team_slug'])->first();
-        $user = $team?->members()->where('email', strtolower($input['user_email']))->first();
+        $context = $this->context->project($request, $input['team_slug'], (int) $input['project_id']);
 
-        if (! $team || ! $user instanceof User) {
-            return Response::error('チームまたは所属ユーザーが見つかりません。');
+        if ($context === null) {
+            return Response::error('認証済み利用者が閲覧できるチームまたはプロジェクトが見つかりません。');
         }
 
-        $project = Project::query()
-            ->visibleTo($user, $team)
-            ->whereKey($input['project_id'])
-            ->first();
-
-        if (! $project) {
-            return Response::error('閲覧可能なプロジェクトが見つかりません。');
-        }
-
+        [, $user, $project] = $context;
         $assignee = isset($input['assignee_email'])
-            ? $project->members()->where('email', strtolower($input['assignee_email']))->first()
+            ? $project->members()->where('email', mb_strtolower($input['assignee_email']))->first()
             : null;
 
-        if (isset($input['assignee_email']) && ! $assignee instanceof User) {
+        if (isset($input['assignee_email']) && $assignee === null) {
             return Response::error('担当者はプロジェクトメンバーではありません。');
         }
 
@@ -86,7 +76,6 @@ class CreateTodoTool extends Tool
     {
         return [
             'team_slug' => $schema->string()->description('対象チームのslug')->required(),
-            'user_email' => $schema->string()->description('操作主体となる所属ユーザーのメールアドレス')->required(),
             'project_id' => $schema->integer()->description('任務を追加するプロジェクトID')->required(),
             'title' => $schema->string()->description('任務名')->required(),
             'assignee_email' => $schema->string()->description('任意の担当者メールアドレス'),

@@ -336,7 +336,7 @@ test('a claimed attachment cannot be stolen by another note, uploader, or team',
         ->and($otherTeamAttachment->fresh()->personal_note_id)->toBeNull();
 });
 
-test('model prune removes only old unclaimed personal-note attachments', function () {
+test('attachment prune removes only old unclaimed personal-note attachments', function () {
     Storage::fake('local');
 
     $owner = User::factory()->create();
@@ -373,8 +373,7 @@ test('model prune removes only old unclaimed personal-note attachments', functio
         'updated_at' => now()->subHours(25),
     ]);
 
-    $this->artisan('model:prune', ['--model' => [PersonalNoteAttachment::class]])
-        ->assertExitCode(0);
+    $this->artisan('personal-note-attachments:prune')->assertSuccessful();
 
     expect(PersonalNoteAttachment::find($old->id))->toBeNull()
         ->and(PersonalNoteAttachment::find($recent->id))->not->toBeNull()

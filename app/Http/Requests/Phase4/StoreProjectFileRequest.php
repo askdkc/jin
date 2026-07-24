@@ -5,9 +5,11 @@ namespace App\Http\Requests\Phase4;
 use App\Models\Project;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\File;
+use Illuminate\Validation\Validator;
 
 class StoreProjectFileRequest extends FormRequest
 {
@@ -35,13 +37,13 @@ class StoreProjectFileRequest extends FormRequest
         return [
             'file' => [
                 'required_without:files',
-                File::types($fileTypes)->max('10mb'),
+                File::types($fileTypes)->max((int) config('uploads.max_file_megabytes') * 1024),
                 $extensions,
             ],
-            'files' => ['required_without:file', 'array', 'max:20'],
+            'files' => ['required_without:file', 'array', 'max:'.(int) config('uploads.max_files_per_request')],
             'files.*' => [
                 'required',
-                File::types($fileTypes)->max('10mb'),
+                File::types($fileTypes)->max((int) config('uploads.max_file_megabytes') * 1024),
                 $extensions,
             ],
             'material_folder_id' => [
@@ -58,6 +60,44 @@ class StoreProjectFileRequest extends FormRequest
                 'max:255',
                 Rule::prohibitedIf($this->filled('material_folder_id')),
             ],
+        ];
+    }
+
+    /**
+     * Get the after validation callables for the request.
+     *
+     * @return array<callable(Validator): void>
+     */
+    public function after(): array
+    {
+        return [
+            function (Validator $validator): void {
+                $files = $this->file('files', []);
+                $files = is_array($files) ? $files : [];
+                $file = $this->file('file');
+
+                if ($file instanceof UploadedFile) {
+                    $files[] = $file;
+                }
+
+                $totalBytes = array_reduce(
+                    $files,
+                    fn (int $total, UploadedFile $upload): int => $total + (int) $upload->getSize(),
+                    0,
+                );
+                $maxRequestMegabytes = (int) config('uploads.max_request_megabytes');
+
+                if ($totalBytes <= $maxRequestMegabytes * 1024 * 1024) {
+                    return;
+                }
+
+                $validator->errors()->add(
+                    $this->hasFile('files') ? 'files' : 'file',
+                    __('The total upload size may not be greater than :max megabytes.', [
+                        'max' => $maxRequestMegabytes,
+                    ]),
+                );
+            },
         ];
     }
 }

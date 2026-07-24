@@ -24,9 +24,7 @@ class SaveTodoRequest extends FormRequest
             return false;
         }
 
-        return ! $todo instanceof Todo
-            || $todo->created_by === $this->user()->id
-            || Gate::allows('update', $project);
+        return ! $todo instanceof Todo || Gate::allows('update', $todo);
     }
 
     /**

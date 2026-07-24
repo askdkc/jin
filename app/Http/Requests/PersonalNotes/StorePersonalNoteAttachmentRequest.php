@@ -27,7 +27,11 @@ class StorePersonalNoteAttachmentRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'file' => ['required', 'file', File::default()->max('25mb')],
+            'file' => [
+                'required',
+                'file',
+                File::default()->max((int) config('uploads.max_file_megabytes') * 1024),
+            ],
         ];
     }
 }

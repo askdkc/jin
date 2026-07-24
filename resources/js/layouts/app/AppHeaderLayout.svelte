@@ -3,8 +3,8 @@
     import type { Snippet } from 'svelte';
     import AppContent from '@/components/AppContent.svelte';
     import AppHeader from '@/components/AppHeader.svelte';
-    import ProfileDialog from '@/components/ProfileDialog.svelte';
     import AppShell from '@/components/AppShell.svelte';
+    import ProfileDialog from '@/components/ProfileDialog.svelte';
     import { Toaster } from '@/components/ui/sonner';
     import WorkspaceBottomNav from '@/components/WorkspaceBottomNav.svelte';
     import type { BreadcrumbItem, HeaderAction, Team } from '@/types';

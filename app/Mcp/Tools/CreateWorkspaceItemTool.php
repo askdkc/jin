@@ -4,13 +4,13 @@ namespace App\Mcp\Tools;
 
 use App\Enums\ActivityType;
 use App\Events\ChatMessageCreated;
+use App\Mcp\McpContext;
 use App\Models\Activity;
 use App\Models\ChatMessage;
 use App\Models\Document;
 use App\Models\MessageBoardPost;
 use App\Models\Project;
 use App\Models\ScheduleEvent;
-use App\Models\Team;
 use App\Models\User;
 use App\Support\RichText;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
@@ -21,14 +21,15 @@ use Laravel\Mcp\Response;
 use Laravel\Mcp\Server\Attributes\Description;
 use Laravel\Mcp\Server\Tool;
 
-#[Description('権限範囲内のプロジェクトに掲示、ドキュメント、予定、またはチャンネル会話を作成します。')]
+#[Description('認証済み利用者の権限範囲内のプロジェクトに掲示、ドキュメント、予定、またはチャンネル会話を作成します。')]
 class CreateWorkspaceItemTool extends Tool
 {
+    public function __construct(private McpContext $context) {}
+
     public function handle(Request $request): Response
     {
         $input = $request->validate([
             'team_slug' => ['required', 'string', 'max:255'],
-            'user_email' => ['required', 'email'],
             'project_id' => ['required', 'integer'],
             'kind' => ['required', Rule::in(['message', 'document', 'event', 'chat'])],
             'title' => ['nullable', 'string', 'max:255'],
@@ -39,11 +40,13 @@ class CreateWorkspaceItemTool extends Tool
             'channel_id' => ['nullable', 'integer'],
             'parent_message_id' => ['nullable', 'integer'],
         ]);
-        [$team, $user, $project] = $this->context($input);
+        $context = $this->context->project($request, $input['team_slug'], (int) $input['project_id']);
 
-        if (! $team || ! $user || ! $project) {
-            return Response::error('チーム、所属ユーザー、または閲覧可能なプロジェクトが見つかりません。');
+        if ($context === null) {
+            return Response::error('認証済み利用者が閲覧できるチームまたはプロジェクトが見つかりません。');
         }
+
+        [, $user, $project] = $context;
 
         if ($input['kind'] !== 'chat' && blank($input['title'] ?? null)) {
             return Response::error('掲示、ドキュメント、予定にはタイトルが必要です。');
@@ -75,21 +78,6 @@ class CreateWorkspaceItemTool extends Tool
             'id' => $item->getKey(),
             'project_id' => $project->id,
         ]);
-    }
-
-    /**
-     * @param  array<string, mixed>  $input
-     * @return array{0: Team|null, 1: User|null, 2: Project|null}
-     */
-    private function context(array $input): array
-    {
-        $team = Team::query()->where('slug', $input['team_slug'])->first();
-        $user = $team?->members()->where('email', strtolower($input['user_email']))->first();
-        $project = $team && $user
-            ? Project::query()->visibleTo($user, $team)->whereKey($input['project_id'])->first()
-            : null;
-
-        return [$team, $user, $project];
     }
 
     /** @param array<string, mixed> $input */
@@ -180,7 +168,6 @@ class CreateWorkspaceItemTool extends Tool
     {
         return [
             'team_slug' => $schema->string()->description('対象チームのslug')->required(),
-            'user_email' => $schema->string()->description('操作主体となる所属ユーザーのメールアドレス')->required(),
             'project_id' => $schema->integer()->description('対象プロジェクトID')->required(),
             'kind' => $schema->string()->description('message、document、event、chat のいずれか')->required(),
             'title' => $schema->string()->description('掲示、ドキュメント、予定のタイトル'),

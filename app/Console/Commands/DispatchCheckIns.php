@@ -3,8 +3,9 @@
 namespace App\Console\Commands;
 
 use App\Models\CheckIn;
+use App\Models\CheckInNotificationDelivery;
 use App\Models\CheckInPrompt;
-use App\Notifications\CheckInDueNotification;
+use App\Support\CheckInNotificationDispatcher;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
@@ -15,7 +16,7 @@ use Illuminate\Support\Facades\DB;
 #[Description('Create due check-in prompts and queue database notifications')]
 class DispatchCheckIns extends Command
 {
-    public function handle(): int
+    public function handle(CheckInNotificationDispatcher $notifications): int
     {
         $createdCount = 0;
 
@@ -25,18 +26,18 @@ class DispatchCheckIns extends Command
             ->select('id')
             ->chunkById(100, function (Collection $checkIns) use (&$createdCount): void {
                 foreach ($checkIns as $dueCheckIn) {
-                    $promptIds = DB::transaction(function () use ($dueCheckIn): array {
+                    $createdCount += DB::transaction(function () use ($dueCheckIn): int {
                         $checkIn = CheckIn::query()
                             ->with('targets:id')
                             ->lockForUpdate()
                             ->findOrFail($dueCheckIn->id);
 
                         if ($checkIn->paused_at !== null || $checkIn->next_run_at->isFuture()) {
-                            return [];
+                            return 0;
                         }
 
                         $scheduledFor = $checkIn->next_run_at->toImmutable();
-                        $promptIds = [];
+                        $created = 0;
 
                         foreach ($checkIn->targets as $target) {
                             $prompt = CheckInPrompt::query()->firstOrCreate([
@@ -48,7 +49,10 @@ class DispatchCheckIns extends Command
                             ]);
 
                             if ($prompt->wasRecentlyCreated) {
-                                $promptIds[] = $prompt->id;
+                                CheckInNotificationDelivery::query()->firstOrCreate([
+                                    'check_in_prompt_id' => $prompt->id,
+                                ]);
+                                $created++;
                             }
                         }
 
@@ -60,21 +64,21 @@ class DispatchCheckIns extends Command
                             ),
                         ]);
 
-                        return $promptIds;
+                        return $created;
                     }, attempts: 3);
-
-                    $createdCount += count($promptIds);
-
-                    CheckInPrompt::query()
-                        ->with(['user', 'checkIn.project'])
-                        ->findMany($promptIds)
-                        ->each(function (CheckInPrompt $prompt): void {
-                            $prompt->user?->notify(new CheckInDueNotification($prompt));
-                        });
                 }
             });
 
+        $dispatch = $notifications->dispatchPending();
+
         $this->components->info("Created {$createdCount} check-in prompts.");
+        $this->components->info("Queued {$dispatch['dispatched']} check-in notification deliveries.");
+
+        if ($dispatch['failed'] > 0) {
+            $this->components->error("Failed to queue {$dispatch['failed']} check-in notification deliveries.");
+
+            return self::FAILURE;
+        }
 
         return self::SUCCESS;
     }

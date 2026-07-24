@@ -2,7 +2,6 @@
 
 use App\Enums\ActivityType;
 use App\Enums\TeamRole;
-use App\Http\Controllers\ProjectFileController;
 use App\Jobs\GenerateStoredFilePreview;
 use App\Models\Activity;
 use App\Models\MaterialFolder;
@@ -12,6 +11,7 @@ use App\Models\Team;
 use App\Models\Todo;
 use App\Models\TodoList;
 use App\Models\User;
+use App\Support\StoredFileDeletion;
 use App\Support\StoredFilePreviewGenerator;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\UploadedFile;
@@ -511,7 +511,7 @@ test('file uploads validate mime type extension and size', function () {
 
     $this->actingAs($owner)
         ->post(route('projects.files.store', [$team, $project]), [
-            'file' => UploadedFile::fake()->create('large.pdf', 10 * 1024 + 1, 'application/pdf'),
+            'file' => UploadedFile::fake()->create('large.pdf', 200 * 1024 + 1, 'application/pdf'),
         ])
         ->assertSessionHasErrors('file');
 
@@ -525,6 +525,103 @@ test('file uploads validate mime type extension and size', function () {
         ->assertSessionHasErrors('files.1');
 
     expect(StoredFile::query()->exists())->toBeFalse();
+});
+
+test('project file uploads reject files whose combined size exceeds the request limit', function () {
+    Storage::fake('local');
+    config()->set('uploads.max_request_megabytes', 15);
+
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+
+    $this->actingAs($owner)
+        ->post(route('projects.files.store', [$team, $project]), [
+            'files' => [
+                UploadedFile::fake()->create('first.pdf', 8 * 1024, 'application/pdf'),
+                UploadedFile::fake()->create('second.pdf', 8 * 1024, 'application/pdf'),
+            ],
+        ])
+        ->assertSessionHasErrors('files');
+
+    expect(StoredFile::query()->exists())->toBeFalse()
+        ->and(Storage::disk('local')->allFiles())->toBe([]);
+});
+
+test('project file upload request limit applies to a single file and reads runtime configuration', function () {
+    Storage::fake('local');
+
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $storeUrl = route('projects.files.store', [$team, $project]);
+
+    config()->set('uploads.max_request_megabytes', 5);
+
+    $this->actingAs($owner)
+        ->post($storeUrl, [
+            'file' => UploadedFile::fake()->create('report.pdf', 6 * 1024, 'application/pdf'),
+        ])
+        ->assertSessionHasErrors('file');
+
+    config()->set('uploads.max_request_megabytes', 6);
+
+    $this->actingAs($owner)
+        ->post($storeUrl, [
+            'file' => UploadedFile::fake()->create('report.pdf', 6 * 1024, 'application/pdf'),
+        ])
+        ->assertRedirect()
+        ->assertSessionHasNoErrors();
+
+    expect(StoredFile::query()->count())->toBe(1);
+});
+
+test('project file uploads delete every stored blob when database persistence fails', function () {
+    Storage::fake('local');
+    Queue::fake();
+
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+
+    Event::listen('eloquent.creating: '.Activity::class, function (): void {
+        throw new RuntimeException('Activity persistence failed.');
+    });
+
+    $this->withoutExceptionHandling();
+
+    expect(fn () => $this->actingAs($owner)
+        ->post(route('projects.files.store', [$team, $project]), [
+            'files' => [
+                UploadedFile::fake()->create('first.pdf', 10, 'application/pdf'),
+                UploadedFile::fake()->create('second.pdf', 10, 'application/pdf'),
+            ],
+        ]))->toThrow(RuntimeException::class, 'Activity persistence failed.');
+
+    expect(StoredFile::query()->exists())->toBeFalse()
+        ->and(Activity::query()->exists())->toBeFalse()
+        ->and(Storage::disk('local')->allFiles())->toBe([]);
+});
+
+test('project file uploads accept the configured 200 megabyte boundary', function () {
+    Storage::fake('local');
+    Queue::fake();
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+
+    $this->actingAs($owner)
+        ->post(route('projects.files.store', [$team, $project]), [
+            'file' => UploadedFile::fake()->create('boundary.pdf', 200 * 1024, 'application/pdf'),
+        ])
+        ->assertRedirect()
+        ->assertSessionHasNoErrors();
+
+    expect(StoredFile::query()->count())->toBe(1);
 });
 
 test('archiving a project retains its private files', function () {
@@ -924,8 +1021,8 @@ test('final deletion CAS leaves a changed stored file and its relations untouche
         'preview_status' => 'pending',
     ]);
 
-    $finalizeDeletion = new ReflectionMethod(ProjectFileController::class, 'finalizeDeletion');
-    expect($finalizeDeletion->invoke(new ProjectFileController, $file->id, [
+    $finalizeDeletion = new ReflectionMethod(StoredFileDeletion::class, 'finalize');
+    expect($finalizeDeletion->invoke(app(StoredFileDeletion::class), $file->id, [
         'path' => $expectedPath,
         'lease_token' => (string) $file->getRawOriginal('updated_at'),
     ]))->toBeFalse();

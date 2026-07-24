@@ -19,6 +19,7 @@ use App\Models\Todo;
 use App\Models\TodoList;
 use App\Models\User;
 use App\Support\InlineAttachments;
+use Carbon\CarbonImmutable;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
@@ -126,6 +127,66 @@ test('document creation and its inline attachment claim roll back together', fun
         ->and(StoredFile::query()->findOrFail($upload['id']))
         ->attachable_type->toBeNull()
         ->attachable_id->toBeNull();
+});
+
+test('document updates roll back when an inline upload has been claimed for deletion', function () {
+    Storage::fake('local');
+    [$owner, $team, $project] = inlineAttachmentCoverageWorkspace();
+    $document = Document::factory()->for($project)->for($owner, 'creator')->create([
+        'title' => '更新前',
+        'body' => '<p>元の本文</p>',
+    ]);
+    $upload = inlineAttachmentCoverageUpload($this, $owner, $team, $project);
+
+    StoredFile::query()->whereKey($upload['id'])->update([
+        'preview_status' => 'deleting',
+    ]);
+
+    $this->actingAs($owner)
+        ->patch(route('projects.documents.update', [$team, $project, $document]), [
+            'title' => '更新後',
+            'body' => inlineAttachmentCoverageBody($upload['previewUrl']),
+        ])
+        ->assertSessionHasErrors('body');
+
+    expect($document->fresh())
+        ->title->toBe('更新前')
+        ->body->toBe('<p>元の本文</p>')
+        ->and(StoredFile::query()->findOrFail($upload['id']))
+        ->attachable_type->toBeNull()
+        ->attachable_id->toBeNull()
+        ->preview_status->toBe('deleting');
+});
+
+test('inline uploads in non-deleting preview states remain attachable', function () {
+    Storage::fake('local');
+    [$owner, $team, $project] = inlineAttachmentCoverageWorkspace();
+    $uploads = [];
+
+    foreach ([null, 'pending', 'processing', 'ready'] as $status) {
+        $upload = inlineAttachmentCoverageUpload($this, $owner, $team, $project);
+        StoredFile::query()->whereKey($upload['id'])->update(['preview_status' => $status]);
+        $uploads[] = $upload;
+    }
+
+    $body = implode('', array_map(
+        fn (array $upload): string => inlineAttachmentCoverageBody($upload['previewUrl']),
+        $uploads,
+    ));
+
+    $this->actingAs($owner)
+        ->post(route('projects.documents.store', [$team, $project]), [
+            'title' => '状態別添付',
+            'body' => $body,
+        ])
+        ->assertRedirect()
+        ->assertSessionHasNoErrors();
+
+    $document = Document::query()->where('title', '状態別添付')->firstOrFail();
+
+    foreach ($uploads as $upload) {
+        expectInlineAttachmentClaimed($upload['id'], $document);
+    }
 });
 
 test('schedule store and update claim inline uploads to the primary event', function () {
@@ -379,4 +440,43 @@ test('removeFromBody strips links and images for every supported rich text attri
             ->toContain('after')
             ->not->toContain($previewUrl);
     }
+});
+
+test('abandoned inline uploads are pruned only after the grace period', function () {
+    Storage::fake('local');
+    [$owner, $team, $project] = inlineAttachmentCoverageWorkspace();
+    $makeFile = function (string $path, CarbonImmutable $createdAt) use ($owner, $project): StoredFile {
+        Storage::disk('local')->put($path, 'inline upload');
+
+        return StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+            'is_inline' => true,
+            'attachable_type' => null,
+            'attachable_id' => null,
+            'path' => $path,
+            'original_name' => basename($path),
+            'created_at' => $createdAt,
+            'updated_at' => $createdAt,
+        ]);
+    };
+    $old = $makeFile('projects/test/old-inline.txt', now()->subHours(25));
+    $recent = $makeFile('projects/test/recent-inline.txt', now()->subHours(2));
+    $attached = $makeFile('projects/test/attached-inline.txt', now()->subHours(25));
+    $previewUrl = "/projects/{$project->id}/files/{$attached->id}/preview";
+
+    $this->actingAs($owner)
+        ->post(route('projects.documents.store', [$team, $project]), [
+            'title' => '保存済み添付',
+            'body' => inlineAttachmentCoverageBody($previewUrl),
+        ])
+        ->assertRedirect()
+        ->assertSessionHasNoErrors();
+
+    $this->artisan('stored-files:prune-inline')->assertSuccessful();
+
+    expect($old->fresh())->toBeNull()
+        ->and($recent->fresh())->not->toBeNull()
+        ->and($attached->fresh())->not->toBeNull();
+    Storage::disk('local')->assertMissing($old->path);
+    Storage::disk('local')->assertExists($recent->path);
+    Storage::disk('local')->assertExists($attached->path);
 });

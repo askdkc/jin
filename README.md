@@ -44,39 +44,40 @@ Basecampの情報設計を参考にしていますが、名称、画面、配色
 - Node.js 22.12以上とnpm
 - PHPのSQLite拡張（初期設定で使用）
 - ImageMagickとPoppler（PDFの先頭ページサムネイル生成用）
-- ONLYOFFICE Docs（macOS開発とCIはDocker、Ubuntu本番はAPTパッケージ）
+- ONLYOFFICE Docs（macOS開発はAppleの`container`、CIはGitHub Actions service、Ubuntu本番はAPTパッケージ）
 
-Office文書の表示にLibreOfficeは使いません。MySQLやPostgreSQLへ変更する場合は、対応するPHP拡張と`.env`のDB設定を別途追加してください。
+MySQLやPostgreSQLへ変更する場合は、対応するPHP拡張と`.env`のDB設定を別途追加してください。
 
 ## macOS開発環境
 
-以下はHomebrewとDocker Desktopを使う手順です。Docker Desktopの対応macOSとライセンス条件は[公式インストール手順](https://docs.docker.com/desktop/setup/install/mac-install/)を確認してください。
+以下はHomebrewとAppleの[`container`](https://github.com/apple/container) CLIを使う手順です。`container`はApple siliconとmacOS 26以降が必要です。[公式Releases](https://github.com/apple/container/releases)から最新の署名済み`.pkg`をインストールしてください。Docker Desktopは使用しません。
 
 ### 1. 依存パッケージを入れる
 
 ```bash
 xcode-select --install
 brew install php@8.4 composer node@22 imagemagick poppler
-brew install --cask docker
 
 export PATH="$(brew --prefix php@8.4)/bin:$(brew --prefix node@22)/bin:$PATH"
 php --version
 composer --version
 node --version
 npm --version
+container --version
 ```
 
-`PATH`の設定は、動作確認後に同じ内容を`~/.zprofile`へ1回だけ追加してください。Docker Desktopには4 GB以上のメモリを割り当てます。Docker Desktopを起動し、Engineの準備完了を確認します。
+`PATH`の設定は、動作確認後に同じ内容を`~/.zprofile`へ1回だけ追加してください。`container`のserviceを起動し、状態を確認します。
 
 ```bash
-open -a Docker
+container system start
+container system status
+```
 
-for attempt in {1..60}; do
-  docker info >/dev/null 2>&1 && break
-  sleep 2
-done
+DocumentServerからmacOSのLaravelへ接続するため、Apple公式手順に従ってlocalhost用DNS mappingを作成します。この設定はPrivate Relayを無効化し、macOS再起動時にpacket-filter ruleが消えるため、再起動後は同じ2コマンドを再実行してください。
 
-docker info >/dev/null
+```bash
+sudo container system dns delete host.container.internal 2>/dev/null || true
+sudo container system dns create host.container.internal --localhost 203.0.113.113
 ```
 
 ### 2. Jinをセットアップする
@@ -92,38 +93,18 @@ npm install
 npm run build
 ```
 
-既存の`.env`を更新できるよう、シェル関数を定義します。
+`.env.example`にはmacOSローカル開発用のURLとファイル上限が設定済みです。ONLYOFFICEを使う場合は、コピーした`.env`で次の2項目を設定してください。
 
-```bash
-set_env() {
-  local key="$1" value="$2"
+| パラメータ              | 設定値                                      |
+| ----------------------- | ------------------------------------------- |
+| `ONLYOFFICE_ENABLED`    | `true`                                      |
+| `ONLYOFFICE_JWT_SECRET` | 32 bytes以上のランダムな値（Gitへ保存しない） |
 
-  if grep -q "^${key}=" .env; then
-    sed -i '' "s|^${key}=.*|${key}=${value}|" .env
-  else
-    printf '%s=%s\n' "$key" "$value" >> .env
-  fi
-}
-
-ONLYOFFICE_SECRET="$(openssl rand -hex 32)"
-ONLYOFFICE_HOST_PORT="${ONLYOFFICE_HOST_PORT:-8081}"
-
-set_env APP_NAME Jin
-set_env APP_URL http://localhost:8000
-set_env IP_RESTRICTION_ENABLED false
-set_env ONLYOFFICE_ENABLED true
-set_env ONLYOFFICE_DOCUMENT_SERVER_URL "http://127.0.0.1:${ONLYOFFICE_HOST_PORT}"
-set_env ONLYOFFICE_PUBLIC_URL "http://127.0.0.1:${ONLYOFFICE_HOST_PORT}"
-set_env APP_ONLYOFFICE_INTERNAL_URL http://host.docker.internal:8000
-set_env ONLYOFFICE_JWT_SECRET "$ONLYOFFICE_SECRET"
-set_env ONLYOFFICE_INSTANCE_ID jin-local
-
-php artisan optimize:clear
-```
+設定変更後に`php artisan optimize:clear`を実行します。
 
 ### 3. ONLYOFFICE Docsを起動する
 
-Docker volumeを使うため、コンテナを再作成してもDocumentServerのデータは残ります。
+Apple `container`のnamed volumeを使うため、コンテナを再作成してもDocumentServerのデータは残ります。ONLYOFFICE DocumentServerのmulti-architecture imageからApple silicon向けのarm64 variantを起動します。
 
 ```bash
 ONLYOFFICE_SECRET="$(sed -n 's/^ONLYOFFICE_JWT_SECRET=//p' .env)"
@@ -131,14 +112,17 @@ ONLYOFFICE_HOST_PORT="$(sed -n 's|^ONLYOFFICE_DOCUMENT_SERVER_URL=http://127.0.0
 test "${#ONLYOFFICE_SECRET}" -ge 64
 test -n "$ONLYOFFICE_HOST_PORT"
 
-docker volume create jin-onlyoffice-data
-docker volume create jin-onlyoffice-logs
-docker volume create jin-onlyoffice-lib
-docker volume create jin-onlyoffice-db
+container volume create jin-onlyoffice-data
+container volume create jin-onlyoffice-logs
+container volume create jin-onlyoffice-lib
+container volume create jin-onlyoffice-db
 
-docker run -d \
+container run -d \
   --name jin-onlyoffice \
-  --restart unless-stopped \
+  --arch arm64 \
+  --cpus 2 \
+  --memory 4G \
+  --shm-size 2G \
   -p "127.0.0.1:${ONLYOFFICE_HOST_PORT}:80" \
   -e JWT_ENABLED=true \
   -e JWT_SECRET="$ONLYOFFICE_SECRET" \
@@ -152,7 +136,7 @@ docker run -d \
   onlyoffice/documentserver:9.4.0.1
 ```
 
-`ALLOW_PRIVATE_IP_ADDRESS=true`は、DocumentServerからmacOS上の`host.docker.internal`へ接続するローカル開発専用設定です。公開環境では有効にしません。
+`ALLOW_PRIVATE_IP_ADDRESS=true`は、DocumentServerからmacOS上の`host.container.internal`へ接続するローカル開発専用設定です。公開環境では有効にしません。
 
 初回起動には時間がかかります。healthcheckが通るまで確認します。
 
@@ -163,7 +147,27 @@ for attempt in {1..90}; do
 done
 
 curl -fsS "http://127.0.0.1:${ONLYOFFICE_HOST_PORT}/healthcheck"
+
+# JWTなどの既存設定を保持したまま200 MiBへ拡張する
+container exec -i jin-onlyoffice node <<'NODE'
+const fs = require('fs');
+const path = '/etc/onlyoffice/documentserver/local.json';
+const config = JSON.parse(fs.readFileSync(path, 'utf8'));
+config.FileConverter ??= {};
+config.FileConverter.converter ??= {};
+config.FileConverter.converter.maxDownloadBytes = 209715200;
+fs.writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+NODE
+
+container stop jin-onlyoffice
+container start jin-onlyoffice
+for attempt in {1..90}; do
+  curl -fsS "http://127.0.0.1:${ONLYOFFICE_HOST_PORT}/healthcheck" && break
+  sleep 2
+done
 ```
+
+コンテナを削除して作り直した場合は`local.json`も再生成されるため、同じmergeと再起動をもう一度実行してください。
 
 ### 4. 開発プロセスを起動する
 
@@ -172,7 +176,7 @@ DocumentServerからLaravelへ到達できるよう、各コマンドを別の�
 ターミナル1（Laravel）:
 
 ```bash
-php artisan serve --host=0.0.0.0 --port=8000
+php artisan serve --host=127.0.0.1 --port=8000
 ```
 
 ターミナル2（Vite）:
@@ -202,10 +206,10 @@ php artisan schedule:work
 DocumentServerからLaravelへ到達できることを確認します。
 
 ```bash
-docker exec jin-onlyoffice curl -fsS http://host.docker.internal:8000/up
+container exec jin-onlyoffice curl -fsS http://host.container.internal:8000/up
 ```
 
-ブラウザで<http://localhost:8000>を開きます。`0.0.0.0`での起動はローカル開発専用とし、信頼できないネットワークではfirewallで外部接続を拒否してください。
+ブラウザで<http://localhost:8000>を開きます。Laravelは`127.0.0.1`だけで待ち受け、DocumentServerからの接続は`host.container.internal`のlocalhost mappingを経由します。
 
 ### サンプルユーザー
 
@@ -215,6 +219,35 @@ docker exec jin-onlyoffice curl -fsS http://host.docker.internal:8000/up
 メールアドレス: test@example.com
 パスワード: password
 ```
+
+## MCP連携
+
+JinのローカルMCPサーバーは、プロセス全体を指定したJinユーザーとして実行します。MCPクライアントから利用する場合は、通常の`php artisan mcp:start jin`ではなく、必ず次のコマンドを使ってください。
+
+```bash
+php artisan jin:mcp user@example.com
+```
+
+メールアドレスで指定したユーザーのチーム・プロジェクト権限が、すべてのMCP toolへ適用されます。このコマンドは信頼できるローカル環境だけで起動し、共有アカウントや権限の強すぎるユーザーを指定しないでください。
+
+Claude Codeなど、`.mcp.json`形式に対応するクライアントでは次のように設定できます。`artisan`はclone先の絶対パスへ、メールアドレスはMCP専用のJinユーザーへ置き換えます。
+
+```json
+{
+  "mcpServers": {
+    "jin": {
+      "command": "php",
+      "args": [
+        "/absolute/path/to/jin/artisan",
+        "jin:mcp",
+        "user@example.com"
+      ]
+    }
+  }
+}
+```
+
+本番相当の`composer install --no-dev --optimize-autoloader`でも`jin:mcp`を使用できます。接続確認には`php artisan mcp:inspector jin`ではなく、固定ユーザーを設定できる上記コマンドをMCPクライアントへ登録してください。
 
 ## Ubuntu Server 24.04 / 26.04 公開環境
 
@@ -236,6 +269,8 @@ export JIN_REPOSITORY=https://example.com/your/jin.git
 export JIN_PATH=/var/www/jin
 export ONLYOFFICE_HOST_PORT=8081
 ```
+
+SMTPの接続情報は後述する`.env`のパラメータへ設定します。STARTTLSを使う587番portは通常`MAIL_SCHEME=smtp`、implicit TLSを使う465番portは`MAIL_SCHEME=smtps`です。providerの指定を優先してください。localhost SMTPはこの手順では使用しません。
 
 ### 1. OSパッケージ、PHP 8.4、Node.js 22、Composerを入れる
 
@@ -260,7 +295,8 @@ case "$VERSION_ID" in
 esac
 
 sudo apt install -y \
-  php8.4-cli php8.4-fpm php8.4-sqlite3 php8.4-mbstring php8.4-xml \
+  postgresql redis-server \
+  php8.4-cli php8.4-fpm php8.4-pgsql php8.4-redis php8.4-mbstring php8.4-xml \
   php8.4-curl php8.4-zip php8.4-intl php8.4-bcmath php8.4-gd
 
 curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh
@@ -334,51 +370,72 @@ sudo apt install -y ttf-mscorefonts-installer onlyoffice-documentserver
 
 Microsoft fontsのEULAを聞かれた場合は内容を確認して応答します。APTパッケージが`/etc/onlyoffice/documentserver/local.json`へJWT設定を保存します。同じsecretをJinの`.env`へ設定します。`ONLYOFFICE_INSTANCE_ID`は共有DocumentServer内で重複しない固定値へ変更してください。
 
+DocumentServerの標準`maxDownloadBytes`は100 MiBのため、Jinの200 MiB上限と一致させます。JWTなどの既存設定を消さず、`FileConverter.converter.maxDownloadBytes`だけをmergeします。
+
 ```bash
-set_env() {
-  local key="$1" value="$2"
+sudo python3 - <<'PY'
+import json
+from pathlib import Path
 
-  if grep -q "^${key}=" .env; then
-    sed -i "s|^${key}=.*|${key}=${value}|" .env
-  else
-    printf '%s=%s\n' "$key" "$value" >> .env
-  fi
-}
+path = Path('/etc/onlyoffice/documentserver/local.json')
+config = json.loads(path.read_text())
+config.setdefault('FileConverter', {}).setdefault('converter', {})['maxDownloadBytes'] = 209715200
+path.write_text(json.dumps(config, indent=2) + '\n')
+PY
+```
 
-REVERB_APP_ID="$(openssl rand -hex 8)"
-REVERB_APP_KEY="$(openssl rand -hex 16)"
-REVERB_APP_SECRET="$(openssl rand -hex 32)"
+`.env.example`に必要なパラメータはすべて記載されています。コピーした`.env`を直接編集し、本番環境では次の値へ変更してください。`<...>`は実際のdomain、credential、ランダムなsecretへ置き換え、Gitへコミットしません。
 
-set_env APP_NAME Jin
-set_env APP_ENV production
-set_env APP_DEBUG false
-set_env APP_URL "https://${JIN_DOMAIN}"
-set_env IP_RESTRICTION_ENABLED false
-set_env SESSION_SECURE_COOKIE true
-set_env REVERB_APP_ID "$REVERB_APP_ID"
-set_env REVERB_APP_KEY "$REVERB_APP_KEY"
-set_env REVERB_APP_SECRET "$REVERB_APP_SECRET"
-set_env REVERB_HOST "$JIN_DOMAIN"
-set_env REVERB_PORT 443
-set_env REVERB_SCHEME https
-set_env REVERB_ALLOWED_ORIGINS "$JIN_DOMAIN"
-set_env ONLYOFFICE_ENABLED true
-set_env ONLYOFFICE_DOCUMENT_SERVER_URL "http://127.0.0.1:${ONLYOFFICE_HOST_PORT}"
-set_env ONLYOFFICE_PUBLIC_URL "https://${OFFICE_DOMAIN}"
-set_env APP_ONLYOFFICE_INTERNAL_URL "https://${JIN_DOMAIN}"
-set_env ONLYOFFICE_JWT_SECRET "$ONLYOFFICE_SECRET"
-set_env ONLYOFFICE_INSTANCE_ID jin-production
-set_env ONLYOFFICE_ALLOW_DOWNLOAD false
-set_env ONLYOFFICE_ALLOW_PRINT false
-set_env ONLYOFFICE_ALLOW_COPY true
+| パラメータ                            | 本番設定                                      |
+| ------------------------------------- | --------------------------------------------- |
+| `APP_ENV`                             | `production`                                  |
+| `APP_DEBUG`                           | `false`                                       |
+| `APP_URL`                             | `https://<JIN_DOMAIN>`                        |
+| `DB_CONNECTION`                      | `pgsql`                                       |
+| `DB_HOST` / `DB_PORT`                 | `127.0.0.1` / `5432`                          |
+| `DB_DATABASE` / `DB_USERNAME`         | `jin` / `jin`                                 |
+| `DB_PASSWORD`                         | PostgreSQLへ設定するランダムなpassword        |
+| `REDIS_CLIENT` / `REDIS_HOST`         | `phpredis` / `127.0.0.1`                      |
+| `QUEUE_CONNECTION`                    | `redis`                                       |
+| `CACHE_STORE`                         | `redis`                                       |
+| `SESSION_DRIVER`                      | `redis`                                       |
+| `SESSION_SECURE_COOKIE`               | `true`                                        |
+| `IP_RESTRICTION_ENABLED`              | 公開する場合は`false`、制限する場合は`true`   |
+| `REVERB_APP_ID`                       | 一意のランダム値                              |
+| `REVERB_APP_KEY` / `REVERB_APP_SECRET` | 一意のランダムなcredential                    |
+| `REVERB_HOST`                         | `<JIN_DOMAIN>`                                |
+| `REVERB_PORT` / `REVERB_SCHEME`       | `443` / `https`                               |
+| `REVERB_ALLOWED_ORIGINS`              | `<JIN_DOMAIN>`                                |
+| `MAIL_MAILER`                         | `smtp`                                        |
+| `MAIL_SCHEME` / `MAIL_HOST` / `MAIL_PORT` | SMTP providerの指定値                     |
+| `MAIL_USERNAME` / `MAIL_PASSWORD`     | SMTP providerのcredential                     |
+| `MAIL_FROM_ADDRESS`                   | providerで検証済みの送信元address             |
+| `ONLYOFFICE_ENABLED`                  | `true`                                        |
+| `ONLYOFFICE_DOCUMENT_SERVER_URL`      | `http://127.0.0.1:<ONLYOFFICE_HOST_PORT>`     |
+| `ONLYOFFICE_PUBLIC_URL`               | `https://<OFFICE_DOMAIN>`                     |
+| `APP_ONLYOFFICE_INTERNAL_URL`         | `https://<JIN_DOMAIN>`                        |
+| `ONLYOFFICE_JWT_SECRET`               | APTインストール時と同じ`ONLYOFFICE_SECRET`    |
+| `ONLYOFFICE_INSTANCE_ID`              | 共有DocumentServer内で一意の固定値            |
+
+upload上限とONLYOFFICEのファイル上限は`.env.example`の200 MiB／500 MiB設定をそのまま使用します。ダウンロード、印刷、コピーの許可も`.env.example`の値を必要に応じて変更してください。
+
+`.env`の`DB_PASSWORD`と同じpasswordを使ってPostgreSQLのユーザーとDBを作成します。
+
+```sql
+CREATE USER jin WITH ENCRYPTED PASSWORD '<DB_PASSWORDと同じ値>';
+CREATE DATABASE jin OWNER jin;
+```
+
+```bash
+sudo -u postgres psql
+# 上のSQLを実行してから \q で終了する
 
 php artisan optimize:clear
 npm run build
 chmod 600 .env
-unset ONLYOFFICE_SECRET REVERB_APP_ID REVERB_APP_KEY REVERB_APP_SECRET
 ```
 
-Viteは`VITE_REVERB_*`をbuild時に埋め込むため、`.env`の本番Reverb値を設定してから`npm run build`を実行します。メール送信、DB、バックアップ先も公開前に本番用の値へ変更してください。初期値の`MAIL_MAILER=log`は実際のメールを送信しません。
+Viteは`VITE_REVERB_*`をbuild時に埋め込むため、`.env`の本番Reverb値を設定してから`npm run build`を実行します。DB、バックアップ先も公開前に本番用の値へ変更してください。初期値の`MAIL_MAILER=log`は実際のメールを送信せず、localhost SMTPもこの手順では構築しません。必ずproviderの接続情報と、そのproviderで検証済みの送信元addressを設定してください。
 
 公開範囲をIPで制限する場合は`IP_RESTRICTION_ENABLED=true`へ変更し、利用者だけでなくDocumentServerから見える送信元IPも`ALLOWED_IPS`へ追加します。`TRUSTED_PROXIES=*`や`ALLOWED_IPS=*`は使いません。
 
@@ -390,6 +447,16 @@ test -n "$ONLYOFFICE_HOST_PORT"
 
 sudo systemctl restart ds-converter ds-docservice ds-metrics
 systemctl is-active ds-converter ds-docservice
+
+sudo python3 - <<'PY'
+import json
+from pathlib import Path
+
+config = json.loads(Path('/etc/onlyoffice/documentserver/local.json').read_text())
+configured = config.get('FileConverter', {}).get('converter', {}).get('maxDownloadBytes', 0)
+assert configured >= 209715200, f'maxDownloadBytes is too small: {configured}'
+print(f'maxDownloadBytes={configured}')
+PY
 
 for attempt in {1..90}; do
   curl -fsS "http://127.0.0.1:${ONLYOFFICE_HOST_PORT}/healthcheck" && break
@@ -404,6 +471,20 @@ DocumentServerはAPTの対象です。パッケージ更新はstagingでOffice�
 
 ### 6. NginxとTLSを設定する
 
+Jinは1ファイル200 MiB、1回のリクエスト合計500 MiB、最大20ファイルに制限します。multipart overheadを含めて受信できるよう、PHP-FPMとNginxのリクエスト上限は512 MiBに設定します。
+
+```bash
+sudo tee /etc/php/8.4/fpm/conf.d/99-jin-uploads.ini >/dev/null <<'EOF'
+upload_max_filesize=200M
+post_max_size=512M
+max_file_uploads=20
+max_input_time=3600
+max_execution_time=3600
+EOF
+
+sudo systemctl reload php8.4-fpm
+```
+
 Jin本体とDocumentServerを別originで公開します。
 
 ```bash
@@ -417,7 +498,8 @@ server {
     server_name ${JIN_DOMAIN};
     root ${JIN_PATH}/public;
     index index.php;
-    client_max_body_size 30m;
+    client_max_body_size 512m;
+    client_body_timeout 3600s;
 
     location / {
         try_files \$uri \$uri/ /index.php?\$query_string;
@@ -427,6 +509,7 @@ server {
         include snippets/fastcgi-php.conf;
         fastcgi_pass unix:/run/php/php8.4-fpm.sock;
         fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
+        fastcgi_read_timeout 3600s;
     }
 
     location /app {
@@ -495,9 +578,6 @@ sudo chgrp -R www-data storage bootstrap/cache
 sudo chmod -R g+rwX storage bootstrap/cache
 sudo chown "$USER":www-data .env
 sudo chmod 640 .env
-sudo chgrp www-data database database/database.sqlite
-sudo chmod 2775 database
-sudo chmod 664 database/database.sqlite
 ```
 
 `stored-files:backfill-checksums`は既存Office原本のcontent versionを補完します。`stored-files:backfill-previews`がQueueへ送るのは既存PDFの先頭ページ生成だけで、Office文書はローカル変換しません。
@@ -577,7 +657,7 @@ redirect_stderr=true
 stdout_logfile=${JIN_PATH}/storage/logs/reverb.log
 EOF
 
-sudo systemctl enable --now nginx php8.4-fpm supervisor
+sudo systemctl enable --now nginx php8.4-fpm postgresql redis-server supervisor
 sudo supervisorctl reread
 sudo supervisorctl update
 sudo supervisorctl status "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-default:*" jin-reverb
@@ -588,21 +668,21 @@ printf '%s\n' \
 sudo chmod 644 /etc/cron.d/jin-scheduler
 ```
 
-`jin-previews`はPDF変換を最大8件並列処理します。CPUコア数、RAM、PDFサイズを監視し、負荷が高い場合は`numprocs`を下げてください。標準構成のSQLiteとdatabase Queueで8ワーカーを動かすと書き込みロックが競合する可能性があります。`database is locked`が発生する場合は`numprocs`を2〜4へ下げるか、QueueをRedisへ移行してください。
+`jin-previews`はPDF変換を最大8件並列処理します。CPUコア数、RAM、PDFサイズを監視し、負荷が高い場合は`numprocs`を下げてください。本番構成はPostgreSQLとRedis Queue/Cache/Sessionを前提とするため、preview workerを8プロセスまで並列化できます。SQLiteはローカル開発専用です。小規模な検証環境でSQLiteを使う場合はworkerを1プロセスに抑えてください。
 
 #### OS再起動時の自動起動
 
 systemdでNginx、PHP-FPM、Supervisorを有効化します。SupervisorがQueueとReverbを起動し、ONLYOFFICEのAPTパッケージがds系serviceを管理します。独自のsystemd unitは作りません。
 
 ```bash
-sudo systemctl enable nginx php8.4-fpm supervisor
+sudo systemctl enable nginx php8.4-fpm postgresql redis-server supervisor
 
 systemctl is-enabled nginx php8.4-fpm supervisor
 systemctl is-active ds-converter ds-docservice
 sudo supervisorctl status "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-default:*" jin-reverb
 ```
 
-期待値はNginx、PHP-FPM、Supervisorが`enabled`、ds系serviceが`active`、Supervisor配下の全プロセスが`RUNNING`です。macOS開発は引き続きDocker Desktopのrestart policyを使います。
+期待値はNginx、PHP-FPM、Supervisorが`enabled`、ds系serviceが`active`、Supervisor配下の全プロセスが`RUNNING`です。macOS開発ではOS再起動後に`container system start`、localhost用DNS mappingの再作成、`container start jin-onlyoffice`を実行します。
 
 ### 8. 公開前に疎通と安全性を確認する
 
@@ -613,11 +693,14 @@ curl -fsS "https://${OFFICE_DOMAIN}/healthcheck"
 cd "$JIN_PATH"
 php artisan app:production-check
 composer check-platform-reqs --no-dev
+
+SMTP_SMOKE_TEST_RECIPIENT=recipient@example.com php artisan tinker --execute '\Illuminate\Support\Facades\Mail::raw("Jin SMTP smoke test", function (\Illuminate\Mail\Message $message): void { $message->to((string) getenv("SMTP_SMOKE_TEST_RECIPIENT"))->subject("Jin SMTP smoke test"); });'
+
 sudo systemctl --no-pager --full status nginx php8.4-fpm supervisor ds-converter ds-docservice
 sudo supervisorctl status "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-default:*" jin-reverb
 ```
 
-`app:production-check`はHTTPS、デバッグ、Queue、Reverb、Cookieなどの本番設定が安全でない場合に失敗します。
+`app:production-check`はHTTPS、デバッグ、Queue、Reverb、Cookie、upload上限が安全でない場合に失敗します。SMTPを使う場合はlocalhost、port、scheme、credentialの未設定も拒否しますが、providerへの接続と受信は保証しません。smoke test mailが指定した受信箱へ届き、送信元domainのSPF、DKIM、DMARCがproviderの要件を満たすことまで確認してください。ONLYOFFICEを有効にした場合は、JinのOffice file上限がupload上限または宣言したDocumentServerの`maxDownloadBytes`を超えていても失敗します。
 
 Officeプレビューが`Download failed`になる場合は、DocumentServerから`${JIN_DOMAIN}`へのDNS、TLS chain、Nginx、egress firewall、LaravelのIP制限を確認してください。
 
@@ -646,11 +729,21 @@ Officeプレビューが`Download failed`になる場合は、DocumentServerか�
 
 このin-place更新では、アプリとworkerを停止してからmigrationを実行します。サブシェルは途中のコマンドが失敗した時点で停止するため、原因を直して残りの手順を完了するまでworkerの再起動と`php artisan up`は実行されません。これにより、コード更新とDB更新の間に新しいデータが書き込まれる競合を防ぎます。
 
+`personal_note_attachments.deleted_at`を削除するreleaseへrollbackする場合は、先にattachmentの物理削除を完了します。アプリと通常workerを停止した状態で次を実行し、tombstoneが0件になってからmigrationをrollbackしてください。
+
+```bash
+sudo -u www-data php artisan personal-note-attachments:prune
+sudo -u www-data php artisan queue:work redis --queue=default --stop-when-empty --tries=10 --timeout=120
+php artisan tinker --execute 'throw_if(\App\Models\PersonalNoteAttachment::onlyTrashed()->exists(), \RuntimeException::class, "Personal-note attachment cleanup is incomplete.");'
+```
+
+cleanup未完了のrowがある場合、migration自身もrollbackを拒否します。失敗したblob削除を解決して上記を再実行し、rowを暗黙に復活させないでください。
+
 DB、`storage/app/private`、`.env`、`/etc/onlyoffice/documentserver/local.json`をバックアップ対象に含めてください。DocumentServerの待受portはインターネットへ公開しません。
 
 ## ONLYOFFICE補足
 
-Office文書はAPTパッケージ`onlyoffice-documentserver`で閲覧専用表示します。PDFと画像は既存viewerを使います。
+Office文書は、macOS開発ではApple `container`上の公式OCI image、Ubuntu公開環境ではAPTパッケージ`onlyoffice-documentserver`を使って閲覧専用表示します。PDFと画像は既存viewerを使います。
 
 | 種別               | 拡張子                       | `documentType` |
 | ------------------ | ---------------------------- | -------------- |
@@ -660,21 +753,37 @@ Office文書はAPTパッケージ`onlyoffice-documentserver`で閲覧専用表�
 
 Browser、Laravel、DocumentServerで通信方向が違うため、3つのURLを分けて設定します。
 
-| 通信                     | 設定                             | 開発例                             | 公開環境例                   |
-| ------------------------ | -------------------------------- | ---------------------------------- | ---------------------------- |
-| Laravel → DocumentServer | `ONLYOFFICE_DOCUMENT_SERVER_URL` | `http://127.0.0.1:8081`            | `http://127.0.0.1:8081`      |
-| Browser → DocumentServer | `ONLYOFFICE_PUBLIC_URL`          | `http://127.0.0.1:8081`            | `https://office.example.com` |
-| DocumentServer → Laravel | `APP_ONLYOFFICE_INTERNAL_URL`    | `http://host.docker.internal:8000` | `https://jin.example.com`    |
+| 通信                     | 設定                             | 開発例                                     | 公開環境例                   |
+| ------------------------ | -------------------------------- | ------------------------------------------ | ---------------------------- |
+| Laravel → DocumentServer | `ONLYOFFICE_DOCUMENT_SERVER_URL` | `http://127.0.0.1:8081`                    | `http://127.0.0.1:8081`      |
+| Browser → DocumentServer | `ONLYOFFICE_PUBLIC_URL`          | `http://127.0.0.1:8081`                    | `https://office.example.com` |
+| DocumentServer → Laravel | `APP_ONLYOFFICE_INTERNAL_URL`    | `http://host.container.internal:8000`      | `https://jin.example.com`    |
 
 ### DocumentServerの待受ポートを変更する
 
-8081が使用中なら、環境構築手順の最初に値を変更します。Ubuntu本番はdebconfがAPT版の待受portへ反映し、macOS開発はDockerのホスト側portへ反映します。
+8081が使用中なら、環境構築手順の最初に値を変更します。Ubuntu本番はdebconfがAPT版の待受portへ反映し、macOS開発はApple `container`の公開portへ反映します。
 
 ```bash
 export ONLYOFFICE_HOST_PORT=18081
 ```
 
 `ONLYOFFICE_JWT_SECRET`とDocumentServerのJWT secretには同じ32 bytes以上の値を設定します。secret、JWT、完全な署名URLはGitやログへ出さないでください。
+
+### File size上限を一致させる
+
+Jinの`ONLYOFFICE_MAX_FILE_SIZE_BYTES`は、`UPLOAD_MAX_FILE_MB`をbytes換算した値とDocumentServerの`FileConverter.converter.maxDownloadBytes`の両方以下にします。標準構成では3つを200 MiBに揃えます。
+
+```json
+{
+  "FileConverter": {
+    "converter": {
+      "maxDownloadBytes": 209715200
+    }
+  }
+}
+```
+
+`/etc/onlyoffice/documentserver/local.json`にはJWTなどの既存設定があるため、ファイル全体を置き換えずこのkeyだけをmergeしてください。macOS開発では`container stop jin-onlyoffice`と`container start jin-onlyoffice`、Ubuntu公開環境ではds系serviceの再起動で反映します。Jin側の`ONLYOFFICE_DOCUMENT_SERVER_MAX_DOWNLOAD_BYTES=209715200`はproduction check用の宣言値であり、DocumentServerを自動変更しません。DocumentServer設定を変更したら、この値も同じ値へ更新してください。
 
 APT版の再起動とログ確認:
 
@@ -691,14 +800,15 @@ sudo journalctl -u ds-converter -u ds-docservice -n 200 --no-pager
 - `JWT validation failed`: JinとDocumentServerのsecretが一致するか確認する。secretやJWT全文をログへ出さない。
 - Mixed Content: JinがHTTPSなら`ONLYOFFICE_PUBLIC_URL`もHTTPSにする。
 - 古い内容が出る: StorageをDB外から直接上書きせず、Jinの「新しいバージョンに差し替え」を使う。更新後に`php artisan optimize:clear`を実行する。
-- Viewer初期化失敗: ds系service、`/var/log/onlyoffice/documentserver/`、ブラウザconsole、Nginx logを確認する。画面は認証済みダウンロードへフォールバックする。
+- Viewer初期化失敗: macOS開発では`container logs jin-onlyoffice`、Ubuntu公開環境ではds系serviceと`/var/log/onlyoffice/documentserver/`を確認し、あわせてブラウザconsoleとNginx logを確認する。画面は認証済みダウンロードへフォールバックする。
 
 ### 公式資料
 
 - [ONLYOFFICE Docs Ubuntu / Debian APTインストール](https://helpcenter.onlyoffice.com/docs/installation/docs-community-install-ubuntu.aspx)
 - [ONLYOFFICE Docs JWT設定](https://helpcenter.onlyoffice.com/docs/installation/docs-configure-jwt.aspx)
 - [ONLYOFFICE Docs Linux障害確認](https://helpcenter.onlyoffice.com/docs/installation/docs-troubleshooting-linux.aspx)
-- [Docker Desktop for Mac](https://docs.docker.com/desktop/setup/install/mac-install/)
+- [Apple container](https://github.com/apple/container)
+- [Apple container How-to](https://github.com/apple/container/blob/main/docs/how-to.md)
 
 ## 使い方
 
@@ -749,7 +859,7 @@ Clientへの公開境界はプロジェクト単位です。Clientに許可し�
 
 「資料庫 > ファイル」またはメッセージ・To-doの添付欄を開き、ファイルを点線の領域へドロップします。領域をクリックしてファイル選択画面から選ぶこともできます。
 
-- 最大サイズ: 10 MB
+- 最大サイズ: 1ファイル200 MiB、1回の合計500 MiB、最大20ファイル
 - 対応形式: PDF、TXT、CSV、JPEG、PNG、WebP、Word、Excel、PowerPoint、ZIP
 - 保存先: `storage/app/private`
 

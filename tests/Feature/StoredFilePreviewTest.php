@@ -304,7 +304,7 @@ test('the legacy preview endpoint streams office originals without conversion', 
     ['odp', 'application/vnd.oasis.opendocument.presentation'],
 ]);
 
-test('preview conversion failure marks the file failed and keeps the original blob', function () {
+test('preview conversion retries before terminal failure and keeps the original blob', function () {
     Storage::fake('local');
     Queue::fake();
     ['owner' => $owner, 'project' => $project] = storedFilePreviewProject();
@@ -315,7 +315,13 @@ test('preview conversion failure marks the file failed and keeps the original bl
     ]);
     Process::fake(fn () => Process::result(errorOutput: 'conversion failed', exitCode: 1));
 
-    (new GenerateStoredFilePreview($file->id, $file->path))->handle(app(StoredFilePreviewGenerator::class));
+    $job = new GenerateStoredFilePreview($file->id, $file->path);
+
+    expect(fn () => $job->handle(app(StoredFilePreviewGenerator::class)))
+        ->toThrow(RuntimeException::class, 'PDF page rendering failed.');
+    expect($file->refresh()->preview_status)->toBe('processing');
+
+    $job->failed(new RuntimeException('Retry budget exhausted.'));
 
     expect($file->refresh()->preview_status)->toBe('failed')
         ->and($file->preview_path)->toBeNull();
@@ -476,7 +482,8 @@ test('a stale failure cannot mark the replacement generation failed', function (
             throw new RuntimeException('conversion failed');
         }
     };
-    $job->handle($generator);
+    expect(fn () => $job->handle($generator))
+        ->toThrow(RuntimeException::class, 'conversion failed');
     $job->failed(new RuntimeException('worker failure'));
 
     expect($file->refresh()->path)->toBe($newPath)

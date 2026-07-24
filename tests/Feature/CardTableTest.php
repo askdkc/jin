@@ -6,6 +6,7 @@ use App\Models\Activity;
 use App\Models\Card;
 use App\Models\CardColumn;
 use App\Models\CardTable;
+use App\Models\Comment;
 use App\Models\Project;
 use App\Models\Team;
 use App\Models\User;
@@ -25,11 +26,28 @@ test('project participants can create and view card tables columns and cards', f
         ->assertRedirect(route('projects.card-tables.index', [$team, $project]));
 
     $cardTable = CardTable::query()->firstOrFail();
+    $triage = $cardTable->cardColumns()->where('is_triage', true)->sole();
+    $notNow = $cardTable->cardColumns()->where('is_not_now', true)->sole();
+    $done = $cardTable->cardColumns()->where('is_done', true)->sole();
+
+    expect($triage)
+        ->name->toBe('Triage')
+        ->is_collapsed->toBeFalse();
+    expect($notNow)
+        ->name->toBe('Not Now')
+        ->is_collapsed->toBeTrue();
+    expect($done)
+        ->name->toBe('Done')
+        ->is_collapsed->toBeTrue();
 
     $this->post(route('projects.card-columns.store', [$team, $project, $cardTable]), ['name' => '未着手'])
         ->assertRedirect();
 
-    $column = CardColumn::query()->firstOrFail();
+    $column = $cardTable->cardColumns()
+        ->where('is_triage', false)
+        ->where('is_not_now', false)
+        ->where('is_done', false)
+        ->sole();
 
     $this->post(route('projects.cards.store', [$team, $project, $cardTable, $column]), [
         'title' => 'モバイル表示を確認する',
@@ -52,6 +70,17 @@ test('project participants can create and view card tables columns and cards', f
             ->component('projects/card-tables/Index')
             ->where('tables.0.name', 'リリース準備')
             ->where('tables.0.canDelete', false)
+            ->where('tables.0.triage.name', 'Triage')
+            ->where('tables.0.triage.canDelete', false)
+            ->has('tables.0.triage.cards', 0)
+            ->where('tables.0.notNow.name', 'Not Now')
+            ->where('tables.0.notNow.collapsed', true)
+            ->where('tables.0.notNow.canDelete', false)
+            ->has('tables.0.notNow.cards', 0)
+            ->where('tables.0.done.name', 'Done')
+            ->where('tables.0.done.collapsed', true)
+            ->where('tables.0.done.canDelete', false)
+            ->has('tables.0.done.cards', 0)
             ->where('tables.0.columns.0.name', '未着手')
             ->where('tables.0.columns.0.canDelete', false)
             ->where('tables.0.columns.0.cards.0.title', 'モバイル表示を確認する')
@@ -63,6 +92,95 @@ test('project participants can create and view card tables columns and cards', f
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
             ->where('home.cardTables.count', 1));
+});
+
+test('project participants can view a card column and manage its comments', function () {
+    $owner = User::factory()->create(['name' => '作成者']);
+    $member = User::factory()->create(['name' => 'コメント担当']);
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([$owner->id, $member->id]);
+    $cardTable = CardTable::factory()->for($project)->create(['name' => '作業盤']);
+    $column = CardColumn::factory()->for($cardTable)->create(['name' => '進行中']);
+    Card::factory()->for($column, 'cardColumn')->for($owner, 'creator')->create([
+        'title' => '確認対象カード',
+        'position' => 0,
+    ]);
+    $existingComment = Comment::factory()
+        ->for($project)
+        ->for($owner)
+        ->for($column, 'commentable')
+        ->create(['body' => '<p>既存コメント</p>']);
+
+    $this->actingAs($member)
+        ->get(route('projects.card-columns.show', [$team, $project, $cardTable, $column]))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('projects/card-tables/ColumnShow')
+            ->where('table.name', '作業盤')
+            ->where('column.name', '進行中')
+            ->where('column.cards.0.title', '確認対象カード')
+            ->where('column.comments.0.body', '<p>既存コメント</p>')
+            ->where('column.comments.0.canDelete', false)
+            ->has('members', 2));
+
+    $this->post(route('projects.card-columns.comments.store', [$team, $project, $cardTable, $column]), [
+        'body' => '<p>追加コメント</p><script>alert(1)</script>',
+    ])->assertRedirect(route('projects.card-columns.show', [$team, $project, $cardTable, $column]));
+
+    $newComment = $column->comments()->latest('id')->firstOrFail();
+    expect($newComment)
+        ->project_id->toBe($project->id)
+        ->user_id->toBe($member->id)
+        ->body->toBe('<p>追加コメント</p>');
+
+    $this->patch(route('projects.card-columns.comments.update', [
+        $team,
+        $project,
+        $cardTable,
+        $column,
+        $newComment,
+    ]), ['body' => '<p>更新コメント</p>'])
+        ->assertRedirect(route('projects.card-columns.show', [$team, $project, $cardTable, $column]));
+
+    expect($newComment->fresh()->body)->toBe('<p>更新コメント</p>');
+
+    $this->delete(route('projects.card-columns.comments.destroy', [
+        $team,
+        $project,
+        $cardTable,
+        $column,
+        $newComment,
+    ]))->assertRedirect(route('projects.card-columns.show', [$team, $project, $cardTable, $column]));
+
+    expect($newComment->fresh())->toBeNull()
+        ->and($existingComment->fresh())->not->toBeNull();
+});
+
+test('triage not now and done columns have detail pages', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $cardTable = CardTable::factory()->for($project)->create();
+
+    $this->actingAs($owner);
+
+    foreach ([
+        ['is_triage', 'isTriage'],
+        ['is_not_now', 'isNotNow'],
+        ['is_done', 'isDone'],
+    ] as [$databaseFlag, $propFlag]) {
+        $column = $cardTable->cardColumns()->where($databaseFlag, true)->sole();
+
+        $this->get(route('projects.card-columns.show', [$team, $project, $cardTable, $column]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('projects/card-tables/ColumnShow')
+                ->where("column.{$propFlag}", true));
+    }
 });
 
 test('card assignees must participate in the project', function () {
@@ -171,6 +289,11 @@ test('card table routes stay scoped to their project table and column', function
     $firstColumn = CardColumn::factory()->for($firstTable)->create();
     $secondColumn = CardColumn::factory()->for($secondTable)->create();
     $secondCard = Card::factory()->for($secondColumn, 'cardColumn')->for($owner, 'creator')->create();
+    $secondComment = Comment::factory()
+        ->for($secondProject)
+        ->for($owner)
+        ->for($secondColumn, 'commentable')
+        ->create();
 
     $this->actingAs($owner)
         ->post(route('projects.card-columns.store', [$team, $firstProject, $secondTable]), ['name' => '不正'])
@@ -185,6 +308,18 @@ test('card table routes stay scoped to their project table and column', function
         'target_column_id' => $secondColumn->id,
         'version' => 1,
     ])->assertNotFound();
+
+    $this->get(route('projects.card-columns.show', [$team, $firstProject, $firstTable, $secondColumn]))
+        ->assertNotFound();
+
+    $this->patch(route('projects.card-columns.comments.update', [
+        $team,
+        $firstProject,
+        $firstTable,
+        $firstColumn,
+        $secondComment,
+    ]), ['body' => '不正'])
+        ->assertNotFound();
 });
 
 test('only project managers can delete card tables and columns', function () {
@@ -205,12 +340,82 @@ test('only project managers can delete card tables and columns', function () {
         ->assertForbidden();
 
     $this->actingAs($owner)
-        ->delete(route('projects.card-columns.destroy', [$team, $project, $cardTable, $column]))
+        ->get(route('projects.card-tables.index', [$team, $project]))
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('tables.0.canDelete', true)
+            ->where('tables.0.columns.0.canDelete', true));
+
+    $this->delete(route('projects.card-columns.destroy', [$team, $project, $cardTable, $column]))
         ->assertRedirect();
     $this->delete(route('projects.card-tables.destroy', [$team, $project, $cardTable]))
         ->assertRedirect();
 
     expect($cardTable->fresh())->toBeNull();
+});
+
+test('system columns cannot be changed as regular columns', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $cardTable = CardTable::factory()->for($project)->create();
+    $triage = $cardTable->cardColumns()->where('is_triage', true)->sole();
+    $notNow = $cardTable->cardColumns()->where('is_not_now', true)->sole();
+    $done = $cardTable->cardColumns()->where('is_done', true)->sole();
+
+    $this->actingAs($owner)
+        ->patch(route('projects.card-columns.update', [$team, $project, $cardTable, $triage]), [
+            'name' => 'Renamed',
+        ])
+        ->assertNotFound();
+
+    $this->patch(route('projects.card-columns.move', [$team, $project, $cardTable, $triage]), [
+        'target_position' => 0,
+    ])->assertNotFound();
+
+    $this->patch(route('projects.card-columns.collapse', [$team, $project, $cardTable, $triage]))
+        ->assertNotFound();
+
+    $this->delete(route('projects.card-columns.destroy', [$team, $project, $cardTable, $triage]))
+        ->assertNotFound();
+
+    $this->patch(route('projects.card-columns.update', [$team, $project, $cardTable, $notNow]), [
+        'name' => 'Renamed',
+    ])->assertNotFound();
+
+    $this->patch(route('projects.card-columns.move', [$team, $project, $cardTable, $notNow]), [
+        'target_position' => 0,
+    ])->assertNotFound();
+
+    $this->patch(route('projects.card-columns.collapse', [$team, $project, $cardTable, $notNow]))
+        ->assertNotFound();
+
+    $this->delete(route('projects.card-columns.destroy', [$team, $project, $cardTable, $notNow]))
+        ->assertNotFound();
+
+    $this->patch(route('projects.card-columns.update', [$team, $project, $cardTable, $done]), [
+        'name' => 'Renamed',
+    ])->assertNotFound();
+
+    $this->patch(route('projects.card-columns.move', [$team, $project, $cardTable, $done]), [
+        'target_position' => 0,
+    ])->assertNotFound();
+
+    $this->patch(route('projects.card-columns.collapse', [$team, $project, $cardTable, $done]))
+        ->assertNotFound();
+
+    $this->delete(route('projects.card-columns.destroy', [$team, $project, $cardTable, $done]))
+        ->assertNotFound();
+
+    expect($triage->fresh())
+        ->name->toBe('Triage')
+        ->is_collapsed->toBeFalse();
+    expect($notNow->fresh())
+        ->name->toBe('Not Now')
+        ->is_collapsed->toBeTrue();
+    expect($done->fresh())
+        ->name->toBe('Done')
+        ->is_collapsed->toBeTrue();
 });
 
 test('card columns can be reordered with normalized positions', function () {
@@ -260,7 +465,13 @@ test('large card column reorders stay normalized across update chunks', function
         ])
         ->assertRedirect();
 
-    $ordered = $cardTable->cardColumns()->orderBy('position')->orderBy('id')->get(['id', 'position']);
+    $ordered = $cardTable->cardColumns()
+        ->where('is_triage', false)
+        ->where('is_not_now', false)
+        ->where('is_done', false)
+        ->orderBy('position')
+        ->orderBy('id')
+        ->get(['id', 'position']);
 
     expect($ordered->first()->id)->toBe($last->id)
         ->and($ordered->pluck('position')->all())->toBe(range(0, 250));

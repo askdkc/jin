@@ -361,7 +361,17 @@ export type ProjectCardTable = {
     id: number;
     name: string;
     canDelete: boolean;
+    triage: ProjectCardColumn;
+    notNow: ProjectCardColumn;
+    done: ProjectCardColumn;
     columns: ProjectCardColumn[];
+};
+
+export type ProjectCardColumnDetail = ProjectCardColumn & {
+    isTriage: boolean;
+    isNotNow: boolean;
+    isDone: boolean;
+    comments: MessageComment[];
 };
 
 export type ActivityItem = {

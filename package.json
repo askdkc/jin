@@ -11,7 +11,7 @@
         "format:check": "prettier --check resources/",
         "lint": "eslint . --fix",
         "lint:check": "eslint .",
-        "test:schedule-time": "node --test --experimental-strip-types tests/Js/ScheduleEventTime.test.ts",
+        "test:frontend-logic": "node --test --experimental-strip-types tests/Js/*.test.ts",
         "types:check": "svelte-check --config ./svelte.config.js --tsconfig ./tsconfig.json"
     },
     "devDependencies": {

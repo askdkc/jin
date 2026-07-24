@@ -29,6 +29,8 @@
     import ChevronsLeft from 'lucide-svelte/icons/chevrons-left';
     import ChevronsRight from 'lucide-svelte/icons/chevrons-right';
     import Ellipsis from 'lucide-svelte/icons/ellipsis';
+    import Maximize2 from 'lucide-svelte/icons/maximize-2';
+    import Minimize2 from 'lucide-svelte/icons/minimize-2';
     import Pencil from 'lucide-svelte/icons/pencil';
     import Plus from 'lucide-svelte/icons/plus';
     import Search from 'lucide-svelte/icons/search';
@@ -57,6 +59,7 @@
     } from '@/components/ui/dropdown-menu';
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
+    import { cardTableColumnLayout } from '@/lib/card-table-columns';
     import { t } from '@/lib/i18n';
     import { cn } from '@/lib/utils';
     import type {
@@ -235,17 +238,6 @@
             { preserveScroll: true },
         );
     };
-    const toggleColumnCollapsed = (tableId: number, columnId: number): void =>
-        router.patch(
-            CardTableController.toggleColumn([
-                currentTeam.slug,
-                project.id,
-                tableId,
-                columnId,
-            ]).url,
-            {},
-            { preserveScroll: true },
-        );
     const moveColumnTo = (
         tableId: number,
         columnId: number,
@@ -336,6 +328,7 @@
                     type="button"
                     variant="ghost"
                     size="icon"
+                    class="size-6"
                     onclick={triggerProps.onclick}
                     aria-expanded={triggerProps['aria-expanded']}
                     data-state={triggerProps['data-state']}
@@ -374,21 +367,6 @@
                         >
                             <Pencil aria-hidden="true" />
                             {t('Rename')}
-                        </button>
-                    {/snippet}
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                    {#snippet children(itemProps)}
-                        <button
-                            type="button"
-                            class={itemProps.class}
-                            onclick={() => {
-                                itemProps.onClick?.();
-                                toggleColumnCollapsed(table.id, column.id);
-                            }}
-                        >
-                            <ChevronsLeft aria-hidden="true" />
-                            {t('Collapse column')}
                         </button>
                     {/snippet}
                 </DropdownMenuItem>
@@ -463,17 +441,52 @@
     columnIndex: number,
     visibleCount: number,
 )}
-    <header class="flex items-center justify-between gap-3 px-4 pt-4 pb-3">
+    <header class="flex items-center justify-between gap-2 px-3 py-2">
         <h2
             id={`column-${column.id}`}
             class="min-w-0 break-words font-semibold"
         >
-            {column.name}
-            <span class="font-normal text-muted-foreground">
-                ({visibleCount})
-            </span>
+            <Link
+                href={CardTableController.showColumn([
+                    currentTeam.slug,
+                    project.id,
+                    table.id,
+                    column.id,
+                ])}
+                class="hover:underline"
+            >
+                {column.name}
+                <span class="font-normal text-muted-foreground">
+                    ({visibleCount})
+                </span>
+            </Link>
         </h2>
-        {@render columnMenu(table, column, columnIndex)}
+        <div class="flex shrink-0 items-center gap-1">
+            <Form
+                {...CardTableController.toggleColumn.form([
+                    currentTeam.slug,
+                    project.id,
+                    table.id,
+                    column.id,
+                ])}
+                options={{ preserveScroll: true }}
+            >
+                {#snippet children({ processing })}
+                    <Button
+                        type="submit"
+                        variant="ghost"
+                        size="icon"
+                        class="size-6"
+                        disabled={processing}
+                        aria-label={t('Collapse column')}
+                        title={t('Collapse column')}
+                    >
+                        <Minimize2 class="size-4" aria-hidden="true" />
+                    </Button>
+                {/snippet}
+            </Form>
+            {@render columnMenu(table, column, columnIndex)}
+        </div>
     </header>
 {/snippet}
 
@@ -484,7 +497,7 @@
     className: string,
 )}
     <article
-        class={cn('group rounded-lg border bg-card shadow-sm', className)}
+        class={cn('group rounded-md border bg-card shadow-sm', className)}
         draggable="true"
         ondragstart={(event) =>
             startDragging(event, table.id, column.id, card.id, card.version)}
@@ -498,7 +511,7 @@
                 originalCardPosition(column, card.id),
             )}
     >
-        <div class="flex items-start gap-2 px-3 py-3">
+        <div class="flex items-start gap-2 px-2.5 py-1.5">
             <button
                 type="button"
                 class="min-w-0 flex-1 text-left"
@@ -555,40 +568,20 @@
     </button>
 {/snippet}
 
-{#snippet collapsedStrip(
+{#snippet systemColumnStrip(
     table: ProjectCardTable,
     column: ProjectCardColumn,
-    columnIndex: number,
+    className: string,
 )}
     <section
         class={cn(
-            'flex w-12 shrink-0 flex-col items-center gap-3 rounded-lg px-2 py-4',
-            columnAccent(columnIndex).tint,
+            'flex w-12 shrink-0 self-stretch flex-col items-center gap-3 px-2 py-4',
+            className,
         )}
         aria-labelledby={`column-${column.id}`}
         ondragover={(event) => allowDrop(event, table.id)}
         ondrop={(event) => dropCard(event, table.id, column.id)}
     >
-        <Form
-            {...CardTableController.toggleColumn.form([
-                currentTeam.slug,
-                project.id,
-                table.id,
-                column.id,
-            ])}
-        >
-            {#snippet children({ processing })}
-                <Button
-                    type="submit"
-                    variant="ghost"
-                    size="icon"
-                    disabled={processing}
-                    aria-label={t('Expand column')}
-                >
-                    <ChevronsRight />
-                </Button>
-            {/snippet}
-        </Form>
         <span class="text-xs text-muted-foreground">
             ({visibleCards(column).length})
         </span>
@@ -597,16 +590,94 @@
             class="font-semibold whitespace-nowrap"
             style="writing-mode: vertical-rl"
         >
-            {column.name}
+            <Link
+                href={CardTableController.showColumn([
+                    currentTeam.slug,
+                    project.id,
+                    table.id,
+                    column.id,
+                ])}
+                class="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+                {t(column.name)}
+            </Link>
         </h2>
+    </section>
+{/snippet}
+
+{#snippet collapsedStrip(
+    table: ProjectCardTable,
+    column: ProjectCardColumn,
+    columnIndex: number,
+)}
+    <section
+        class={cn(
+            'relative flex w-12 shrink-0 self-stretch flex-col items-center gap-3 overflow-hidden rounded-md px-2 py-3',
+            columnAccent(columnIndex).tint,
+        )}
+        aria-labelledby={`column-${column.id}`}
+        ondragover={(event) => allowDrop(event, table.id)}
+        ondrop={(event) => dropCard(event, table.id, column.id)}
+    >
+        <span
+            class={cn(
+                'absolute inset-x-0 top-0 h-1',
+                columnAccent(columnIndex).bar,
+            )}
+            aria-hidden="true"
+        ></span>
+        {@render columnMenu(table, column, columnIndex)}
+        <span class="text-xs text-muted-foreground">
+            ({visibleCards(column).length})
+        </span>
+        <h2
+            id={`column-${column.id}`}
+            class="font-semibold whitespace-nowrap"
+            style="writing-mode: vertical-rl"
+        >
+            <Link
+                href={CardTableController.showColumn([
+                    currentTeam.slug,
+                    project.id,
+                    table.id,
+                    column.id,
+                ])}
+                class="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+                {column.name}
+            </Link>
+        </h2>
+        <Form
+            {...CardTableController.toggleColumn.form([
+                currentTeam.slug,
+                project.id,
+                table.id,
+                column.id,
+            ])}
+            options={{ preserveScroll: true }}
+        >
+            {#snippet children({ processing })}
+                <Button
+                    type="submit"
+                    variant="ghost"
+                    size="icon"
+                    class="size-6"
+                    disabled={processing}
+                    aria-label={t('Expand column')}
+                    title={t('Expand column')}
+                >
+                    <Maximize2 class="size-4" aria-hidden="true" />
+                </Button>
+            {/snippet}
+        </Form>
     </section>
 {/snippet}
 
 <div class="min-h-full bg-muted/40 px-0 pb-8 sm:px-5 sm:pt-2 lg:px-6">
     <main
-        class="mx-auto min-h-[calc(100dvh-7rem)] w-full max-w-[120rem] overflow-hidden bg-card shadow-sm"
+        class="mx-auto flex min-h-[calc(100dvh-7rem)] w-full max-w-[120rem] flex-col overflow-hidden bg-card shadow-sm"
     >
-        <div class="flex min-h-10 items-center border-b px-5 sm:px-8">
+        <div class="flex min-h-10 items-center border-b px-4">
             <Link
                 href={show([currentTeam.slug, project.id])}
                 class="text-sm font-bold hover:underline"
@@ -643,29 +714,29 @@
             </section>
         {:else}
             {#each tables as table (table.id)}
-                <section aria-labelledby={`card-table-${table.id}`}>
-                    <header class="border-b px-5 py-6 sm:px-8">
+                {@const columnLayout = cardTableColumnLayout(table.columns)}
+                <section
+                    class="flex min-h-[calc(100dvh-9.5rem)] flex-col"
+                    aria-labelledby={`card-table-${table.id}`}
+                >
+                    <header class="shrink-0 border-b px-4 py-3">
                         <h1
                             id={`card-table-${table.id}`}
-                            class="break-words text-3xl font-bold tracking-tight sm:text-4xl"
+                            class="break-words text-4xl font-bold tracking-tight"
                         >
                             {table.name}
                         </h1>
-                        <div class="mt-4 flex flex-wrap items-center gap-2">
-                            {#if table.columns[0]}
-                                <Button
-                                    type="button"
-                                    onclick={() =>
-                                        openCreateCard(
-                                            table.id,
-                                            table.columns[0].id,
-                                        )}
-                                >
-                                    <Plus data-icon="inline-start" />
-                                    {t('Add a card')}
-                                </Button>
-                            {/if}
-                            <div class="relative w-full max-w-3xs">
+                        <div class="mt-2 flex flex-wrap items-center gap-2">
+                            <Button
+                                type="button"
+                                size="sm"
+                                onclick={() =>
+                                    openCreateCard(table.id, table.triage.id)}
+                            >
+                                <Plus data-icon="inline-start" />
+                                {t('Add a card')}
+                            </Button>
+                            <div class="relative w-36">
                                 <Label
                                     for={`card-filter-${table.id}`}
                                     class="sr-only"
@@ -679,18 +750,10 @@
                                 <Input
                                     id={`card-filter-${table.id}`}
                                     bind:value={filterText}
-                                    class="pl-9"
+                                    class="h-8 pl-9 text-xs"
                                     placeholder={t('Filter...')}
                                 />
                             </div>
-                            <Button
-                                type="button"
-                                variant="outline"
-                                onclick={() => openNewColumn(table.id)}
-                            >
-                                <Plus data-icon="inline-start" />
-                                {t('Add column')}
-                            </Button>
                             <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
                                     {#snippet children(triggerProps)}
@@ -698,6 +761,7 @@
                                             type="button"
                                             variant="ghost"
                                             size="icon"
+                                            class="size-8"
                                             onclick={triggerProps.onclick}
                                             aria-expanded={triggerProps[
                                                 'aria-expanded'
@@ -773,81 +837,79 @@
                         </div>
                     </header>
 
-                    {#if table.columns.length === 0}
-                        <div class="px-5 py-16 text-center sm:px-8">
-                            <p class="text-sm text-muted-foreground">
-                                {t('No columns yet')}
-                            </p>
-                            <Button
-                                type="button"
-                                variant="outline"
-                                class="mt-4"
-                                onclick={() => openNewColumn(table.id)}
+                    <div class="flex min-h-0 flex-1 flex-col">
+                        <div class="flex min-w-0 items-stretch gap-3">
+                            <section
+                                class="min-w-0 flex-1 py-4 pl-4"
+                                aria-labelledby={`column-${table.triage.id}`}
+                                ondragover={(event) =>
+                                    allowDrop(event, table.id)}
+                                ondrop={(event) =>
+                                    dropCard(event, table.id, table.triage.id)}
                             >
-                                <Plus data-icon="inline-start" />
-                                {t('Add column')}
-                            </Button>
-                        </div>
-                    {:else}
-                        {@const triage = table.columns[0]}
-                        {@const showTriageRow =
-                            triage !== undefined && !triage.collapsed}
-                        {@const boardColumns = showTriageRow
-                            ? table.columns.slice(1)
-                            : table.columns}
-                        {@const expandedColumns = boardColumns.filter(
-                            (column) => !column.collapsed,
-                        )}
-                        {@const collapsedColumns = boardColumns.filter(
-                            (column) => column.collapsed,
-                        )}
-                        <div class="flex flex-col gap-6 px-5 py-6 sm:px-8">
-                            {#if showTriageRow}
-                                {@const triageCards = visibleCards(triage)}
-                                <section
-                                    aria-labelledby={`column-${triage.id}`}
-                                    ondragover={(event) =>
-                                        allowDrop(event, table.id)}
-                                    ondrop={(event) =>
-                                        dropCard(event, table.id, triage.id)}
+                                <h2
+                                    id={`column-${table.triage.id}`}
+                                    class="font-semibold"
                                 >
-                                    {@render columnHeader(
-                                        table,
-                                        triage,
-                                        0,
-                                        triageCards.length,
-                                    )}
-                                    <div class="flex flex-wrap gap-2">
-                                        {#each triageCards as card (card.id)}
-                                            {@render cardArticle(
-                                                table,
-                                                triage,
-                                                card,
-                                                'w-full sm:w-80',
-                                            )}
-                                        {:else}
-                                            {@render emptySlot(
-                                                table,
-                                                triage,
-                                                'min-h-28 w-full sm:w-80',
-                                            )}
-                                        {/each}
-                                    </div>
-                                </section>
-                            {/if}
-
-                            {#if expandedColumns.length > 0 || collapsedColumns.length > 0}
+                                    <Link
+                                        href={CardTableController.showColumn([
+                                            currentTeam.slug,
+                                            project.id,
+                                            table.id,
+                                            table.triage.id,
+                                        ])}
+                                        class="hover:underline"
+                                    >
+                                        {table.triage.name}
+                                        <span
+                                            class="font-normal text-muted-foreground"
+                                        >
+                                            ({visibleCards(table.triage)
+                                                .length})
+                                        </span>
+                                    </Link>
+                                </h2>
                                 <div
-                                    class="flex items-start gap-4 overflow-x-auto"
+                                    class="mt-2 flex gap-2 overflow-x-auto overscroll-x-contain pb-2"
                                 >
-                                    {#each expandedColumns as column (column.id)}
+                                    {#each visibleCards(table.triage) as card (card.id)}
+                                        {@render cardArticle(
+                                            table,
+                                            table.triage,
+                                            card,
+                                            'w-48 max-w-[75vw] shrink-0',
+                                        )}
+                                    {:else}
+                                        {@render emptySlot(
+                                            table,
+                                            table.triage,
+                                            'min-h-16 w-48 max-w-[75vw] shrink-0',
+                                        )}
+                                    {/each}
+                                </div>
+                            </section>
+                            {@render systemColumnStrip(
+                                table,
+                                table.notNow,
+                                'min-h-32 border-l bg-muted',
+                            )}
+                        </div>
+
+                        <div
+                            class="flex min-h-0 min-w-0 flex-1 items-stretch gap-2 border-t pl-4"
+                        >
+                            {#if columnLayout.expandedColumns.length > 0}
+                                <div
+                                    class="flex min-w-0 flex-1 items-start gap-2 overflow-x-auto overscroll-x-contain pt-4 pb-3 has-data-[state=open]:overflow-visible"
+                                >
+                                    {#each columnLayout.expandedColumns as column (column.id)}
                                         {@const columnIndex =
                                             table.columns.indexOf(column)}
                                         {@const visibleColumnCards =
                                             visibleCards(column)}
                                         <section
                                             class={cn(
-                                                'w-[min(26rem,88vw)] shrink-0 overflow-hidden rounded-lg',
+                                                'min-w-72 grow shrink-0 basis-[calc((100%_-_1.5rem)/4)] rounded-md',
                                                 columnAccent(columnIndex).tint,
                                             )}
                                             aria-labelledby={`column-${column.id}`}
@@ -862,7 +924,7 @@
                                         >
                                             <span
                                                 class={cn(
-                                                    'block h-1',
+                                                    'block h-1 rounded-t-md',
                                                     columnAccent(columnIndex)
                                                         .bar,
                                                 )}
@@ -875,7 +937,7 @@
                                                 visibleColumnCards.length,
                                             )}
                                             <div
-                                                class="flex flex-col gap-2 px-3 pb-4"
+                                                class="flex flex-col gap-2 px-2 pb-2"
                                             >
                                                 {#each visibleColumnCards as card (card.id)}
                                                     {@render cardArticle(
@@ -888,31 +950,55 @@
                                                     {@render emptySlot(
                                                         table,
                                                         column,
-                                                        'min-h-24',
+                                                        'min-h-10',
                                                     )}
                                                 {/each}
                                             </div>
                                         </section>
                                     {/each}
-                                    {#if collapsedColumns.length > 0}
-                                        <div
-                                            class="ml-auto flex gap-2 self-stretch"
-                                        >
-                                            {#each collapsedColumns as column (column.id)}
-                                                {@render collapsedStrip(
-                                                    table,
-                                                    column,
-                                                    table.columns.indexOf(
-                                                        column,
-                                                    ),
-                                                )}
-                                            {/each}
-                                        </div>
-                                    {/if}
+                                </div>
+                            {:else if columnLayout.collapsedColumns.length === 0}
+                                <div
+                                    class="mt-4 flex min-h-10 min-w-0 flex-1 items-center justify-center rounded-md border border-dashed"
+                                >
+                                    <span class="text-sm text-muted-foreground">
+                                        {t('No columns yet')}
+                                    </span>
+                                </div>
+                            {:else}
+                                <div class="min-w-0 flex-1"></div>
+                            {/if}
+                            {#if columnLayout.collapsedColumns.length > 0}
+                                <div
+                                    class="flex shrink-0 items-stretch gap-2 pt-4 pb-3"
+                                    data-collapsed-column-rails
+                                >
+                                    {#each columnLayout.collapsedColumns as column (column.id)}
+                                        {@render collapsedStrip(
+                                            table,
+                                            column,
+                                            table.columns.indexOf(column),
+                                        )}
+                                    {/each}
                                 </div>
                             {/if}
+                            <Button
+                                type="button"
+                                size="icon"
+                                class="mt-4 size-6 shrink-0 self-start p-0"
+                                onclick={() => openNewColumn(table.id)}
+                                aria-label={t('Add column')}
+                                title={t('Add column')}
+                            >
+                                <Plus class="size-4" aria-hidden="true" />
+                            </Button>
+                            {@render systemColumnStrip(
+                                table,
+                                table.done,
+                                'border-l border-r-4 border-r-chart-2 bg-chart-2/15',
+                            )}
                         </div>
-                    {/if}
+                    </div>
                 </section>
             {/each}
         {/if}

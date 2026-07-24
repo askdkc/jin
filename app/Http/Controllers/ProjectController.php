@@ -290,7 +290,10 @@ class ProjectController extends Controller
         $cardTablePreview = $project->cardTables()
             ->select(['id', 'project_id', 'name'])
             ->with(['cardColumns' => fn (Relation $query) => $query
-                ->select(['id', 'card_table_id', 'name', 'position'])
+                ->select(['id', 'card_table_id', 'name', 'position', 'is_triage', 'is_not_now', 'is_done'])
+                ->where('is_triage', false)
+                ->where('is_not_now', false)
+                ->where('is_done', false)
                 ->withCount('cards')
                 ->orderBy('position')
                 ->limit(5)])

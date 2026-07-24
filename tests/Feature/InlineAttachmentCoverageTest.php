@@ -312,6 +312,51 @@ test('card store and update claim inline uploads while advancing the card versio
     expectInlineAttachmentDetached($updatedUpload['id']);
 });
 
+test('card column comments claim update and detach inline uploads', function () {
+    Storage::fake('local');
+    [$owner, $team, $project] = inlineAttachmentCoverageWorkspace();
+    $cardTable = CardTable::factory()->for($project)->create();
+    $cardColumn = CardColumn::factory()->for($cardTable)->create();
+    $createdUpload = inlineAttachmentCoverageUpload($this, $owner, $team, $project);
+
+    $this->actingAs($owner)
+        ->post(route('projects.card-columns.comments.store', [$team, $project, $cardTable, $cardColumn]), [
+            'body' => inlineAttachmentCoverageBody($createdUpload['previewUrl']),
+        ])
+        ->assertRedirect();
+
+    $comment = $cardColumn->comments()->firstOrFail();
+    expectInlineAttachmentClaimed($createdUpload['id'], $comment);
+
+    $updatedUpload = inlineAttachmentCoverageUpload($this, $owner, $team, $project);
+    $this->actingAs($owner)
+        ->patch(route('projects.card-columns.comments.update', [
+            $team,
+            $project,
+            $cardTable,
+            $cardColumn,
+            $comment,
+        ]), [
+            'body' => inlineAttachmentCoverageBody($updatedUpload['previewUrl'], '更新添付'),
+        ])
+        ->assertRedirect();
+
+    expectInlineAttachmentDetached($createdUpload['id']);
+    expectInlineAttachmentClaimed($updatedUpload['id'], $comment);
+
+    $this->actingAs($owner)
+        ->delete(route('projects.card-columns.comments.destroy', [
+            $team,
+            $project,
+            $cardTable,
+            $cardColumn,
+            $comment,
+        ]))
+        ->assertRedirect();
+
+    expectInlineAttachmentDetached($updatedUpload['id']);
+});
+
 test('check-in answers claim inline uploads to the answered prompt', function () {
     Storage::fake('local');
     [$owner, $team, $project] = inlineAttachmentCoverageWorkspace();

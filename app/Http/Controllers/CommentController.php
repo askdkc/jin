@@ -6,6 +6,8 @@ use App\Enums\ActivityType;
 use App\Enums\TeamRole;
 use App\Http\Requests\Phase3\SaveCommentRequest;
 use App\Models\Activity;
+use App\Models\CardColumn;
+use App\Models\CardTable;
 use App\Models\CheckIn;
 use App\Models\CheckInPrompt;
 use App\Models\Comment;
@@ -31,6 +33,59 @@ use Inertia\Inertia;
 
 class CommentController extends Controller
 {
+    public function storeCardColumn(
+        SaveCommentRequest $request,
+        Team $currentTeam,
+        Project $project,
+        CardTable $cardTable,
+        CardColumn $cardColumn,
+    ): RedirectResponse {
+        DB::transaction(function () use ($request, $project, $cardColumn): void {
+            $comment = $cardColumn->comments()->create([
+                ...$request->validated(),
+                'project_id' => $project->id,
+                'user_id' => $request->user()->id,
+            ]);
+
+            InlineAttachments::syncFromBody($comment, $project, $request->user()->id, $comment->body);
+        });
+
+        return to_route('projects.card-columns.show', [$currentTeam, $project, $cardTable, $cardColumn]);
+    }
+
+    public function updateCardColumn(
+        SaveCommentRequest $request,
+        Team $currentTeam,
+        Project $project,
+        CardTable $cardTable,
+        CardColumn $cardColumn,
+        Comment $comment,
+    ): RedirectResponse {
+        $this->updateComment($request, $project, $comment);
+        Inertia::flash('toast', ['type' => 'success', 'message' => __('Comment updated.')]);
+
+        return to_route('projects.card-columns.show', [$currentTeam, $project, $cardTable, $cardColumn]);
+    }
+
+    public function destroyCardColumn(
+        Team $currentTeam,
+        Project $project,
+        CardTable $cardTable,
+        CardColumn $cardColumn,
+        Comment $comment,
+    ): RedirectResponse {
+        Gate::authorize('view', $project);
+        abort_unless($comment->user_id === request()->user()->id || Gate::allows('update', $project), 403);
+
+        DB::transaction(function () use ($comment): void {
+            InlineAttachments::detach($comment);
+            $comment->delete();
+        });
+        Inertia::flash('toast', ['type' => 'success', 'message' => __('Comment deleted.')]);
+
+        return to_route('projects.card-columns.show', [$currentTeam, $project, $cardTable, $cardColumn]);
+    }
+
     public function storeCheckInAnswer(
         SaveCommentRequest $request,
         Team $currentTeam,

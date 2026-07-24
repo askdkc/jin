@@ -12,6 +12,7 @@ use App\Models\Activity;
 use App\Models\Card;
 use App\Models\CardColumn;
 use App\Models\CardTable;
+use App\Models\Comment;
 use App\Models\Project;
 use App\Models\Team;
 use App\Models\User;
@@ -45,34 +46,80 @@ class CardTableController extends Controller
                 ->orderBy('position')])
             ->orderBy('position')
             ->get()
-            ->map(fn (CardTable $cardTable): array => [
-                'id' => $cardTable->id,
-                'name' => $cardTable->name,
-                'canDelete' => $canManageProject,
-                'columns' => $cardTable->cardColumns->map(fn (CardColumn $cardColumn): array => [
-                    'id' => $cardColumn->id,
-                    'name' => $cardColumn->name,
-                    'position' => $cardColumn->position,
-                    'collapsed' => $cardColumn->is_collapsed,
+            ->map(function (CardTable $cardTable) use ($userId, $canManageProject): array {
+                $triage = $cardTable->cardColumns->firstWhere('is_triage', true);
+                $notNow = $cardTable->cardColumns->firstWhere('is_not_now', true);
+                $done = $cardTable->cardColumns->firstWhere('is_done', true);
+                abort_unless($triage instanceof CardColumn, 500, 'Card table is missing its triage column.');
+                abort_unless($notNow instanceof CardColumn, 500, 'Card table is missing its Not Now column.');
+                abort_unless($done instanceof CardColumn, 500, 'Card table is missing its Done column.');
+
+                return [
+                    'id' => $cardTable->id,
+                    'name' => $cardTable->name,
                     'canDelete' => $canManageProject,
-                    'cards' => $cardColumn->cards->map(fn (Card $card): array => [
-                        'id' => $card->id,
-                        'title' => $card->title,
-                        'description' => $card->description,
-                        'assigneeId' => $card->assignee_id,
-                        'assigneeName' => $card->assignee?->name,
-                        'creatorName' => $card->creator?->name,
-                        'dueOn' => $card->due_on?->toDateString(),
-                        'position' => $card->position,
-                        'version' => $card->version,
-                        'canDelete' => $card->created_by === $userId || $canManageProject,
-                    ])->all(),
-                ])->all(),
-            ]);
+                    'triage' => $this->columnData($triage, $userId, false),
+                    'notNow' => $this->columnData($notNow, $userId, false),
+                    'done' => $this->columnData($done, $userId, false),
+                    'columns' => $cardTable->cardColumns
+                        ->where('is_triage', false)
+                        ->where('is_not_now', false)
+                        ->where('is_done', false)
+                        ->map(fn (CardColumn $cardColumn): array => $this->columnData(
+                            $cardColumn,
+                            $userId,
+                            $canManageProject,
+                        ))
+                        ->values()
+                        ->all(),
+                ];
+            });
 
         return Inertia::render('projects/card-tables/Index', [
             'project' => ['id' => $project->id, 'name' => $project->name],
             'tables' => $tables,
+            'members' => $project->members()
+                ->orderBy('name')
+                ->get(['users.id', 'users.name'])
+                ->map(fn (User $user): array => ['id' => $user->id, 'name' => $user->name]),
+        ]);
+    }
+
+    public function showColumn(
+        Team $currentTeam,
+        Project $project,
+        CardTable $cardTable,
+        CardColumn $cardColumn,
+    ): Response {
+        Gate::authorize('view', $project);
+
+        $userId = request()->user()->id;
+        $canManageProject = Gate::allows('update', $project);
+        $cardColumn->load([
+            'cards' => fn ($cardQuery) => $cardQuery
+                ->with(['assignee:id,name', 'creator:id,name'])
+                ->orderBy('position'),
+            'comments' => fn ($commentQuery) => $commentQuery
+                ->with('user:id,name')
+                ->oldest(),
+        ]);
+
+        return Inertia::render('projects/card-tables/ColumnShow', [
+            'project' => ['id' => $project->id, 'name' => $project->name],
+            'table' => ['id' => $cardTable->id, 'name' => $cardTable->name],
+            'column' => [
+                ...$this->columnData($cardColumn, $userId, $canManageProject),
+                'isTriage' => $cardColumn->is_triage,
+                'isNotNow' => $cardColumn->is_not_now,
+                'isDone' => $cardColumn->is_done,
+                'comments' => $cardColumn->comments->map(fn (Comment $comment): array => [
+                    'id' => $comment->id,
+                    'body' => $comment->body,
+                    'authorName' => $comment->user?->name,
+                    'createdAt' => $comment->created_at?->toISOString(),
+                    'canDelete' => $canManageProject || $comment->user_id === $userId,
+                ])->all(),
+            ],
             'members' => $project->members()
                 ->orderBy('name')
                 ->get(['users.id', 'users.name'])
@@ -85,10 +132,31 @@ class CardTableController extends Controller
         Team $currentTeam,
         Project $project,
     ): RedirectResponse {
-        $project->cardTables()->create([
-            ...$request->validated(),
-            'position' => ((int) $project->cardTables()->max('position')) + 1,
-        ]);
+        DB::transaction(function () use ($request, $project): void {
+            $cardTable = $project->cardTables()->create([
+                ...$request->validated(),
+                'position' => ((int) $project->cardTables()->max('position')) + 1,
+            ]);
+            $cardTable->cardColumns()->createMany([
+                [
+                    'name' => 'Triage',
+                    'position' => 0,
+                    'is_triage' => true,
+                ],
+                [
+                    'name' => 'Not Now',
+                    'position' => 0,
+                    'is_collapsed' => true,
+                    'is_not_now' => true,
+                ],
+                [
+                    'name' => 'Done',
+                    'position' => 0,
+                    'is_collapsed' => true,
+                    'is_done' => true,
+                ],
+            ]);
+        });
 
         return to_route('projects.card-tables.index', [$currentTeam, $project]);
     }
@@ -111,6 +179,13 @@ class CardTableController extends Controller
     ): RedirectResponse {
         Gate::authorize('delete', $cardTable);
         DB::transaction(function () use ($cardTable): void {
+            $columnIds = $cardTable->cardColumns()->pluck('id');
+            $commentIds = Comment::query()
+                ->where('commentable_type', (new CardColumn)->getMorphClass())
+                ->whereIn('commentable_id', $columnIds)
+                ->pluck('id');
+            InlineAttachments::detachMany((new Comment)->getMorphClass(), $commentIds);
+            Comment::query()->whereIn('id', $commentIds)->delete();
             InlineAttachments::detachMany(
                 (new Card)->getMorphClass(),
                 Card::query()
@@ -129,9 +204,15 @@ class CardTableController extends Controller
         Project $project,
         CardTable $cardTable,
     ): RedirectResponse {
+        $lastPosition = $cardTable->cardColumns()
+            ->where('is_triage', false)
+            ->where('is_not_now', false)
+            ->where('is_done', false)
+            ->max('position');
+
         $cardTable->cardColumns()->create([
             ...$request->validated(),
-            'position' => ((int) $cardTable->cardColumns()->max('position')) + 1,
+            'position' => $lastPosition === null ? 0 : ((int) $lastPosition) + 1,
         ]);
 
         return to_route('projects.card-tables.index', [$currentTeam, $project]);
@@ -144,6 +225,8 @@ class CardTableController extends Controller
         CardTable $cardTable,
         CardColumn $cardColumn,
     ): RedirectResponse {
+        abort_if($this->isSystemColumn($cardColumn), 404);
+
         $cardColumn->update($request->validated());
 
         return to_route('projects.card-tables.index', [$currentTeam, $project]);
@@ -156,8 +239,13 @@ class CardTableController extends Controller
         CardTable $cardTable,
         CardColumn $cardColumn,
     ): RedirectResponse {
+        abort_if($this->isSystemColumn($cardColumn), 404);
+
         DB::transaction(function () use ($request, $cardTable, $cardColumn): void {
             $columnIds = $cardTable->cardColumns()
+                ->where('is_triage', false)
+                ->where('is_not_now', false)
+                ->where('is_done', false)
                 ->orderBy('position')
                 ->orderBy('id')
                 ->lockForUpdate()
@@ -179,6 +267,7 @@ class CardTableController extends Controller
         CardColumn $cardColumn,
     ): RedirectResponse {
         Gate::authorize('view', $cardTable);
+        abort_if($this->isSystemColumn($cardColumn), 404);
 
         $cardColumn->update(['is_collapsed' => ! $cardColumn->is_collapsed]);
 
@@ -192,15 +281,31 @@ class CardTableController extends Controller
         CardColumn $cardColumn,
     ): RedirectResponse {
         Gate::authorize('delete', $cardTable);
+        abort_if($this->isSystemColumn($cardColumn), 404);
+
         DB::transaction(function () use ($cardColumn, $cardTable): void {
+            $commentIds = $cardColumn->comments()->pluck('id');
+            InlineAttachments::detachMany((new Comment)->getMorphClass(), $commentIds);
+            $cardColumn->comments()->delete();
             InlineAttachments::detachMany((new Card)->getMorphClass(), $cardColumn->cards()->pluck('id'));
             $cardColumn->delete();
             $this->normalizeColumnPositions(
-                $cardTable->cardColumns()->orderBy('position')->orderBy('id')->pluck('id'),
+                $cardTable->cardColumns()
+                    ->where('is_triage', false)
+                    ->where('is_not_now', false)
+                    ->where('is_done', false)
+                    ->orderBy('position')
+                    ->orderBy('id')
+                    ->pluck('id'),
             );
         });
 
         return to_route('projects.card-tables.index', [$currentTeam, $project]);
+    }
+
+    private function isSystemColumn(CardColumn $cardColumn): bool
+    {
+        return $cardColumn->is_triage || $cardColumn->is_not_now || $cardColumn->is_done;
     }
 
     public function storeCard(
@@ -228,7 +333,7 @@ class CardTableController extends Controller
             Activity::record($project, $request->user(), ActivityType::CardCreated, $card, $card->title);
         });
 
-        return to_route('projects.card-tables.index', [$currentTeam, $project]);
+        return back(fallback: route('projects.card-tables.index', [$currentTeam, $project]));
     }
 
     public function updateCard(
@@ -359,6 +464,52 @@ class CardTableController extends Controller
         }
 
         $this->updatePositions('card_columns', $columnIds);
+    }
+
+    /**
+     * @return array{
+     *     id: int,
+     *     name: string,
+     *     position: int,
+     *     collapsed: bool,
+     *     canDelete: bool,
+     *     cards: list<array{
+     *         id: int,
+     *         title: string,
+     *         description: string|null,
+     *         assigneeId: int|null,
+     *         assigneeName: string|null,
+     *         creatorName: string|null,
+     *         dueOn: string|null,
+     *         position: int,
+     *         version: int,
+     *         canDelete: bool
+     *     }>
+     * }
+     */
+    private function columnData(CardColumn $cardColumn, int $userId, bool $canDelete): array
+    {
+        return [
+            'id' => $cardColumn->id,
+            'name' => $cardColumn->name,
+            'position' => $cardColumn->position,
+            'collapsed' => $cardColumn->is_collapsed,
+            'canDelete' => $canDelete,
+            'cards' => array_values(
+                $cardColumn->cards->map(fn (Card $card): array => [
+                    'id' => $card->id,
+                    'title' => $card->title,
+                    'description' => $card->description,
+                    'assigneeId' => $card->assignee_id,
+                    'assigneeName' => $card->assignee?->name,
+                    'creatorName' => $card->creator?->name,
+                    'dueOn' => $card->due_on?->toDateString(),
+                    'position' => $card->position,
+                    'version' => $card->version,
+                    'canDelete' => $card->created_by === $userId || $canDelete,
+                ])->all(),
+            ),
+        ];
     }
 
     /** @param Collection<int, int> $cardIds */

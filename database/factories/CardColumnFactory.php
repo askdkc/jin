@@ -23,6 +23,9 @@ class CardColumnFactory extends Factory
             'name' => fake()->words(2, true),
             'position' => 0,
             'is_collapsed' => false,
+            'is_triage' => false,
+            'is_not_now' => false,
+            'is_done' => false,
         ];
     }
 }

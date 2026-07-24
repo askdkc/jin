@@ -1,5 +1,9 @@
 <?php
 
+beforeEach(function () {
+    config(['access.enabled' => true]);
+});
+
 test('the application is publicly reachable when IP restriction is disabled', function () {
     config([
         'access.enabled' => false,

@@ -164,10 +164,14 @@ Route::prefix('{current_team}')
             Route::patch('projects/{project}/card-tables/{card_table}', [CardTableController::class, 'updateTable'])->name('projects.card-tables.update');
             Route::delete('projects/{project}/card-tables/{card_table}', [CardTableController::class, 'destroyTable'])->name('projects.card-tables.destroy');
             Route::post('projects/{project}/card-tables/{card_table}/columns', [CardTableController::class, 'storeColumn'])->name('projects.card-columns.store');
+            Route::get('projects/{project}/card-tables/{card_table}/columns/{card_column}', [CardTableController::class, 'showColumn'])->name('projects.card-columns.show');
             Route::patch('projects/{project}/card-tables/{card_table}/columns/{card_column}', [CardTableController::class, 'updateColumn'])->name('projects.card-columns.update');
             Route::patch('projects/{project}/card-tables/{card_table}/columns/{card_column}/move', [CardTableController::class, 'moveColumn'])->name('projects.card-columns.move');
             Route::patch('projects/{project}/card-tables/{card_table}/columns/{card_column}/collapse', [CardTableController::class, 'toggleColumn'])->name('projects.card-columns.collapse');
             Route::delete('projects/{project}/card-tables/{card_table}/columns/{card_column}', [CardTableController::class, 'destroyColumn'])->name('projects.card-columns.destroy');
+            Route::post('projects/{project}/card-tables/{card_table}/columns/{card_column}/comments', [CommentController::class, 'storeCardColumn'])->name('projects.card-columns.comments.store');
+            Route::patch('projects/{project}/card-tables/{card_table}/columns/{card_column}/comments/{comment}', [CommentController::class, 'updateCardColumn'])->name('projects.card-columns.comments.update');
+            Route::delete('projects/{project}/card-tables/{card_table}/columns/{card_column}/comments/{comment}', [CommentController::class, 'destroyCardColumn'])->name('projects.card-columns.comments.destroy');
             Route::post('projects/{project}/card-tables/{card_table}/columns/{card_column}/cards', [CardTableController::class, 'storeCard'])->name('projects.cards.store');
             Route::patch('projects/{project}/card-tables/{card_table}/columns/{card_column}/cards/{card}', [CardTableController::class, 'updateCard'])->name('projects.cards.update');
             Route::patch('projects/{project}/card-tables/{card_table}/columns/{card_column}/cards/{card}/move', [CardTableController::class, 'moveCard'])->name('projects.cards.move');

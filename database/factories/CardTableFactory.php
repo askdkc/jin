@@ -11,6 +11,31 @@ use Illuminate\Database\Eloquent\Factories\Factory;
  */
 class CardTableFactory extends Factory
 {
+    public function configure(): static
+    {
+        return $this->afterCreating(function (CardTable $cardTable): void {
+            $cardTable->cardColumns()->createMany([
+                [
+                    'name' => 'Triage',
+                    'position' => 0,
+                    'is_triage' => true,
+                ],
+                [
+                    'name' => 'Not Now',
+                    'position' => 0,
+                    'is_collapsed' => true,
+                    'is_not_now' => true,
+                ],
+                [
+                    'name' => 'Done',
+                    'position' => 0,
+                    'is_collapsed' => true,
+                    'is_done' => true,
+                ],
+            ]);
+        });
+    }
+
     /**
      * Define the model's default state.
      *

@@ -457,7 +457,7 @@
                             </Button>
                         {/snippet}
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start">
+                    <DropdownMenuContent align="start" class="min-w-64">
                         <DropdownMenuGroup>
                             <DropdownMenuItem asChild>
                                 {#snippet children(itemProps)}

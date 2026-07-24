@@ -57,4 +57,4 @@ jobs:
         run: npm run types:check
 
       - name: Test Frontend Logic
-        run: npm run test:schedule-time
+        run: npm run test:frontend-logic

@@ -27,7 +27,6 @@
     import Folder from 'lucide-svelte/icons/folder';
     import Link2 from 'lucide-svelte/icons/link-2';
     import MessageCircleQuestion from 'lucide-svelte/icons/message-circle-question';
-    import Paperclip from 'lucide-svelte/icons/paperclip';
     import Pencil from 'lucide-svelte/icons/pencil';
     import Settings from 'lucide-svelte/icons/settings';
     import Star from 'lucide-svelte/icons/star';
@@ -38,12 +37,12 @@
     import CheckInController from '@/actions/App/Http/Controllers/CheckInController';
     import MessageBoardController from '@/actions/App/Http/Controllers/MessageBoardController';
     import ProjectFavoriteController from '@/actions/App/Http/Controllers/ProjectFavoriteController';
-    import ProjectFileController from '@/actions/App/Http/Controllers/ProjectFileController';
     import ProjectMaterialController from '@/actions/App/Http/Controllers/ProjectMaterialController';
     import ProjectTimeEntryController from '@/actions/App/Http/Controllers/ProjectTimeEntryController';
     import ProjectTodoController from '@/actions/App/Http/Controllers/ProjectTodoController';
     import ScheduleEventController from '@/actions/App/Http/Controllers/ScheduleEventController';
     import AppHead from '@/components/AppHead.svelte';
+    import ProjectFileThumbnail from '@/components/ProjectFileThumbnail.svelte';
     import { Button } from '@/components/ui/button';
     import { activityAction, activityHref } from '@/lib/activity';
     import { t } from '@/lib/i18n';
@@ -509,18 +508,14 @@
                                                         aria-hidden="true"
                                                     />
                                                 </span>
-                                            {:else if entry.type === 'file' && entry.mimeType?.startsWith('image/')}
-                                                <img
-                                                    src={ProjectFileController.preview.url(
-                                                        [
-                                                            currentTeam.slug,
-                                                            project.id,
-                                                            entry.id,
-                                                        ],
-                                                    )}
-                                                    alt=""
-                                                    loading="lazy"
-                                                    class="size-10 shrink-0 rounded border object-cover"
+                                            {:else if entry.type === 'file'}
+                                                <ProjectFileThumbnail
+                                                    teamSlug={currentTeam.slug}
+                                                    projectId={project.id}
+                                                    fileId={entry.id}
+                                                    mimeType={entry.mimeType}
+                                                    thumbnailUrl={entry.thumbnailUrl}
+                                                    variant="summary"
                                                 />
                                             {:else}
                                                 <span
@@ -528,11 +523,6 @@
                                                 >
                                                     {#if entry.type === 'document'}
                                                         <BookOpen
-                                                            class="size-5"
-                                                            aria-hidden="true"
-                                                        />
-                                                    {:else if entry.type === 'file'}
-                                                        <Paperclip
                                                             class="size-5"
                                                             aria-hidden="true"
                                                         />

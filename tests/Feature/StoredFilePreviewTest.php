@@ -538,6 +538,22 @@ test('ready thumbnails are private, inline, project-scoped, and authenticated', 
         ->assertForbidden();
 });
 
+test('ready thumbnail metadata returns not found when the derived blob is missing', function () {
+    Storage::fake('local');
+    ['owner' => $owner, 'member' => $member, 'team' => $team, 'project' => $project] = storedFilePreviewProject();
+    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'original_name' => 'missing-preview.pdf',
+    ]);
+    $file->update([
+        'preview_path' => StoredFilePreviewGenerator::webpPath($file->id, $file->path),
+        'preview_status' => 'ready',
+    ]);
+
+    $this->actingAs($member)
+        ->get(route('projects.files.thumbnail', [$team, $project, $file]))
+        ->assertNotFound();
+});
+
 test('file detail exposes preview status and only exposes an existing ready image URL', function () {
     Storage::fake('local');
     ['owner' => $owner, 'member' => $member, 'team' => $team, 'project' => $project] = storedFilePreviewProject();

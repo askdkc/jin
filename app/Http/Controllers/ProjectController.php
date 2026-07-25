@@ -145,7 +145,7 @@ class ProjectController extends Controller
 
         return Inertia::render('projects/Show', [
             'project' => $this->projectDetails($project),
-            'home' => $this->projectHome($project),
+            'home' => $this->projectHome($project, $currentTeam),
             'permissions' => [
                 'canUpdateProject' => Gate::allows('update', $project),
                 'canArchiveProject' => Gate::allows('archive', $project),
@@ -265,7 +265,7 @@ class ProjectController extends Controller
     }
 
     /** @return array<string, mixed> */
-    private function projectHome(Project $project): array
+    private function projectHome(Project $project, Team $currentTeam): array
     {
         // Keep project scoping indexable and compute all counters in one table scan.
         $todoQuery = Todo::query()
@@ -345,6 +345,10 @@ class ProjectController extends Controller
                     'updaterName' => $file->uploader?->name,
                     'updatedAt' => $file->updated_at?->toISOString(),
                     'mimeType' => $file->mime_type,
+                    'thumbnailUrl' => $file->preview_status === 'ready'
+                        && $file->preview_path !== null
+                        ? route('projects.files.thumbnail', [$currentTeam, $project, $file], absolute: false)
+                        : null,
                     'size' => $file->size,
                 ]))
             ->concat($project->externalLinks()

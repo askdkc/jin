@@ -243,6 +243,15 @@ test('project home summarizes the latest work', function () {
         'mime_type' => 'image/png',
         'size' => 2048,
     ]);
+    $readyPdf = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($project)
+        ->for($owner, 'uploader')
+        ->create([
+            'original_name' => '完成資料.pdf',
+            'mime_type' => 'application/pdf',
+            'preview_path' => 'previews/completed.webp',
+            'preview_status' => 'ready',
+        ]));
     StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
         'path' => "projects/{$project->id}/attachments/pasted-image.png",
         'original_name' => '貼り付け画像.png',
@@ -296,16 +305,27 @@ test('project home summarizes the latest work', function () {
             ->where('home.cardTables.preview.columns.0.name', '確認中')
             ->where('home.cardTables.preview.columns.0.cardCount', 1)
             ->where('home.schedule.upcoming.0.title', '次の予定')
-            ->where('home.materials.entries', function (Collection $entries) use ($materialFolder, $owner): bool {
-                $rootFile = $entries->firstWhere('title', '要件.png');
+            ->where('home.materials.entries', function (Collection $entries) use ($materialFolder, $owner, $readyPdf, $team, $project): bool {
+                $rootImage = $entries->firstWhere('title', '要件.png');
+                $pdf = $entries->firstWhere('id', $readyPdf->id);
                 $folder = $entries->firstWhere('type', 'folder');
 
                 return $entries->contains('title', '進行資料')
                     && ! $entries->contains('title', '貼り付け画像.png')
                     && ! $entries->contains('title', 'フォルダー内.pdf')
-                    && $rootFile['mimeType'] === 'image/png'
-                    && $rootFile['size'] === 2048
-                    && $rootFile['updaterName'] === $owner->name
+                    && $rootImage['mimeType'] === 'image/png'
+                    && $rootImage['thumbnailUrl'] === null
+                    && $rootImage['size'] === 2048
+                    && $rootImage['updaterName'] === $owner->name
+                    && ! array_key_exists('disk', $rootImage)
+                    && ! array_key_exists('path', $rootImage)
+                    && ! array_key_exists('preview_path', $rootImage)
+                    && $pdf['mimeType'] === 'application/pdf'
+                    && $pdf['thumbnailUrl'] === route(
+                        'projects.files.thumbnail',
+                        [$team, $project, $readyPdf],
+                        absolute: false,
+                    )
                     && $folder['id'] === $materialFolder->id
                     && $folder['title'] === '納品物'
                     && $folder['itemCount'] === 1;

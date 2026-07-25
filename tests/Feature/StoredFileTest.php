@@ -15,6 +15,7 @@ use App\Support\StoredFileDeletion;
 use App\Support\StoredFilePreviewGenerator;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
@@ -72,6 +73,65 @@ test('materials library is served from the files URL with ordered folders and fi
             ->where('folders.0.id', $firstFolder->id)
             ->where('folders.1.id', $laterFolder->id)
             ->where('folders.1.itemCount', 1));
+});
+
+test('materials library exposes thumbnail metadata without private storage fields', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+
+    $readyPdf = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($project)
+        ->for($owner, 'uploader')
+        ->create([
+            'original_name' => 'ready.pdf',
+            'mime_type' => 'application/pdf',
+            'preview_path' => 'previews/ready.webp',
+            'preview_status' => 'ready',
+        ]));
+    $pendingPdf = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($project)
+        ->for($owner, 'uploader')
+        ->create([
+            'original_name' => 'pending.pdf',
+            'mime_type' => 'application/pdf',
+            'preview_path' => null,
+            'preview_status' => 'pending',
+        ]));
+    $unsupportedFile = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($project)
+        ->for($owner, 'uploader')
+        ->create([
+            'original_name' => 'report.docx',
+            'mime_type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'preview_path' => null,
+            'preview_status' => null,
+        ]));
+
+    $this->actingAs($owner)
+        ->get(route('projects.materials.index', [$team, $project]))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('items', function (Collection $items) use ($team, $project, $readyPdf, $pendingPdf, $unsupportedFile): bool {
+                $ready = $items->firstWhere('id', $readyPdf->id);
+                $pending = $items->firstWhere('id', $pendingPdf->id);
+                $unsupported = $items->firstWhere('id', $unsupportedFile->id);
+
+                return $ready['mimeType'] === 'application/pdf'
+                    && $ready['thumbnailUrl'] === route(
+                        'projects.files.thumbnail',
+                        [$team, $project, $readyPdf],
+                        absolute: false,
+                    )
+                    && $pending['mimeType'] === 'application/pdf'
+                    && $pending['thumbnailUrl'] === null
+                    && $unsupported['mimeType'] === $unsupportedFile->mime_type
+                    && $unsupported['thumbnailUrl'] === null
+                    && ! array_key_exists('disk', $ready)
+                    && ! array_key_exists('path', $ready)
+                    && ! array_key_exists('preview_path', $ready);
+            }));
 });
 
 test('project participants can upload and download private files', function () {

@@ -29,7 +29,6 @@
     import ChevronLeft from 'lucide-svelte/icons/chevron-left';
     import Ellipsis from 'lucide-svelte/icons/ellipsis';
     import ExternalLinkIcon from 'lucide-svelte/icons/external-link';
-    import FileIcon from 'lucide-svelte/icons/file';
     import FilePlus from 'lucide-svelte/icons/file-plus';
     import FileText from 'lucide-svelte/icons/file-text';
     import Folder from 'lucide-svelte/icons/folder';
@@ -44,6 +43,7 @@
     import ProjectFileController from '@/actions/App/Http/Controllers/ProjectFileController';
     import AppHead from '@/components/AppHead.svelte';
     import InputError from '@/components/InputError.svelte';
+    import ProjectFileThumbnail from '@/components/ProjectFileThumbnail.svelte';
     import { Button } from '@/components/ui/button';
     import {
         Dialog,
@@ -772,26 +772,32 @@
 
                     {#each items as item (`${item.type}-${item.id}`)}
                         <li class="group flex min-h-20 items-center gap-4 py-4">
-                            <span
-                                class="flex size-12 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"
-                            >
-                                {#if item.type === 'document'}
-                                    <FileText
-                                        class="size-7"
-                                        aria-hidden="true"
-                                    />
-                                {:else if item.type === 'file'}
-                                    <FileIcon
-                                        class="size-7"
-                                        aria-hidden="true"
-                                    />
-                                {:else}
-                                    <LinkIcon
-                                        class="size-7"
-                                        aria-hidden="true"
-                                    />
-                                {/if}
-                            </span>
+                            {#if item.type === 'file'}
+                                <ProjectFileThumbnail
+                                    teamSlug={currentTeam.slug}
+                                    projectId={project.id}
+                                    fileId={item.id}
+                                    mimeType={item.mimeType}
+                                    thumbnailUrl={item.thumbnailUrl}
+                                    variant="index"
+                                />
+                            {:else}
+                                <span
+                                    class="flex size-12 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"
+                                >
+                                    {#if item.type === 'document'}
+                                        <FileText
+                                            class="size-7"
+                                            aria-hidden="true"
+                                        />
+                                    {:else}
+                                        <LinkIcon
+                                            class="size-7"
+                                            aria-hidden="true"
+                                        />
+                                    {/if}
+                                </span>
+                            {/if}
 
                             <div class="min-w-0 flex-1">
                                 {#if item.type === 'link' && item.url}

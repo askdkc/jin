@@ -60,6 +60,7 @@ export type ProjectMaterialPreviewEntry =
           updaterName: string | null;
           updatedAt: string | null;
           mimeType: string | null;
+          thumbnailUrl: string | null;
           size: number;
       }
     | {
@@ -196,9 +197,8 @@ export type CalendarSubscription = {
     createdAt: string | null;
 };
 
-export type MaterialItem = {
+type MaterialItemBase = {
     id: number;
-    type: 'document' | 'file' | 'link';
     title: string;
     url: string | null;
     folderId: number | null;
@@ -208,6 +208,15 @@ export type MaterialItem = {
     updatedAt: string | null;
     canDelete: boolean;
 };
+
+export type MaterialItem =
+    | (MaterialItemBase & { type: 'document' })
+    | (MaterialItemBase & {
+          type: 'file';
+          mimeType: string | null;
+          thumbnailUrl: string | null;
+      })
+    | (MaterialItemBase & { type: 'link' });
 
 export type MaterialFolder = {
     id: number;

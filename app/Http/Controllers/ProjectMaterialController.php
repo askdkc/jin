@@ -60,7 +60,17 @@ class ProjectMaterialController extends Controller
 
         if ($type === null || $type === 'file') {
             $items = $items->concat($project->storedFiles()
-                ->select(['id', 'project_id', 'material_folder_id', 'uploaded_by', 'original_name', 'updated_at'])
+                ->select([
+                    'id',
+                    'project_id',
+                    'material_folder_id',
+                    'uploaded_by',
+                    'original_name',
+                    'mime_type',
+                    'preview_path',
+                    'preview_status',
+                    'updated_at',
+                ])
                 ->inMaterialLibrary()
                 ->with(['uploader:id,name', 'materialFolder:id,name'])
                 ->when(
@@ -75,6 +85,11 @@ class ProjectMaterialController extends Controller
                     'type' => 'file',
                     'title' => $file->original_name,
                     'url' => null,
+                    'mimeType' => $file->mime_type,
+                    'thumbnailUrl' => $file->preview_status === 'ready'
+                        && $file->preview_path !== null
+                        ? route('projects.files.thumbnail', [$currentTeam, $project, $file], absolute: false)
+                        : null,
                     'folderId' => $file->material_folder_id,
                     'folderName' => $file->materialFolder?->name,
                     'updaterId' => $file->uploaded_by,

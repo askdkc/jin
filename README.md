@@ -9,16 +9,15 @@ Basecampの情報設計を参考にしていますが、名称、画面、配色
 - チーム（ワークスペース）の作成、切り替え、メンバー招待、権限管理
 - プロジェクトの作成、編集、参加者指定、期間設定、アーカイブ
 - メッセージボード、コメント、購読、ピン留め、添付ファイル
-- Trixによる書式付き入力とサーバー側HTML無害化
+- Trixによる書式付き入力(サーバー側HTML無害化)
 - To-doリスト、担当者、期限、サブタスク、コメント、添付、ドラッグ＆ドロップ並べ替え
 - プロジェクト予定と、日・週・月・ガントの横断カレンダー
-- テキストドキュメント、非公開ファイル、フォルダ、外部リンク
 - ドラッグ＆ドロップ対応ファイルアップロード
-- Laravel Reverbを使ったプロジェクト別リアルタイムチャット
+- プロジェクト別リアルタイムチャット
 - ドラッグ＆ドロップ対応カードテーブル（Kanban）
 - 定期チェックインと回答履歴
 - アクティビティ、全体検索、ラインアップ、横断レポート
-- 署名付きURLによる外部カレンダー購読（iCalendar）
+- 署名付きURLによる外部カレンダー購読（iCal）
 - メール確認、2要素認証、Passkey
 - IPv4、IPv6、CIDR対応の全サイトIP制限
 - スマートフォン対応レスポンシブUI
@@ -27,7 +26,7 @@ Basecampの情報設計を参考にしていますが、名称、画面、配色
 
 | 領域           | 使用技術                                 |
 | -------------- | ---------------------------------------- |
-| Backend        | PHP 8.4 / Laravel 13                     |
+| Backend        | PHP 8.4, 8.5 / Laravel 13                     |
 | Frontend       | Inertia.js 3 / Svelte 5 / TypeScript     |
 | UI             | Tailwind CSS 4                           |
 | Rich text      | Trix 2 / Symfony HTML Sanitizer 8        |
@@ -56,7 +55,7 @@ MySQLやPostgreSQLへ変更する場合は、対応するPHP拡張と`.env`のDB
 
 ```bash
 xcode-select --install
-brew install php@8.4 composer node@22 imagemagick poppler
+brew install php composer node@22 imagemagick poppler
 
 export PATH="$(brew --prefix php@8.4)/bin:$(brew --prefix node@22)/bin:$PATH"
 php --version

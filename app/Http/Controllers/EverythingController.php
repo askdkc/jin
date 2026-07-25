@@ -53,8 +53,9 @@ class EverythingController extends Controller
             ->paginate(20)
             ->withQueryString();
         $fileIds = collect($results->items())
-            ->filter(fn (object $item): bool => $item->type === 'file')
-            ->map(fn (object $item): int => (int) $item->id)
+            ->map(fn (object $item): array => get_object_vars($item))
+            ->filter(fn (array $item): bool => $item['type'] === 'file')
+            ->map(fn (array $item): int => (int) $item['id'])
             ->all();
         $files = StoredFile::query()
             ->with('uploader:id,name,avatar_path')
@@ -72,7 +73,10 @@ class EverythingController extends Controller
             ->keyBy('id');
 
         $results->through(function (object $item) use ($currentTeam, $files): array {
-            $file = $item->type === 'file' ? $files->get((int) $item->id) : null;
+            $values = get_object_vars($item);
+            $file = $values['type'] === 'file'
+                ? $files->get((int) $values['id'])
+                : null;
 
             return $this->transformResult(
                 $item,
@@ -294,22 +298,37 @@ class EverythingController extends Controller
             ];
         }
 
+        $fallbackMimeType = $values['snippet'] !== null
+            ? (string) $values['snippet']
+            : null;
+
+        if ($file === null) {
+            return [
+                ...$result,
+                'mimeType' => $fallbackMimeType,
+                'thumbnailUrl' => null,
+                'size' => 0,
+                'uploader' => null,
+                'createdAt' => null,
+            ];
+        }
+
         return [
             ...$result,
-            'mimeType' => $file?->mime_type ?? ($values['snippet'] !== null ? (string) $values['snippet'] : null),
-            'thumbnailUrl' => $file?->preview_status === 'ready'
+            'mimeType' => $file->mime_type ?? $fallbackMimeType,
+            'thumbnailUrl' => $file->preview_status === 'ready'
                 && $file->preview_path !== null
                 ? route('projects.files.thumbnail', [$team, (int) $values['project_id'], $file], absolute: false)
                 : null,
-            'size' => $file?->size ?? 0,
-            'uploader' => $file?->uploader === null
+            'size' => $file->size,
+            'uploader' => $file->uploader === null
                 ? null
                 : [
                     'id' => $file->uploader->id,
                     'name' => $file->uploader->name,
                     'avatar' => $file->uploader->avatar,
                 ],
-            'createdAt' => $file?->created_at?->toISOString(),
+            'createdAt' => $file->created_at?->toISOString(),
         ];
     }
 

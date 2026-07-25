@@ -353,7 +353,7 @@ test('only project managers can delete card tables and columns', function () {
     expect($cardTable->fresh())->toBeNull();
 });
 
-test('system columns cannot be changed as regular columns', function () {
+test('system columns can be renamed without changing their system behavior', function () {
     $owner = User::factory()->create();
     $team = Team::factory()->create();
     $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
@@ -362,60 +362,90 @@ test('system columns cannot be changed as regular columns', function () {
     $triage = $cardTable->cardColumns()->where('is_triage', true)->sole();
     $notNow = $cardTable->cardColumns()->where('is_not_now', true)->sole();
     $done = $cardTable->cardColumns()->where('is_done', true)->sole();
+    $initialPositions = [
+        $triage->id => $triage->position,
+        $notNow->id => $notNow->position,
+        $done->id => $done->position,
+    ];
 
-    $this->actingAs($owner)
-        ->patch(route('projects.card-columns.update', [$team, $project, $cardTable, $triage]), [
-            'name' => 'Renamed',
-        ])
-        ->assertNotFound();
+    $this->actingAs($owner);
 
-    $this->patch(route('projects.card-columns.move', [$team, $project, $cardTable, $triage]), [
-        'target_position' => 0,
-    ])->assertNotFound();
+    foreach ([
+        [$triage, '受信箱'],
+        [$notNow, '保留'],
+        [$done, '完了済み'],
+    ] as [$column, $name]) {
+        $detailUrl = route('projects.card-columns.show', [$team, $project, $cardTable, $column]);
 
-    $this->patch(route('projects.card-columns.collapse', [$team, $project, $cardTable, $triage]))
-        ->assertNotFound();
-
-    $this->delete(route('projects.card-columns.destroy', [$team, $project, $cardTable, $triage]))
-        ->assertNotFound();
-
-    $this->patch(route('projects.card-columns.update', [$team, $project, $cardTable, $notNow]), [
-        'name' => 'Renamed',
-    ])->assertNotFound();
-
-    $this->patch(route('projects.card-columns.move', [$team, $project, $cardTable, $notNow]), [
-        'target_position' => 0,
-    ])->assertNotFound();
-
-    $this->patch(route('projects.card-columns.collapse', [$team, $project, $cardTable, $notNow]))
-        ->assertNotFound();
-
-    $this->delete(route('projects.card-columns.destroy', [$team, $project, $cardTable, $notNow]))
-        ->assertNotFound();
-
-    $this->patch(route('projects.card-columns.update', [$team, $project, $cardTable, $done]), [
-        'name' => 'Renamed',
-    ])->assertNotFound();
-
-    $this->patch(route('projects.card-columns.move', [$team, $project, $cardTable, $done]), [
-        'target_position' => 0,
-    ])->assertNotFound();
-
-    $this->patch(route('projects.card-columns.collapse', [$team, $project, $cardTable, $done]))
-        ->assertNotFound();
-
-    $this->delete(route('projects.card-columns.destroy', [$team, $project, $cardTable, $done]))
-        ->assertNotFound();
+        $this->from($detailUrl)
+            ->patch(route('projects.card-columns.update', [$team, $project, $cardTable, $column]), [
+                'name' => $name,
+                'position' => 99,
+                'is_collapsed' => false,
+                'is_triage' => false,
+                'is_not_now' => false,
+                'is_done' => false,
+            ])
+            ->assertRedirect($detailUrl);
+    }
 
     expect($triage->fresh())
-        ->name->toBe('Triage')
-        ->is_collapsed->toBeFalse();
+        ->name->toBe('受信箱')
+        ->position->toBe($initialPositions[$triage->id])
+        ->is_collapsed->toBeFalse()
+        ->is_triage->toBeTrue()
+        ->is_not_now->toBeFalse()
+        ->is_done->toBeFalse();
     expect($notNow->fresh())
-        ->name->toBe('Not Now')
-        ->is_collapsed->toBeTrue();
+        ->name->toBe('保留')
+        ->position->toBe($initialPositions[$notNow->id])
+        ->is_collapsed->toBeTrue()
+        ->is_triage->toBeFalse()
+        ->is_not_now->toBeTrue()
+        ->is_done->toBeFalse();
     expect($done->fresh())
-        ->name->toBe('Done')
-        ->is_collapsed->toBeTrue();
+        ->name->toBe('完了済み')
+        ->position->toBe($initialPositions[$done->id])
+        ->is_collapsed->toBeTrue()
+        ->is_triage->toBeFalse()
+        ->is_not_now->toBeFalse()
+        ->is_done->toBeTrue();
+
+    $this->get(route('projects.card-tables.index', [$team, $project]))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('tables.0.triage.name', '受信箱')
+            ->where('tables.0.notNow.name', '保留')
+            ->where('tables.0.done.name', '完了済み'));
+
+    foreach ([$triage, $notNow, $done] as $column) {
+        $this->patch(route('projects.card-columns.move', [$team, $project, $cardTable, $column]), [
+            'target_position' => 0,
+        ])->assertNotFound();
+
+        $this->patch(route('projects.card-columns.collapse', [$team, $project, $cardTable, $column]))
+            ->assertNotFound();
+
+        $this->delete(route('projects.card-columns.destroy', [$team, $project, $cardTable, $column]))
+            ->assertNotFound();
+    }
+});
+
+test('column renames without a referrer return to the board', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $cardTable = CardTable::factory()->for($project)->create();
+    $column = CardColumn::factory()->for($cardTable)->create();
+
+    $this->actingAs($owner)
+        ->patch(route('projects.card-columns.update', [$team, $project, $cardTable, $column]), [
+            'name' => '確認中',
+        ])
+        ->assertRedirect(route('projects.card-tables.index', [$team, $project]));
+
+    expect($column->fresh()->name)->toBe('確認中');
 });
 
 test('card columns can be reordered with normalized positions', function () {

@@ -125,6 +125,45 @@ test('reference image pages keep their feature-specific semantic hierarchy', fun
             $kanbanColumn,
             'CardTableController.storeCard.form(routeArguments)',
         ),
+        'kanban column details expose rename settings' => str_contains(
+            $kanbanColumn,
+            "aria-label={t('Column settings')}",
+        ) && str_contains(
+            $kanbanColumn,
+            "{t('Rename')}",
+        ) && str_contains(
+            $kanbanColumn,
+            '<Dialog bind:open={renameDialogOpen}>',
+        ) && str_contains(
+            $kanbanColumn,
+            'CardTableController.updateColumn.form(routeArguments)',
+        ) && str_contains(
+            $kanbanColumn,
+            'value={column.name}',
+        ) && str_contains(
+            $kanbanColumn,
+            '<InputError message={errors.name} />',
+        ) && str_contains(
+            $kanbanColumn,
+            'onSuccess={() => (renameDialogOpen = false)}',
+        ),
+        'kanban localizes the default triage label' => ($translations['Triage'] ?? null) === '判断待ち',
+        'kanban renders renamed system columns literally' => str_contains(
+            $kanbanColumn,
+            'const columnDisplayName = $derived(',
+        ) && str_contains(
+            $kanbanColumn,
+            "column.isNotNow && column.name === 'Not Now'",
+        ) && str_contains(
+            $kanbanColumn,
+            ': column.name',
+        ) && str_contains(
+            $kanban,
+            'systemColumnName(table, column)',
+        ) && str_contains(
+            $kanban,
+            'systemColumnName(table, table.triage)',
+        ),
         'kanban fixes Not Now to the right of triage' => preg_match(
             '/class="flex min-w-0 items-stretch gap-3".*visibleCards\(table\.triage\).*systemColumnStrip\(\s*table,\s*table\.notNow,\s*\'min-h-32 border-l bg-muted\'/s',
             $kanban,

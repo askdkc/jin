@@ -225,11 +225,9 @@ class CardTableController extends Controller
         CardTable $cardTable,
         CardColumn $cardColumn,
     ): RedirectResponse {
-        abort_if($this->isSystemColumn($cardColumn), 404);
-
         $cardColumn->update($request->validated());
 
-        return to_route('projects.card-tables.index', [$currentTeam, $project]);
+        return back(fallback: route('projects.card-tables.index', [$currentTeam, $project]));
     }
 
     public function moveColumn(

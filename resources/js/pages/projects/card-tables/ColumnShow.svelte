@@ -38,6 +38,7 @@
     import { Form, Link } from '@inertiajs/svelte';
     import CalendarDays from 'lucide-svelte/icons/calendar-days';
     import ChevronLeft from 'lucide-svelte/icons/chevron-left';
+    import Ellipsis from 'lucide-svelte/icons/ellipsis';
     import Pencil from 'lucide-svelte/icons/pencil';
     import Plus from 'lucide-svelte/icons/plus';
     import Search from 'lucide-svelte/icons/search';
@@ -58,6 +59,12 @@
         DialogFooter,
         DialogTitle,
     } from '@/components/ui/dialog';
+    import {
+        DropdownMenu,
+        DropdownMenuContent,
+        DropdownMenuItem,
+        DropdownMenuTrigger,
+    } from '@/components/ui/dropdown-menu';
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
     import { t } from '@/lib/i18n';
@@ -81,6 +88,7 @@
     let filterText = $state('');
     let createDialogOpen = $state(false);
     let createDescriptionOpen = $state(false);
+    let renameDialogOpen = $state(false);
     let editingCommentId = $state<number | null>(null);
     let commentComposerOpen = $state(false);
 
@@ -115,6 +123,13 @@
                 ? 'border-border bg-muted/50'
                 : 'border-chart-3 bg-chart-3/15',
     );
+    const columnDisplayName = $derived(
+        (column.isTriage && column.name === 'Triage') ||
+            (column.isNotNow && column.name === 'Not Now') ||
+            (column.isDone && column.name === 'Done')
+            ? t(column.name)
+            : column.name,
+    );
     const formatDate = (value: string | null): string =>
         value
             ? new Intl.DateTimeFormat('ja-JP', {
@@ -141,7 +156,7 @@
         ];
 </script>
 
-<AppHead title={t(column.name)} />
+<AppHead title={columnDisplayName} />
 
 <div class="min-h-[calc(100vh-7rem)] bg-muted/40 px-3 py-5 sm:px-6 sm:py-8">
     <main
@@ -159,7 +174,7 @@
 
         <section class="px-5 py-7 sm:px-10 sm:py-10">
             <h1 class="break-words text-4xl font-bold tracking-tight">
-                {t(column.name)}
+                {columnDisplayName}
             </h1>
             <div class="mt-3 flex flex-wrap items-center gap-2">
                 <Button
@@ -188,6 +203,41 @@
                         placeholder={t('Filter...')}
                     />
                 </div>
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        {#snippet children(triggerProps)}
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                class="size-8"
+                                onclick={triggerProps.onclick}
+                                aria-expanded={triggerProps['aria-expanded']}
+                                data-state={triggerProps['data-state']}
+                                aria-label={t('Column settings')}
+                            >
+                                <Ellipsis aria-hidden="true" />
+                            </Button>
+                        {/snippet}
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                        <DropdownMenuItem asChild>
+                            {#snippet children(itemProps)}
+                                <button
+                                    type="button"
+                                    class={itemProps.class}
+                                    onclick={() => {
+                                        itemProps.onClick?.();
+                                        renameDialogOpen = true;
+                                    }}
+                                >
+                                    <Pencil aria-hidden="true" />
+                                    {t('Rename')}
+                                </button>
+                            {/snippet}
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
             </div>
 
             <section
@@ -446,6 +496,42 @@
         </section>
     </main>
 </div>
+
+<Dialog bind:open={renameDialogOpen}>
+    <DialogContent class="sm:max-w-md">
+        <DialogTitle>{t('Rename column')}</DialogTitle>
+        <Form
+            {...CardTableController.updateColumn.form(routeArguments)}
+            onSuccess={() => (renameDialogOpen = false)}
+            class="mt-5 flex flex-col gap-4"
+        >
+            {#snippet children({ errors, processing })}
+                <div class="flex flex-col gap-2">
+                    <Label for="rename-column-name">{t('Name')}</Label>
+                    <Input
+                        id="rename-column-name"
+                        name="name"
+                        value={column.name}
+                        maxlength={255}
+                        required
+                        autofocus
+                    />
+                    <InputError message={errors.name} />
+                </div>
+                <DialogFooter>
+                    <DialogClose>
+                        <Button type="button" variant="outline">
+                            {t('Cancel')}
+                        </Button>
+                    </DialogClose>
+                    <Button type="submit" disabled={processing}>
+                        {t('Save')}
+                    </Button>
+                </DialogFooter>
+            {/snippet}
+        </Form>
+    </DialogContent>
+</Dialog>
 
 <Dialog bind:open={createDialogOpen}>
     <DialogContent

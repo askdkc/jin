@@ -110,6 +110,24 @@
     ] as const;
     const columnAccent = (index: number) =>
         columnAccents[index % columnAccents.length] ?? columnAccents[0];
+    const systemColumnName = (
+        table: ProjectCardTable,
+        column: ProjectCardColumn,
+    ): string => {
+        if (column.id === table.triage.id && column.name === 'Triage') {
+            return t('Triage');
+        }
+
+        if (column.id === table.notNow.id && column.name === 'Not Now') {
+            return t('Not Now');
+        }
+
+        if (column.id === table.done.id && column.name === 'Done') {
+            return t('Done');
+        }
+
+        return column.name;
+    };
     const memberInitial = (name: string | null): string =>
         name?.trim().slice(0, 1).toLocaleUpperCase('ja-JP') || '?';
     const confirmDelete = (): boolean =>
@@ -599,7 +617,7 @@
                 ])}
                 class="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-                {t(column.name)}
+                {systemColumnName(table, column)}
             </Link>
         </h2>
     </section>
@@ -860,7 +878,7 @@
                                         ])}
                                         class="hover:underline"
                                     >
-                                        {table.triage.name}
+                                        {systemColumnName(table, table.triage)}
                                         <span
                                             class="font-normal text-muted-foreground"
                                         >

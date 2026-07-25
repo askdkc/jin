@@ -243,15 +243,33 @@ export type EverythingTarget =
     | 'schedule'
     | 'check_ins';
 
-export type EverythingItem = {
+type EverythingItemBase = {
     id: number;
-    type: EverythingType;
     title: string;
-    snippet: string;
-    target: EverythingTarget;
     project: ProjectTool;
     updatedAt: string;
 };
+
+export type EverythingTextItem = EverythingItemBase & {
+    type: Exclude<EverythingType, 'file'>;
+    snippet: string;
+    target: EverythingTarget;
+};
+
+export type EverythingFileItem = EverythingItemBase & {
+    type: 'file';
+    mimeType: string | null;
+    thumbnailUrl: string | null;
+    size: number;
+    uploader: {
+        id: number;
+        name: string;
+        avatar: string | null;
+    } | null;
+    createdAt: string | null;
+};
+
+export type EverythingItem = EverythingTextItem | EverythingFileItem;
 
 export type EverythingFilters = {
     q: string | null;
@@ -467,6 +485,7 @@ export type PaginationLink = {
 export type Paginated<T> = {
     data: T[];
     links: PaginationLink[];
+    total: number;
 };
 
 export type MessageComment = {

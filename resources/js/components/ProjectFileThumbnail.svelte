@@ -17,7 +17,7 @@
         fileId: number;
         mimeType: string | null;
         thumbnailUrl: string | null;
-        variant: 'index' | 'summary';
+        variant: 'index' | 'result' | 'summary';
     } = $props();
 
     let failedUrls = $state<string[]>([]);
@@ -35,9 +35,19 @@
         }),
     );
     const containerClass = $derived(
-        variant === 'index'
-            ? 'flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-md'
-            : 'flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-md',
+        variant === 'result'
+            ? 'inline-flex max-w-full items-center justify-center overflow-hidden rounded-lg'
+            : variant === 'index'
+              ? 'flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-md'
+              : 'flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-md',
+    );
+    const imageClass = $derived(
+        variant === 'result'
+            ? 'h-auto max-h-56 w-auto max-w-72 object-contain'
+            : 'size-full object-contain',
+    );
+    const fallbackContainerClass = $derived(
+        variant === 'result' ? `${containerClass} size-40` : containerClass,
     );
 
     function handleError(event: Event): void {
@@ -60,13 +70,15 @@
             alt=""
             loading="lazy"
             decoding="async"
-            class="size-full object-contain"
+            class={imageClass}
             onerror={handleError}
         />
     </span>
 {:else}
-    <span class={`${containerClass} bg-muted text-muted-foreground`}>
-        {#if variant === 'index'}
+    <span class={`${fallbackContainerClass} bg-muted text-muted-foreground`}>
+        {#if variant === 'result'}
+            <FileIcon class="size-12" aria-hidden="true" />
+        {:else if variant === 'index'}
             <FileIcon class="size-7" aria-hidden="true" />
         {:else}
             <Paperclip class="size-5" aria-hidden="true" />

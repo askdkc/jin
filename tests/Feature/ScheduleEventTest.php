@@ -371,3 +371,28 @@ test('an event without a recurrence rule creates only one occurrence', function 
     expect($event->recurrence)->toBeNull()
         ->and($event->recurrence_group_id)->toBeNull();
 });
+
+test('schedule interface labels are translated into Japanese', function () {
+    $translations = json_decode(
+        file_get_contents(lang_path('ja.json')),
+        true,
+        flags: JSON_THROW_ON_ERROR,
+    );
+    $expectedTranslations = [
+        'Type the name of the event…' => '予定名を入力…',
+        'Link' => 'リンク',
+        'Repeat' => '繰り返し',
+        'Does not repeat' => '繰り返さない',
+        'Repeat until' => '繰り返しの終了日',
+        'Repeats daily' => '毎日繰り返し',
+        'Repeats weekly' => '毎週繰り返し',
+        'Repeats monthly' => '毎月繰り返し',
+        'Post this event' => '予定を投稿する',
+        '+:count more' => '他:count件',
+        'TODAY' => '今日',
+    ];
+
+    foreach ($expectedTranslations as $key => $translation) {
+        expect($translations[$key] ?? null)->toBe($translation);
+    }
+});

@@ -19,6 +19,7 @@
         InputOTPSlot,
     } from '@/components/ui/input-otp';
     import { Spinner } from '@/components/ui/spinner';
+    import { copyTextToClipboard } from '@/lib/clipboard';
     import { t } from '@/lib/i18n';
     import { themeState } from '@/lib/theme.svelte';
     import { twoFactorAuthState } from '@/lib/twoFactorAuth.svelte';
@@ -84,7 +85,10 @@
     });
 
     async function copyToClipboard(text: string) {
-        await navigator.clipboard.writeText(text);
+        if (!(await copyTextToClipboard(text))) {
+            return;
+        }
+
         copied = true;
         setTimeout(() => (copied = false), 2000);
     }

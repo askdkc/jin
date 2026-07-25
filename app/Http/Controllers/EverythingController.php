@@ -51,8 +51,35 @@ class EverythingController extends Controller
             ->orderByDesc('id')
             ->orderBy('type')
             ->paginate(20)
-            ->withQueryString()
-            ->through(fn (object $item): array => $this->transformResult($item));
+            ->withQueryString();
+        $fileIds = collect($results->items())
+            ->filter(fn (object $item): bool => $item->type === 'file')
+            ->map(fn (object $item): int => (int) $item->id)
+            ->all();
+        $files = StoredFile::query()
+            ->with('uploader:id,name,avatar_path')
+            ->whereKey($fileIds)
+            ->get([
+                'id',
+                'project_id',
+                'uploaded_by',
+                'mime_type',
+                'size',
+                'preview_path',
+                'preview_status',
+                'created_at',
+            ])
+            ->keyBy('id');
+
+        $results->through(function (object $item) use ($currentTeam, $files): array {
+            $file = $item->type === 'file' ? $files->get((int) $item->id) : null;
+
+            return $this->transformResult(
+                $item,
+                $file instanceof StoredFile ? $file : null,
+                $currentTeam,
+            );
+        });
 
         return Inertia::render('everything/Index', [
             'results' => $results,
@@ -230,23 +257,59 @@ class EverythingController extends Controller
     }
 
     /**
-     * @return array{id: int, type: string, title: string, snippet: string, target: string, project: array{id: int, name: string}, updatedAt: string}
+     * @return array{
+     *     id: int,
+     *     type: string,
+     *     title: string,
+     *     project: array{id: int, name: string},
+     *     updatedAt: string,
+     *     snippet?: string,
+     *     target?: string,
+     *     mimeType?: string|null,
+     *     thumbnailUrl?: string|null,
+     *     size?: int,
+     *     uploader?: array{id: int, name: string, avatar: string|null}|null,
+     *     createdAt?: string|null
+     * }
      */
-    private function transformResult(object $item): array
+    private function transformResult(object $item, ?StoredFile $file, Team $team): array
     {
         $values = get_object_vars($item);
-
-        return [
+        $result = [
             'id' => (int) $values['id'],
             'type' => (string) $values['type'],
             'title' => (string) $values['title'],
-            'snippet' => Str::limit(RichText::plainText((string) $values['snippet']), 240),
-            'target' => (string) $values['target'],
             'project' => [
                 'id' => (int) $values['project_id'],
                 'name' => (string) $values['project_name'],
             ],
             'updatedAt' => (string) $values['updated_at'],
+        ];
+
+        if ($values['type'] !== 'file') {
+            return [
+                ...$result,
+                'snippet' => Str::limit(RichText::plainText((string) $values['snippet']), 240),
+                'target' => (string) $values['target'],
+            ];
+        }
+
+        return [
+            ...$result,
+            'mimeType' => $file?->mime_type ?? ($values['snippet'] !== null ? (string) $values['snippet'] : null),
+            'thumbnailUrl' => $file?->preview_status === 'ready'
+                && $file->preview_path !== null
+                ? route('projects.files.thumbnail', [$team, (int) $values['project_id'], $file], absolute: false)
+                : null,
+            'size' => $file?->size ?? 0,
+            'uploader' => $file?->uploader === null
+                ? null
+                : [
+                    'id' => $file->uploader->id,
+                    'name' => $file->uploader->name,
+                    'avatar' => $file->uploader->avatar,
+                ],
+            'createdAt' => $file?->created_at?->toISOString(),
         ];
     }
 

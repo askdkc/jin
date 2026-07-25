@@ -159,11 +159,15 @@
         jumpOpen = true;
         requestAnimationFrame(() => jumpInput?.focus());
     };
+    const closeJump = (): void => {
+        jumpOpen = false;
+        jumpQuery = '';
+    };
     const handleShortcut = (event: KeyboardEvent): void => {
         shiftHeld = event.shiftKey || event.key === 'Shift';
 
         if (event.key === 'Escape') {
-            jumpOpen = false;
+            closeJump();
 
             return;
         }
@@ -523,7 +527,7 @@
         role="presentation"
         onclick={(event) => {
             if (event.currentTarget === event.target) {
-                jumpOpen = false;
+                closeJump();
             }
         }}
     >
@@ -542,7 +546,7 @@
                     <Link
                         href={toUrl(item.href)}
                         class="flex min-w-0 flex-col items-center gap-2 rounded-xl bg-muted/60 px-2 py-3 text-center text-sm font-semibold transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        onclick={() => (jumpOpen = false)}
+                        onclick={closeJump}
                     >
                         {#if item.icon}
                             <item.icon class="size-6" />
@@ -556,14 +560,17 @@
                 <input
                     bind:this={jumpInput}
                     bind:value={jumpQuery}
+                    form="global-everything-search-form"
+                    name="q"
                     type="search"
+                    maxlength={100}
                     placeholder={t('Search projects, people, or everything')}
                     class="min-w-0 flex-1 bg-transparent px-2 py-2 text-base outline-none"
                 />
                 <Button
                     variant="ghost"
                     size="icon"
-                    onclick={() => (jumpOpen = false)}
+                    onclick={closeJump}
                     aria-label={t('Close')}
                 >
                     <X class="size-5" />
@@ -613,7 +620,7 @@
                                     { query: { user: person.id } },
                                 )}
                                 class="flex items-center gap-3 rounded-xl px-3 py-2 font-semibold hover:bg-muted"
-                                onclick={() => (jumpOpen = false)}
+                                onclick={closeJump}
                             >
                                 <UserRound class="size-4 text-primary" />
                                 {person.name}
@@ -637,7 +644,7 @@
                     <Link
                         href={projectShow([currentTeam.slug, project.id])}
                         class="flex items-center gap-3 rounded-xl px-3 py-3 font-semibold hover:bg-muted"
-                        onclick={() => (jumpOpen = false)}
+                        onclick={closeJump}
                     >
                         <FolderKanban class="size-4 text-primary" />
                         {project.name}
@@ -653,15 +660,14 @@
             </div>
             <Form
                 {...EverythingController.form(currentTeam.slug)}
+                id="global-everything-search-form"
                 class="flex items-center gap-2 border-t p-3"
+                onSuccess={closeJump}
             >
-                <input type="hidden" name="q" value={jumpQuery} />
                 <p
                     class="min-w-0 flex-1 truncate text-sm text-muted-foreground"
                 >
-                    {t('Search all content for “:query”', {
-                        query: jumpQuery || t('Search words'),
-                    })}
+                    {t('Search all content')}
                 </p>
                 <Button type="submit" size="sm">{t('Search all')}</Button>
             </Form>

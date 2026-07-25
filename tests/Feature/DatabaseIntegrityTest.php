@@ -1,14 +1,8 @@
 <?php
 
-use App\Models\Document;
-use App\Models\Project;
-use App\Models\StoredFile;
-use App\Models\Team;
 use App\Models\TeamInvitation;
 use App\Models\User;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Facades\Storage;
 
 dataset('workspace query indexes', [
     ['schedule_events', ['starts_at']],
@@ -58,81 +52,25 @@ test('email addresses are stored in canonical form', function () {
         ->and($invitation->email)->toBe('invited@example.com');
 });
 
-test('the default chat channel backfill is idempotent', function () {
-    $user = User::factory()->create();
-    $project = Project::factory()->for($user, 'creator')->create();
-    $migration = require database_path('migrations/2026_07_16_202254_backfill_default_chat_channels.php');
-
-    $migration->up();
-    $migration->down();
-    $migration->up();
-
-    expect($project->chatChannels()->where('name', 'general')->count())->toBe(1);
-});
-
-test('existing unverified users are backfilled without an unsafe rollback', function () {
-    $user = User::factory()->unverified()->create();
-    $migration = require database_path('migrations/2026_07_22_000001_backfill_existing_user_email_verification.php');
-
-    $migration->up();
-    expect($user->fresh()->email_verified_at)->not->toBeNull();
-
-    $migration->down();
-    expect($user->fresh()->email_verified_at)->not->toBeNull();
-});
-
-test('stored file inline classification backfill is data-safe and idempotent', function () {
-    $user = User::factory()->create();
-    $project = Project::factory()->for($user, 'creator')->create();
-    $document = Document::factory()->for($project)->for($user, 'creator')->create();
-    $referenced = StoredFile::factory()->for($project)->for($user, 'uploader')->create([
-        'attachable_type' => $document->getMorphClass(),
-        'attachable_id' => $document->id,
-        'is_inline' => false,
-    ]);
-    $unreferenced = StoredFile::factory()->for($project)->for($user, 'uploader')->create([
-        'attachable_type' => $document->getMorphClass(),
-        'attachable_id' => $document->id,
-        'is_inline' => false,
-    ]);
-    $neutral = StoredFile::factory()->for($project)->for($user, 'uploader')->create([
-        'is_inline' => false,
-    ]);
-    $document->update([
-        'body' => "<a href=\"/projects/{$project->id}/files/{$referenced->id}/preview\">inline</a>",
-    ]);
-    $migration = require database_path('migrations/2026_07_22_000003_backfill_stored_file_inline_flag.php');
-
-    $migration->up();
-    $migration->up();
-
-    expect($referenced->fresh()->is_inline)->toBeTrue()
-        ->and($unreferenced->fresh()->is_inline)->toBeFalse()
-        ->and($neutral->fresh()->is_inline)->toBeFalse();
-});
-
-test('dropping voice notes deletes their stored blobs first', function () {
-    Storage::fake('local');
-    $user = User::factory()->create();
-    $team = Team::factory()->create();
-    $team->members()->attach($user, ['role' => 'owner']);
-    $migration = require database_path('migrations/2026_07_18_110521_drop_voice_notes_table.php');
-    $migration->down();
-    $path = "voice-notes/{$team->id}/note.webm";
-    Storage::disk('local')->put($path, 'audio');
-    DB::table('voice_notes')->insert([
-        'team_id' => $team->id,
-        'user_id' => $user->id,
-        'disk' => 'local',
-        'path' => $path,
-        'mime_type' => 'audio/webm',
-        'size' => 5,
-        'created_at' => now(),
-        'updated_at' => now(),
-    ]);
-
-    $migration->up();
-
-    expect(Schema::hasTable('voice_notes'))->toBeFalse();
-    Storage::disk('local')->assertMissing($path);
+test('consolidated migrations expose the final schema directly', function () {
+    expect(Schema::hasColumns('users', [
+        'two_factor_secret',
+        'current_team_id',
+        'notification_preferences',
+        'job_title',
+    ]))->toBeTrue()
+        ->and(Schema::hasColumns('stored_files', [
+            'attachable_type',
+            'material_folder_id',
+            'preview_status',
+            'checksum',
+            'is_inline',
+        ]))->toBeTrue()
+        ->and(Schema::hasColumns('card_columns', [
+            'is_collapsed',
+            'is_triage',
+            'is_not_now',
+            'is_done',
+        ]))->toBeTrue()
+        ->and(Schema::hasTable('voice_notes'))->toBeFalse();
 });

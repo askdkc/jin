@@ -60,27 +60,19 @@ test('an event must end after it starts', function () {
     expect($project->scheduleEvents()->exists())->toBeFalse();
 });
 
-test('legacy zero or negative duration events are normalized idempotently and remain visible', function () {
+test('valid events remain visible in chronological order', function () {
     $owner = User::factory()->create();
     $team = Team::factory()->create();
     $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
     $project = Project::factory()->for($team)->for($owner, 'creator')->create();
-    $negativeDurationEvent = ScheduleEvent::factory()->for($project)->for($owner, 'creator')->create([
+    ScheduleEvent::factory()->for($project)->for($owner, 'creator')->create([
         'starts_at' => '2026-08-03 10:00:00',
-        'ends_at' => '2026-08-03 09:00:00',
+        'ends_at' => '2026-08-03 10:30:00',
     ]);
-    $zeroDurationEvent = ScheduleEvent::factory()->for($project)->for($owner, 'creator')->create([
+    ScheduleEvent::factory()->for($project)->for($owner, 'creator')->create([
         'starts_at' => '2026-08-03 11:00:00',
-        'ends_at' => '2026-08-03 11:00:00',
+        'ends_at' => '2026-08-03 11:30:00',
     ]);
-    $migration = require database_path('migrations/2026_07_22_133848_normalize_legacy_schedule_event_durations.php');
-
-    $migration->up();
-    $migration->down();
-    $migration->up();
-
-    expect($negativeDurationEvent->fresh()->ends_at->format('Y-m-d H:i:s'))->toBe('2026-08-03 10:30:00')
-        ->and($zeroDurationEvent->fresh()->ends_at->format('Y-m-d H:i:s'))->toBe('2026-08-03 11:30:00');
 
     $this->actingAs($owner)
         ->get(route('projects.schedule.index', [$team, $project, 'view' => 'day', 'date' => '2026-08-03']))

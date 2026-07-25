@@ -5,17 +5,11 @@ use App\Jobs\DeletePersonalNoteAttachmentFile;
 use App\Models\PersonalNoteAttachment;
 use App\Models\Team;
 use App\Models\User;
-use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 
-function personalNoteAttachmentSoftDeleteMigration(): Migration
-{
-    return require database_path('migrations/2026_07_24_144232_add_deleted_at_to_personal_note_attachments_table.php');
-}
-
-function personalNoteAttachmentForMigration(): PersonalNoteAttachment
+function personalNoteAttachmentForCleanup(): PersonalNoteAttachment
 {
     $user = User::factory()->create();
     $team = Team::factory()->create();
@@ -34,40 +28,28 @@ function personalNoteAttachmentForMigration(): PersonalNoteAttachment
     ]);
 }
 
-test('personal note attachment soft delete migration rolls back without tombstones', function () {
-    $migration = personalNoteAttachmentSoftDeleteMigration();
+test('personal note attachments include indexed soft deletes in the baseline schema', function () {
+    $hasDeletedAtIndex = collect(Schema::getIndexes('personal_note_attachments'))
+        ->contains(fn (array $index): bool => $index['columns'] === ['deleted_at']);
 
-    try {
-        call_user_func([$migration, 'down']);
-
-        expect(Schema::hasColumn('personal_note_attachments', 'deleted_at'))->toBeFalse();
-    } finally {
-        if (! Schema::hasColumn('personal_note_attachments', 'deleted_at')) {
-            call_user_func([$migration, 'up']);
-        }
-    }
-
-    expect(Schema::hasColumn('personal_note_attachments', 'deleted_at'))->toBeTrue();
+    expect(Schema::hasColumn('personal_note_attachments', 'deleted_at'))->toBeTrue()
+        ->and($hasDeletedAtIndex)->toBeTrue();
 });
 
-test('personal note attachment soft delete migration refuses rollback with a pending tombstone', function () {
+test('personal note attachment deletion retains a tombstone pending cleanup', function () {
     Storage::fake('local');
     Queue::fake();
-    $attachment = personalNoteAttachmentForMigration();
+    $attachment = personalNoteAttachmentForCleanup();
     $attachment->delete();
-    $migration = personalNoteAttachmentSoftDeleteMigration();
-
-    expect(fn () => call_user_func([$migration, 'down']))
-        ->toThrow(RuntimeException::class, 'soft-deleted attachments are pending physical cleanup');
 
     expect(Schema::hasColumn('personal_note_attachments', 'deleted_at'))->toBeTrue()
         ->and(PersonalNoteAttachment::withTrashed()->find($attachment->id)?->trashed())->toBeTrue();
 });
 
-test('personal note attachment soft delete migration rolls back after cleanup completes', function () {
+test('personal note attachment cleanup removes the tombstone and stored file', function () {
     Storage::fake('local');
     Queue::fake();
-    $attachment = personalNoteAttachmentForMigration();
+    $attachment = personalNoteAttachmentForCleanup();
     $attachment->delete();
 
     (new DeletePersonalNoteAttachmentFile(
@@ -78,18 +60,4 @@ test('personal note attachment soft delete migration rolls back after cleanup co
 
     expect(PersonalNoteAttachment::withTrashed()->find($attachment->id))->toBeNull()
         ->and(Storage::disk('local')->exists($attachment->path))->toBeFalse();
-
-    $migration = personalNoteAttachmentSoftDeleteMigration();
-
-    try {
-        call_user_func([$migration, 'down']);
-
-        expect(Schema::hasColumn('personal_note_attachments', 'deleted_at'))->toBeFalse();
-    } finally {
-        if (! Schema::hasColumn('personal_note_attachments', 'deleted_at')) {
-            call_user_func([$migration, 'up']);
-        }
-    }
-
-    expect(Schema::hasColumn('personal_note_attachments', 'deleted_at'))->toBeTrue();
 });

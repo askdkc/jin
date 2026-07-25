@@ -349,14 +349,14 @@
                             aria-controls="check-in-answer-form"
                         >
                             <Avatar class="size-12 border sm:size-14">
-                                {#if authUser.avatar}
+                                {#if authUser?.avatar}
                                     <AvatarImage
                                         src={authUser.avatar}
                                         alt={authUser.name}
                                     />
                                 {/if}
                                 <AvatarFallback class="font-bold">
-                                    {getInitials(authUser.name)}
+                                    {getInitials(authUser?.name ?? '')}
                                 </AvatarFallback>
                             </Avatar>
                             <span
@@ -368,14 +368,14 @@
                     {:else}
                         <div class="flex items-start gap-4">
                             <Avatar class="size-12 border sm:size-14">
-                                {#if authUser.avatar}
+                                {#if authUser?.avatar}
                                     <AvatarImage
                                         src={authUser.avatar}
                                         alt={authUser.name}
                                     />
                                 {/if}
                                 <AvatarFallback class="font-bold">
-                                    {getInitials(authUser.name)}
+                                    {getInitials(authUser?.name ?? '')}
                                 </AvatarFallback>
                             </Avatar>
                             <Form

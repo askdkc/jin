@@ -60,13 +60,19 @@ class ProjectFileController extends Controller
                 $destinationFolderId = $materialFolderId;
 
                 if ($folderName !== '') {
-                    $destinationFolderId = $project->materialFolders()->firstOrCreate(
-                        ['name' => $folderName],
-                        [
+                    $project = Project::query()->lockForUpdate()->findOrFail($project->id);
+                    $materialFolder = $project->materialFolders()->where('name', $folderName)->first();
+
+                    if ($materialFolder === null) {
+                        $lastPosition = $project->materialFolders()->max('position');
+                        $materialFolder = $project->materialFolders()->create([
+                            'name' => $folderName,
                             'created_by' => $request->user()->id,
-                            'position' => ((int) $project->materialFolders()->max('position')) + 1,
-                        ],
-                    )->id;
+                            'position' => $lastPosition === null ? 0 : ((int) $lastPosition) + 1,
+                        ]);
+                    }
+
+                    $destinationFolderId = $materialFolder->id;
                 }
 
                 foreach ($uploads as ['file' => $file, 'path' => $path]) {
@@ -88,7 +94,7 @@ class ProjectFileController extends Controller
                         $storedFile->original_name,
                     );
                 }
-            });
+            }, attempts: 5);
         } catch (Throwable $exception) {
             Storage::disk('local')->delete(Arr::pluck($uploads, 'path'));
 

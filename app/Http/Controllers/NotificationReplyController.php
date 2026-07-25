@@ -2,23 +2,26 @@
 
 namespace App\Http\Controllers;
 
-use App\Enums\ActivityType;
+use App\Actions\CheckIns\SubmitCheckInAnswer;
+use App\Actions\Comments\CreateMessageComment;
+use App\Actions\Comments\CreateTodoComment;
 use App\Http\Requests\Notifications\StoreNotificationReplyRequest;
-use App\Models\Activity;
 use App\Models\CheckInPrompt;
 use App\Models\MessageBoardPost;
 use App\Models\Project;
 use App\Models\Team;
 use App\Models\Todo;
-use App\Notifications\NewMessageCommentNotification;
-use App\Notifications\TodoActivityNotification;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Notifications\DatabaseNotification;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Notification;
 
 class NotificationReplyController extends Controller
 {
+    public function __construct(
+        private SubmitCheckInAnswer $submitCheckInAnswer,
+        private CreateMessageComment $createMessageComment,
+        private CreateTodoComment $createTodoComment,
+    ) {}
+
     public function store(
         StoreNotificationReplyRequest $request,
         Team $currentTeam,
@@ -58,20 +61,11 @@ class NotificationReplyController extends Controller
             ->where('project_id', $project->id)
             ->findOrFail((int) ($notification->data['messageBoardPostId'] ?? 0));
 
-        $comment = DB::transaction(function () use ($body, $message, $project, $request) {
-            $comment = $message->comments()->create([
-                'body' => $body,
-                'project_id' => $project->id,
-                'user_id' => $request->user()->id,
-            ]);
-            Activity::record($project, $request->user(), ActivityType::CommentCreated, $comment, $message->title);
-
-            return $comment;
-        });
-
-        Notification::send(
-            $message->subscribers()->whereKeyNot($request->user()->id)->get(),
-            new NewMessageCommentNotification($request->user(), $project, $message),
+        $this->createMessageComment->handle(
+            $project,
+            $message,
+            $request->user(),
+            $body,
         );
     }
 
@@ -85,23 +79,11 @@ class NotificationReplyController extends Controller
             ->whereHas('todoList', fn ($query) => $query->where('project_id', $project->id))
             ->findOrFail((int) ($notification->data['todoId'] ?? 0));
 
-        $comment = DB::transaction(function () use ($body, $project, $request, $todo) {
-            $comment = $todo->comments()->create([
-                'body' => $body,
-                'project_id' => $project->id,
-                'user_id' => $request->user()->id,
-            ]);
-            Activity::record($project, $request->user(), ActivityType::TodoCommentCreated, $comment, $todo->title);
-
-            return $comment;
-        });
-
-        TodoActivityNotification::sendToUsers(
-            [$todo->created_by, $todo->assignee_id],
-            $request->user(),
+        $this->createTodoComment->handle(
             $project,
             $todo,
-            TodoActivityNotification::Commented,
+            $request->user(),
+            $body,
         );
     }
 
@@ -113,13 +95,17 @@ class NotificationReplyController extends Controller
     ): void {
         $prompt = CheckInPrompt::query()
             ->where('user_id', $request->user()->id)
-            ->whereNull('answered_at')
             ->whereHas('checkIn', fn ($query) => $query->where('project_id', $project->id))
+            ->with('checkIn')
             ->findOrFail((int) ($notification->data['promptId'] ?? 0));
 
-        DB::transaction(function () use ($body, $project, $prompt, $request): void {
-            $prompt->update(['answer' => $body, 'answered_at' => now()]);
-            Activity::record($project, $request->user(), ActivityType::CheckInAnswered, $prompt, $prompt->checkIn->question);
-        });
+        $this->submitCheckInAnswer->handle(
+            $project,
+            $prompt->checkIn,
+            $request->user(),
+            $body,
+            $prompt,
+            validationAttribute: 'body',
+        );
     }
 }

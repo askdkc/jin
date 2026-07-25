@@ -15,7 +15,9 @@ use App\Models\Project;
 use App\Models\StoredFile;
 use App\Models\Team;
 use App\Models\User;
+use App\Support\OrderedPositions;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -162,11 +164,15 @@ class ProjectMaterialController extends Controller
         Team $currentTeam,
         Project $project,
     ): RedirectResponse {
-        $project->materialFolders()->create([
-            ...$request->validated(),
-            'created_by' => $request->user()->id,
-            'position' => ((int) $project->materialFolders()->max('position')) + 1,
-        ]);
+        DB::transaction(function () use ($request, $project): void {
+            $project = Project::query()->lockForUpdate()->findOrFail($project->id);
+            $lastPosition = $project->materialFolders()->max('position');
+            $project->materialFolders()->create([
+                ...$request->validated(),
+                'created_by' => $request->user()->id,
+                'position' => $lastPosition === null ? 0 : ((int) $lastPosition) + 1,
+            ]);
+        }, attempts: 5);
 
         return to_route('projects.materials.index', [$currentTeam, $project]);
     }
@@ -177,7 +183,16 @@ class ProjectMaterialController extends Controller
         MaterialFolder $materialFolder,
     ): RedirectResponse {
         Gate::authorize('delete', $materialFolder);
-        $materialFolder->delete();
+
+        DB::transaction(function () use ($project, $materialFolder): void {
+            $project = Project::query()->lockForUpdate()->findOrFail($project->id);
+            $materialFolder = $project->materialFolders()->findOrFail($materialFolder->id);
+            $materialFolder->delete();
+            OrderedPositions::resequence(
+                new MaterialFolder,
+                $project->materialFolders()->orderBy('position')->orderBy('id')->pluck('id'),
+            );
+        }, attempts: 5);
 
         return to_route('projects.materials.index', [$currentTeam, $project]);
     }

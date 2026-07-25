@@ -2,11 +2,12 @@
 
 namespace App\Mcp\Tools;
 
-use App\Enums\ActivityType;
+use App\Actions\Todos\SetTodoCompletion;
+use App\Actions\Todos\UpdateTodo;
 use App\Mcp\McpContext;
-use App\Models\Activity;
 use App\Models\Todo;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Laravel\Mcp\Request;
 use Laravel\Mcp\Response;
@@ -16,7 +17,11 @@ use Laravel\Mcp\Server\Tool;
 #[Description('権限範囲内の任務について、名称、担当者、期限、完了状態を更新します。')]
 class UpdateTodoTool extends Tool
 {
-    public function __construct(private McpContext $context) {}
+    public function __construct(
+        private McpContext $context,
+        private UpdateTodo $updateTodo,
+        private SetTodoCompletion $setTodoCompletion,
+    ) {}
 
     public function handle(Request $request): Response
     {
@@ -68,22 +73,28 @@ class UpdateTodoTool extends Tool
             $changes['due_on'] = $input['due_on'];
         }
 
-        if (array_key_exists('completed', $input)) {
-            $changes['completed_at'] = $input['completed'] ? now() : null;
-            $changes['completed_by'] = $input['completed'] ? $user->id : null;
-        }
+        $hasCompletionChange = array_key_exists('completed', $input);
 
-        if ($changes === []) {
+        if ($changes === [] && ! $hasCompletionChange) {
             return Response::error('更新する項目を1つ以上指定してください。');
         }
 
-        $wasIncomplete = $todo->completed_at === null;
-        $isCompleting = array_key_exists('completed', $input) && (bool) $input['completed'];
-        $todo->update($changes);
+        $todo = DB::transaction(function () use ($project, $todo, $user, $changes, $hasCompletionChange, $input): Todo {
+            if ($changes !== []) {
+                $todo = $this->updateTodo->handle($project, $todo, $user, $changes);
+            }
 
-        if ($wasIncomplete && $isCompleting) {
-            Activity::record($project, $user, ActivityType::TodoCompleted, $todo, $todo->title);
-        }
+            if ($hasCompletionChange) {
+                $todo = $this->setTodoCompletion->handle(
+                    $project,
+                    $todo,
+                    $user,
+                    (bool) $input['completed'],
+                );
+            }
+
+            return $todo;
+        }, attempts: 5);
 
         $todo->refresh()->load('assignee');
 

@@ -2,9 +2,9 @@
 
 namespace App\Mcp\Tools;
 
-use App\Enums\ActivityType;
+use App\Actions\Todos\CreateTodo;
 use App\Mcp\McpContext;
-use App\Models\Activity;
+use App\Models\Project;
 use App\Models\Todo;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Illuminate\Support\Facades\DB;
@@ -16,7 +16,10 @@ use Laravel\Mcp\Server\Tool;
 #[Description('指定プロジェクトの未分類任務に新しい任務を作成します。認証済み利用者のプロジェクト閲覧権限を検証します。')]
 class CreateTodoTool extends Tool
 {
-    public function __construct(private McpContext $context) {}
+    public function __construct(
+        private McpContext $context,
+        private CreateTodo $createTodo,
+    ) {}
 
     public function handle(Request $request): Response
     {
@@ -42,22 +45,30 @@ class CreateTodoTool extends Tool
             return Response::error('担当者はプロジェクトメンバーではありません。');
         }
 
-        $todo = DB::transaction(function () use ($input, $project, $user, $assignee): Todo {
-            $list = $project->todoLists()->firstOrCreate(
-                ['is_loose' => true],
-                ['title' => '未分類の任務', 'position' => 0],
-            );
-            $todo = $list->todos()->create([
-                'created_by' => $user->id,
-                'assignee_id' => $assignee?->id,
-                'title' => $input['title'],
-                'due_on' => $input['due_on'] ?? null,
-                'position' => ((int) $list->todos()->whereNull('parent_id')->max('position')) + 1,
-            ]);
-            Activity::record($project, $user, ActivityType::TodoCreated, $todo, $todo->title);
+        $todo = DB::transaction(function () use ($project, $user, $input, $assignee): Todo {
+            $project = Project::query()->lockForUpdate()->findOrFail($project->id);
+            $list = $project->todoLists()->where('is_loose', true)->first();
 
-            return $todo;
-        });
+            if ($list === null) {
+                $lastPosition = $project->todoLists()->max('position');
+                $list = $project->todoLists()->create([
+                    'title' => '未分類の任務',
+                    'is_loose' => true,
+                    'position' => $lastPosition === null ? 0 : ((int) $lastPosition) + 1,
+                ]);
+            }
+
+            return $this->createTodo->handle(
+                $project,
+                $list,
+                $user,
+                [
+                    'title' => $input['title'],
+                    'assignee_id' => $assignee?->id,
+                    'due_on' => $input['due_on'] ?? null,
+                ],
+            );
+        }, attempts: 5);
 
         return Response::json([
             'created' => true,

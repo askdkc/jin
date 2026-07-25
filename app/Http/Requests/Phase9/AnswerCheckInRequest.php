@@ -24,10 +24,7 @@ class AnswerCheckInRequest extends FormRequest
         }
 
         if ($prompt instanceof CheckInPrompt) {
-            return $prompt->user_id === $this->user()->id
-                && ($this->isMethod('patch')
-                    ? $prompt->answered_at !== null
-                    : $prompt->answered_at === null);
+            return $prompt->user_id === $this->user()->id;
         }
 
         return $checkIn->targets()->whereKey($this->user()->id)->exists();

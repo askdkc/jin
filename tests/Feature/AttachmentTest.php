@@ -201,7 +201,7 @@ test('authorized project members can use inline uploads without the messages too
     }
 });
 
-test('a file dropped into a new todo is linked without claiming another users upload', function () {
+test('a file dropped into a new todo rejects another users upload and rolls back the owners claim', function () {
     Storage::fake('local');
 
     $owner = User::factory()->create();
@@ -232,13 +232,12 @@ test('a file dropped into a new todo is linked without claiming another users up
             'details' => "<a href=\"{$memberUpload['previewUrl']}\">member.pdf</a><a href=\"{$ownerUpload['previewUrl']}\">owner.pdf</a>",
         ])
         ->assertRedirect()
-        ->assertSessionHasNoErrors();
+        ->assertSessionHasErrors('details');
 
-    $todo = Todo::query()->firstOrFail();
-
-    expect(StoredFile::query()->findOrFail($ownerUpload['id']))
-        ->attachable_type->toBe(Todo::class)
-        ->attachable_id->toBe($todo->id)
+    expect(Todo::query()->exists())->toBeFalse()
+        ->and(StoredFile::query()->findOrFail($ownerUpload['id']))
+        ->attachable_type->toBeNull()
+        ->attachable_id->toBeNull()
         ->and(StoredFile::query()->findOrFail($memberUpload['id']))
         ->attachable_type->toBeNull()
         ->attachable_id->toBeNull();

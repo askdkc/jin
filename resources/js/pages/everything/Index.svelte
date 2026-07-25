@@ -21,13 +21,6 @@
     import MessageSquare from 'lucide-svelte/icons/message-square';
     import Search from 'lucide-svelte/icons/search';
     import { onMount } from 'svelte';
-    import CheckInController from '@/actions/App/Http/Controllers/CheckInController';
-    import MessageBoardController from '@/actions/App/Http/Controllers/MessageBoardController';
-    import ProjectDocumentController from '@/actions/App/Http/Controllers/ProjectDocumentController';
-    import ProjectFileController from '@/actions/App/Http/Controllers/ProjectFileController';
-    import ProjectMaterialController from '@/actions/App/Http/Controllers/ProjectMaterialController';
-    import ProjectTodoController from '@/actions/App/Http/Controllers/ProjectTodoController';
-    import ScheduleEventController from '@/actions/App/Http/Controllers/ScheduleEventController';
     import AppHead from '@/components/AppHead.svelte';
     import ProjectFileThumbnail from '@/components/ProjectFileThumbnail.svelte';
     import StoredFilePreviewDialog, {
@@ -47,7 +40,6 @@
         EverythingFileItem,
         EverythingFilters,
         EverythingItem,
-        EverythingTarget,
         EverythingType,
         Paginated,
         ProjectTool,
@@ -108,22 +100,6 @@
             link: t('External link'),
             comment: t('Comment'),
         })[type];
-    const resultUrl = (
-        target: EverythingTarget,
-        projectId: number,
-    ): ReturnType<typeof MessageBoardController.index> => {
-        const args = [currentTeam.slug, projectId] as [string, number];
-
-        return {
-            messages: MessageBoardController.index,
-            todos: ProjectTodoController.index,
-            documents: ProjectDocumentController.index,
-            files: ProjectMaterialController.index,
-            materials: ProjectMaterialController.index,
-            schedule: ScheduleEventController.index,
-            check_ins: CheckInController.index,
-        }[target](args);
-    };
     const formatDate = (value: string | null): string =>
         value
             ? new Intl.DateTimeFormat('ja-JP', {
@@ -149,6 +125,7 @@
     ): string =>
         index === 0 ? t('Previous') : index === lastIndex ? t('Next') : label;
     const canShowVisualPreview = (item: EverythingFileItem): boolean =>
+        item.canAccessFile &&
         canPreviewStoredFile(item.title) &&
         (item.thumbnailUrl !== null ||
             item.mimeType?.startsWith('image/') === true);
@@ -428,11 +405,7 @@
                                         </div>
 
                                         <Link
-                                            href={ProjectFileController.show([
-                                                currentTeam.slug,
-                                                item.project.id,
-                                                item.id,
-                                            ])}
+                                            href={item.href}
                                             class="mt-2 block break-words text-lg font-semibold text-sky-700 underline decoration-sky-300 underline-offset-4 hover:text-sky-900 dark:text-sky-400 dark:decoration-sky-700 dark:hover:text-sky-200"
                                         >
                                             {item.title}
@@ -497,8 +470,12 @@
                                                     teamSlug={currentTeam.slug}
                                                     projectId={item.project.id}
                                                     fileId={item.id}
-                                                    mimeType={item.mimeType}
-                                                    thumbnailUrl={item.thumbnailUrl}
+                                                    mimeType={item.canAccessFile
+                                                        ? item.mimeType
+                                                        : null}
+                                                    thumbnailUrl={item.canAccessFile
+                                                        ? item.thumbnailUrl
+                                                        : null}
                                                     variant="result"
                                                 />
                                             </button>
@@ -510,8 +487,12 @@
                                                     teamSlug={currentTeam.slug}
                                                     projectId={item.project.id}
                                                     fileId={item.id}
-                                                    mimeType={item.mimeType}
-                                                    thumbnailUrl={item.thumbnailUrl}
+                                                    mimeType={item.canAccessFile
+                                                        ? item.mimeType
+                                                        : null}
+                                                    thumbnailUrl={item.canAccessFile
+                                                        ? item.thumbnailUrl
+                                                        : null}
                                                     variant="index"
                                                 />
                                                 <div class="min-w-0 flex-1">
@@ -529,7 +510,7 @@
                                                         )}
                                                     </p>
                                                 </div>
-                                                {#if canPreviewStoredFile(item.title)}
+                                                {#if item.canAccessFile && canPreviewStoredFile(item.title)}
                                                     <Button
                                                         type="button"
                                                         variant="outline"
@@ -595,10 +576,7 @@
                                                 </time>
                                             </div>
                                             <Link
-                                                href={resultUrl(
-                                                    item.target,
-                                                    item.project.id,
-                                                )}
+                                                href={item.href}
                                                 class="mt-1.5 block break-words text-base font-semibold text-sky-700 underline decoration-sky-300 underline-offset-4 hover:text-sky-900 dark:text-sky-400 dark:decoration-sky-700 dark:hover:text-sky-200"
                                             >
                                                 {item.title}

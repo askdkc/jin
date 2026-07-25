@@ -2,6 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Actions\Todos\CreateTodo;
+use App\Actions\Todos\SetTodoCompletion;
+use App\Actions\Todos\UpdateTodo;
 use App\Enums\ActivityType;
 use App\Http\Requests\Phase3\MoveTodoRequest;
 use App\Http\Requests\Phase3\SaveMessageBoardPostReactionRequest as SaveReactionRequest;
@@ -16,10 +19,8 @@ use App\Models\Team;
 use App\Models\Todo;
 use App\Models\TodoList;
 use App\Models\User;
-use App\Notifications\MentionNotification;
-use App\Notifications\TodoActivityNotification;
 use App\Support\InlineAttachments;
-use App\Support\Mentions;
+use App\Support\OrderedPositions;
 use App\Support\Reactions;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -31,6 +32,12 @@ use Inertia\Response;
 
 class ProjectTodoController extends Controller
 {
+    public function __construct(
+        private CreateTodo $createTodo,
+        private UpdateTodo $updateTodo,
+        private SetTodoCompletion $setTodoCompletion,
+    ) {}
+
     public function index(Team $currentTeam, Project $project): Response
     {
         Gate::authorize('view', $project);
@@ -171,10 +178,14 @@ class ProjectTodoController extends Controller
 
     public function storeList(SaveTodoListRequest $request, Team $currentTeam, Project $project): RedirectResponse
     {
-        $project->todoLists()->create([
-            ...$request->validated(),
-            'position' => ((int) $project->todoLists()->max('position')) + 1,
-        ]);
+        DB::transaction(function () use ($request, $project): void {
+            $project = Project::query()->lockForUpdate()->findOrFail($project->id);
+            $lastPosition = $project->todoLists()->max('position');
+            $project->todoLists()->create([
+                ...$request->validated(),
+                'position' => $lastPosition === null ? 0 : ((int) $lastPosition) + 1,
+            ]);
+        }, attempts: 5);
 
         return back(fallback: route('projects.todos.index', [$currentTeam, $project]));
     }
@@ -194,8 +205,10 @@ class ProjectTodoController extends Controller
     {
         Gate::authorize('update', $project);
         abort_if($todoList->is_loose, 422, 'The loose to-do list cannot be deleted.');
-        DB::transaction(function () use ($todoList): void {
-            $todoIds = $todoList->todos()->pluck('id');
+        DB::transaction(function () use ($project, $todoList): void {
+            $project = Project::query()->lockForUpdate()->findOrFail($project->id);
+            $todoList = $project->todoLists()->lockForUpdate()->findOrFail($todoList->id);
+            $todoIds = $todoList->todos()->orderBy('id')->lockForUpdate()->pluck('id');
             $commentQuery = Comment::query()->where(function ($query) use ($todoIds, $todoList): void {
                 $query->where(function ($todoComments) use ($todoIds): void {
                     $todoComments->where('commentable_type', (new Todo)->getMorphClass())
@@ -210,7 +223,11 @@ class ProjectTodoController extends Controller
             InlineAttachments::detachMany((new Comment)->getMorphClass(), (clone $commentQuery)->pluck('id'));
             $commentQuery->delete();
             $todoList->delete();
-        });
+            OrderedPositions::resequence(
+                new TodoList,
+                $project->todoLists()->orderBy('position')->orderBy('id')->pluck('id'),
+            );
+        }, attempts: 5);
 
         return back(fallback: route('projects.todos.index', [$currentTeam, $project]));
     }
@@ -221,43 +238,12 @@ class ProjectTodoController extends Controller
         Project $project,
         TodoList $todoList,
     ): RedirectResponse {
-        $todo = DB::transaction(function () use ($request, $project, $todoList): Todo {
-            $todo = $todoList->todos()->create([
-                ...$request->safe()->except('subtasks'),
-                'created_by' => $request->user()->id,
-                'position' => ((int) $todoList->todos()->max('position')) + 1,
-            ]);
-
-            foreach (array_values($request->validated('subtasks') ?? []) as $index => $subtaskData) {
-                $todo->subtasks()->create([
-                    ...$subtaskData,
-                    'todo_list_id' => $todoList->id,
-                    'created_by' => $request->user()->id,
-                    'position' => $index + 1,
-                ]);
-            }
-
-            InlineAttachments::syncFromBody(
-                $todo,
-                $project,
-                $request->user()->id,
-                $todo->details,
-            );
-
-            Activity::record($project, $request->user(), ActivityType::TodoCreated, $todo, $todo->title);
-
-            return $todo;
-        });
-
-        TodoActivityNotification::sendToUsers(
-            [$todo->assignee_id],
-            $request->user(),
+        $this->createTodo->handle(
             $project,
-            $todo,
-            TodoActivityNotification::Assigned,
+            $todoList,
+            $request->user(),
+            $request->validated(),
         );
-
-        $this->notifyMentions($project, $request->user(), $todo);
 
         return back(fallback: route('projects.todos.index', [$currentTeam, $project]));
     }
@@ -269,44 +255,12 @@ class ProjectTodoController extends Controller
         TodoList $todoList,
         Todo $todo,
     ): RedirectResponse {
-        [$todo, $previousAssigneeId, $previousDetails] = DB::transaction(
-            function () use ($request, $project, $todo): array {
-                $todo = Todo::query()
-                    ->lockForUpdate()
-                    ->findOrFail($todo->id);
-                $previousAssigneeId = $todo->assignee_id;
-                $previousDetails = $todo->details;
-                $todo->update([
-                    ...$request->safe()->except('subtasks'),
-                    'completion_notify_ids' => $request->validated('completion_notify_ids') ?? [],
-                ]);
-
-                InlineAttachments::syncFromBody(
-                    $todo,
-                    $project,
-                    $request->user()->id,
-                    $todo->details,
-                );
-
-                return [$todo, $previousAssigneeId, $previousDetails];
-            },
+        $this->updateTodo->handle(
+            $project,
+            $todo,
+            $request->user(),
+            $request->validated(),
         );
-
-        if ($todo->assignee_id !== $previousAssigneeId) {
-            TodoActivityNotification::sendToUsers(
-                [$todo->assignee_id],
-                $request->user(),
-                $project,
-                $todo,
-                TodoActivityNotification::Assigned,
-            );
-        }
-
-        // ponytail: only re-notify mentions when the notes actually changed, so inline
-        // per-field edits (due date, assignee…) don't re-ping everyone mentioned in the notes.
-        if ($todo->details !== $previousDetails) {
-            $this->notifyMentions($project, $request->user(), $todo);
-        }
 
         return back(fallback: route('projects.todos.index', [$currentTeam, $project]));
     }
@@ -319,15 +273,21 @@ class ProjectTodoController extends Controller
         Todo $todo,
     ): RedirectResponse {
         DB::transaction(function () use ($request, $project, $todoList, $todo): void {
+            $todo = Todo::query()
+                ->where('todo_list_id', $todoList->id)
+                ->whereNull('parent_id')
+                ->lockForUpdate()
+                ->findOrFail($todo->id);
+            $lastPosition = $todo->subtasks()->max('position');
             $subtask = $todo->subtasks()->create([
                 ...$request->validated(),
                 'todo_list_id' => $todoList->id,
                 'created_by' => $request->user()->id,
-                'position' => ((int) $todo->subtasks()->max('position')) + 1,
+                'position' => $lastPosition === null ? 0 : ((int) $lastPosition) + 1,
             ]);
 
             Activity::record($project, $request->user(), ActivityType::TodoCreated, $subtask, $subtask->title);
-        });
+        }, attempts: 5);
 
         return back(fallback: route('projects.todos.index', [$currentTeam, $project]));
     }
@@ -341,27 +301,7 @@ class ProjectTodoController extends Controller
     ): RedirectResponse {
         Gate::authorize('view', $project);
 
-        $wasIncomplete = $todo->completed_at === null;
-
-        DB::transaction(function () use ($request, $project, $todo, $wasIncomplete): void {
-            $todo->update($wasIncomplete
-                ? ['completed_at' => now(), 'completed_by' => $request->user()->id]
-                : ['completed_at' => null, 'completed_by' => null]);
-
-            if ($wasIncomplete) {
-                Activity::record($project, $request->user(), ActivityType::TodoCompleted, $todo, $todo->title);
-            }
-        });
-
-        if ($wasIncomplete) {
-            TodoActivityNotification::sendToUsers(
-                [$todo->created_by, $todo->assignee_id, ...($todo->completion_notify_ids ?? [])],
-                $request->user(),
-                $project,
-                $todo,
-                TodoActivityNotification::Completed,
-            );
-        }
+        $this->setTodoCompletion->toggle($project, $todo, $request->user());
 
         return back(fallback: route('projects.todos.index', [$currentTeam, $project]));
     }
@@ -376,7 +316,22 @@ class ProjectTodoController extends Controller
         $targetList = $project->todoLists()->findOrFail((int) $request->validated('target_list_id'));
         $requestedPosition = $request->validated('target_position');
 
-        DB::transaction(function () use ($targetList, $requestedPosition, $todoList, $todo): void {
+        DB::transaction(function () use ($project, $targetList, $requestedPosition, $todoList, $todo): void {
+            $listIds = array_values(array_unique([$todoList->id, $targetList->id]));
+            $lockedListIds = TodoList::query()
+                ->where('project_id', $project->id)
+                ->whereIn('id', $listIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->pluck('id')
+                ->all();
+            abort_unless(count($lockedListIds) === count($listIds), 404);
+
+            $todo = Todo::query()
+                ->where('todo_list_id', $todoList->id)
+                ->whereNull('parent_id')
+                ->lockForUpdate()
+                ->findOrFail($todo->id);
             $sourceTodoIds = Todo::query()
                 ->where('todo_list_id', $todoList->id)
                 ->whereNull('parent_id')
@@ -410,7 +365,7 @@ class ProjectTodoController extends Controller
             );
             $targetTodoIds->splice($targetPosition, 0, [$todo->id]);
             $this->normalizeTodoPositions($targetTodoIds);
-        }, attempts: 3);
+        }, attempts: 5);
 
         return to_route('projects.todos.index', [$currentTeam, $project]);
     }
@@ -443,8 +398,25 @@ class ProjectTodoController extends Controller
         abort_unless($todo->created_by === request()->user()->id || Gate::allows('update', $project), 403);
         $parentId = $todo->parent_id;
 
-        DB::transaction(function () use ($todo): void {
-            $todoIds = $todo->subtasks()->pluck('id')->push($todo->id);
+        DB::transaction(function () use ($todoList, $todo, $parentId): void {
+            if ($parentId === null) {
+                $todoList = TodoList::query()->lockForUpdate()->findOrFail($todoList->id);
+            } else {
+                Todo::query()
+                    ->where('todo_list_id', $todoList->id)
+                    ->lockForUpdate()
+                    ->findOrFail($parentId);
+            }
+
+            $todo = Todo::query()
+                ->where('todo_list_id', $todoList->id)
+                ->lockForUpdate()
+                ->findOrFail($todo->id);
+            $todoIds = $todo->subtasks()
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->pluck('id')
+                ->push($todo->id);
             $commentQuery = Comment::query()
                 ->where('commentable_type', (new Todo)->getMorphClass())
                 ->whereIn('commentable_id', $todoIds);
@@ -453,7 +425,18 @@ class ProjectTodoController extends Controller
             InlineAttachments::detachMany((new Todo)->getMorphClass(), $todoIds);
             $commentQuery->delete();
             $todo->delete();
-        });
+            $remainingTodoIds = Todo::query()
+                ->where('todo_list_id', $todoList->id)
+                ->when(
+                    $parentId === null,
+                    fn ($query) => $query->whereNull('parent_id'),
+                    fn ($query) => $query->where('parent_id', $parentId),
+                )
+                ->orderBy('position')
+                ->orderBy('id')
+                ->pluck('id');
+            OrderedPositions::resequence(new Todo, $remainingTodoIds);
+        }, attempts: 5);
 
         if ($parentId !== null) {
             return back(fallback: route('projects.todos.show', [
@@ -470,9 +453,7 @@ class ProjectTodoController extends Controller
     /** @param Collection<int, int> $todoIds */
     private function normalizeTodoPositions(Collection $todoIds): void
     {
-        $todoIds->each(function (int $todoId, int $position): void {
-            Todo::query()->whereKey($todoId)->update(['position' => $position]);
-        });
+        OrderedPositions::resequence(new Todo, $todoIds);
     }
 
     /** @return array<string, mixed> */
@@ -517,16 +498,5 @@ class ProjectTodoController extends Controller
                 'canDelete' => $canManageProject || $comment->user_id === $userId,
             ])->all(),
         ];
-    }
-
-    private function notifyMentions(Project $project, User $actor, Todo $todo): void
-    {
-        MentionNotification::sendToUsers(
-            Mentions::extract($todo->details, $project->members),
-            $actor,
-            $project,
-            MentionNotification::Todo,
-            $todo->title,
-        );
     }
 }

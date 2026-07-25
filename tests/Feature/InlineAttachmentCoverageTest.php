@@ -69,6 +69,22 @@ function expectInlineAttachmentDetached(int $fileId): void
         ->toBeFalse();
 }
 
+/** @param array<string, mixed> $attributes */
+function inlineAttachmentCoverageFile(
+    Project $project,
+    User $uploader,
+    array $attributes = [],
+): StoredFile {
+    return StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($project)
+        ->for($uploader, 'uploader')
+        ->create([
+            'is_inline' => true,
+            'preview_status' => null,
+            ...$attributes,
+        ]));
+}
+
 test('document store and update claim neutral inline uploads to the document', function () {
     Storage::fake('local');
     [$owner, $team, $project] = inlineAttachmentCoverageWorkspace();
@@ -449,6 +465,151 @@ test('todo updates and todo comments claim inline uploads to their exact models'
 
     expectInlineAttachmentDetached($listCommentUpload['id']);
     expectInlineAttachmentDetached($updatedListCommentUpload['id']);
+});
+
+test('inline attachment references reject missing foreign deleting and already claimed uploads', function () {
+    [$owner, $team, $project] = inlineAttachmentCoverageWorkspace();
+    $otherUploader = User::factory()->create();
+    $team->members()->attach($otherUploader, ['role' => TeamRole::Member->value]);
+    $project->members()->attach($otherUploader);
+    $otherProject = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $document = Document::factory()->for($project)->for($owner, 'creator')->create([
+        'title' => '変更前',
+        'body' => '<p>元の本文</p>',
+    ]);
+    $otherDocument = Document::factory()->for($project)->for($owner, 'creator')->create();
+    $foreignUploaderFile = inlineAttachmentCoverageFile($project, $otherUploader);
+    $foreignProjectFile = inlineAttachmentCoverageFile($otherProject, $owner);
+    $deletingFile = inlineAttachmentCoverageFile($project, $owner, [
+        'preview_status' => 'deleting',
+    ]);
+    $claimedFile = inlineAttachmentCoverageFile($project, $owner, [
+        'attachable_type' => $otherDocument->getMorphClass(),
+        'attachable_id' => $otherDocument->id,
+    ]);
+    $missingFileId = ((int) StoredFile::query()->max('id')) + 1000;
+    $references = [
+        'foreign uploader' => $foreignUploaderFile->id,
+        'foreign project' => $foreignProjectFile->id,
+        'deleting' => $deletingFile->id,
+        'claimed elsewhere' => $claimedFile->id,
+        'missing' => $missingFileId,
+    ];
+
+    foreach ($references as $label => $fileId) {
+        $previewUrl = "/{$team->slug}/projects/{$project->id}/files/{$fileId}/preview";
+
+        $this->actingAs($owner)
+            ->patch(route('projects.documents.update', [$team, $project, $document]), [
+                'title' => "不正な参照: {$label}",
+                'body' => inlineAttachmentCoverageBody($previewUrl),
+            ])
+            ->assertSessionHasErrors('body');
+
+        expect($document->fresh())
+            ->title->toBe('変更前')
+            ->body->toBe('<p>元の本文</p>');
+    }
+
+    expect($foreignUploaderFile->fresh()->attachable_id)->toBeNull()
+        ->and($foreignProjectFile->fresh()->attachable_id)->toBeNull()
+        ->and($deletingFile->fresh()->attachable_id)->toBeNull()
+        ->and($claimedFile->fresh()->attachable_id)->toBe($otherDocument->id);
+});
+
+test('invalid inline attachment updates preserve the previous body and attachment', function () {
+    [$owner, $team, $project] = inlineAttachmentCoverageWorkspace();
+    $otherUploader = User::factory()->create();
+    $team->members()->attach($otherUploader, ['role' => TeamRole::Member->value]);
+    $project->members()->attach($otherUploader);
+    $document = Document::factory()->for($project)->for($owner, 'creator')->create([
+        'title' => '変更前',
+    ]);
+    $originalFile = inlineAttachmentCoverageFile($project, $owner, [
+        'attachable_type' => $document->getMorphClass(),
+        'attachable_id' => $document->id,
+    ]);
+    $originalPreviewUrl = "/{$team->slug}/projects/{$project->id}/files/{$originalFile->id}/preview";
+    $document->update([
+        'body' => inlineAttachmentCoverageBody($originalPreviewUrl, '元の添付'),
+    ]);
+    $originalBody = $document->fresh()->body;
+    $forgedFile = inlineAttachmentCoverageFile($project, $otherUploader);
+    $forgedPreviewUrl = "/{$team->slug}/projects/{$project->id}/files/{$forgedFile->id}/preview";
+
+    $this->actingAs($owner)
+        ->patch(route('projects.documents.update', [$team, $project, $document]), [
+            'title' => '変更後',
+            'body' => inlineAttachmentCoverageBody($forgedPreviewUrl, '不正な添付'),
+        ])
+        ->assertSessionHasErrors('body');
+
+    expect($document->fresh())
+        ->title->toBe('変更前')
+        ->body->toBe($originalBody);
+    expectInlineAttachmentClaimed($originalFile->id, $document);
+    expect($forgedFile->fresh())
+        ->attachable_type->toBeNull()
+        ->attachable_id->toBeNull();
+});
+
+test('project collaborators can retain inline attachments already linked to the edited model', function () {
+    [$owner, $team, $project] = inlineAttachmentCoverageWorkspace();
+    $collaborator = User::factory()->create();
+    $team->members()->attach($collaborator, ['role' => TeamRole::Member->value]);
+    $project->members()->attach($collaborator);
+    $document = Document::factory()->for($project)->for($owner, 'creator')->create();
+    $file = inlineAttachmentCoverageFile($project, $collaborator, [
+        'attachable_type' => $document->getMorphClass(),
+        'attachable_id' => $document->id,
+    ]);
+    $previewUrl = "/{$team->slug}/projects/{$project->id}/files/{$file->id}/preview";
+
+    $this->actingAs($owner)
+        ->patch(route('projects.documents.update', [$team, $project, $document]), [
+            'title' => '共同編集後',
+            'body' => inlineAttachmentCoverageBody($previewUrl),
+        ])
+        ->assertRedirect()
+        ->assertSessionHasNoErrors();
+
+    expect($document->fresh()->title)->toBe('共同編集後');
+    expectInlineAttachmentClaimed($file->id, $document);
+});
+
+test('inline attachment parsing uses exact local preview href and src references', function () {
+    [$owner, $team, $project] = inlineAttachmentCoverageWorkspace();
+    $document = Document::factory()->for($project)->for($owner, 'creator')->create();
+    $linkFile = inlineAttachmentCoverageFile($project, $owner);
+    $imageFile = inlineAttachmentCoverageFile($project, $owner);
+    $plainTextFile = inlineAttachmentCoverageFile($project, $owner);
+    $dataAttributeFile = inlineAttachmentCoverageFile($project, $owner);
+    $commentFile = inlineAttachmentCoverageFile($project, $owner);
+    $externalFile = inlineAttachmentCoverageFile($project, $owner);
+    $malformedFile = inlineAttachmentCoverageFile($project, $owner);
+    $ordinaryFile = inlineAttachmentCoverageFile($project, $owner, ['is_inline' => false]);
+    $previewUrl = fn (int $fileId): string => "/{$team->slug}/projects/{$project->id}/files/{$fileId}/preview";
+    $body = implode('', [
+        '<a href="'.$previewUrl($linkFile->id).'?download=1">link</a>',
+        '<img src="'.$previewUrl($imageFile->id).'" alt="image">',
+        '<p>'.$previewUrl($plainTextFile->id).'</p>',
+        '<div data-preview="'.$previewUrl($dataAttributeFile->id).'">data</div>',
+        '<!-- <a href="'.$previewUrl($commentFile->id).'">comment</a> -->',
+        '<a href="https://example.test'.$previewUrl($externalFile->id).'">external</a>',
+        '<a href="/'.$team->slug.'/projects/'.$project->id.'/files/'.$malformedFile->id.'suffix/preview">malformed</a>',
+        '<a href="'.$previewUrl($ordinaryFile->id).'">ordinary file</a>',
+    ]);
+
+    InlineAttachments::syncFromBody($document, $project, $owner->id, $body);
+
+    expectInlineAttachmentClaimed($linkFile->id, $document);
+    expectInlineAttachmentClaimed($imageFile->id, $document);
+
+    foreach ([$plainTextFile, $dataAttributeFile, $commentFile, $externalFile, $malformedFile, $ordinaryFile] as $file) {
+        expect($file->fresh())
+            ->attachable_type->toBeNull()
+            ->attachable_id->toBeNull();
+    }
 });
 
 test('removeFromBody strips links and images for every supported rich text attribute', function () {

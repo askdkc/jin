@@ -64,31 +64,22 @@
 
     let {
         currentTeam,
-        pendingInvitations = [],
-        myWork = {
-            overdue: [],
-            today: [],
-            thisWeek: [],
-            later: [],
-        },
-        myProjects = [],
-        projectFolders = [],
-        recentActivities = [],
-        availableRoles = [],
-        permissions = {
-            canCreateProject: false,
-            canInviteMembers: false,
-            canManageTeam: false,
-        },
+        pendingInvitations,
+        myWork,
+        myProjects,
+        projectFolders,
+        recentActivities,
+        availableRoles,
+        permissions,
     }: {
         currentTeam: Team;
-        pendingInvitations?: DashboardInvitation[];
-        myWork?: DashboardMyWork;
-        myProjects?: DashboardProject[];
-        projectFolders?: ProjectFolder[];
-        recentActivities?: ActivityItem[];
-        availableRoles?: RoleOption[];
-        permissions?: {
+        pendingInvitations: DashboardInvitation[];
+        myWork: DashboardMyWork;
+        myProjects: DashboardProject[];
+        projectFolders: ProjectFolder[];
+        recentActivities: ActivityItem[];
+        availableRoles: RoleOption[];
+        permissions: {
             canCreateProject: boolean;
             canInviteMembers: boolean;
             canManageTeam: boolean;
@@ -205,7 +196,7 @@
             <aside class="space-y-4 lg:sticky lg:top-24">
                 <h1 class="text-xl font-bold tracking-tight">
                     {t('Welcome, :name', {
-                        name: page.props.auth.user.name,
+                        name: page.props.auth.user?.name ?? '',
                     })}
                 </h1>
 

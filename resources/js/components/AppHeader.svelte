@@ -62,7 +62,7 @@
         headerActions?: HeaderAction[];
     } = $props();
 
-    const auth = $derived(page.props.auth);
+    const user = $derived(page.props.auth.user);
     const currentTeam = $derived(page.props.currentTeam as Team | null);
     const unreadCount = $derived(page.props.notificationSummary.unreadCount);
     const navigationProjects = $derived(page.props.navigationProjects);
@@ -406,37 +406,39 @@
                 </Button>
             {/if}
 
-            <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                    {#snippet children(props)}
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            class="rounded-full"
-                            onclick={props.onclick}
-                            aria-expanded={props['aria-expanded']}
-                            data-state={props['data-state']}
-                        >
-                            <Avatar class="size-8">
-                                {#if auth.user.avatar}
-                                    <AvatarImage
-                                        src={auth.user.avatar}
-                                        alt={auth.user.name}
-                                    />
-                                {/if}
-                                <AvatarFallback
-                                    class="bg-[#dce9df] text-[#205c3b]"
-                                >
-                                    {getInitials(auth.user.name)}
-                                </AvatarFallback>
-                            </Avatar>
-                        </Button>
-                    {/snippet}
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" class="w-56">
-                    <UserMenuContent user={auth.user} />
-                </DropdownMenuContent>
-            </DropdownMenu>
+            {#if user}
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        {#snippet children(props)}
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                class="rounded-full"
+                                onclick={props.onclick}
+                                aria-expanded={props['aria-expanded']}
+                                data-state={props['data-state']}
+                            >
+                                <Avatar class="size-8">
+                                    {#if user.avatar}
+                                        <AvatarImage
+                                            src={user.avatar}
+                                            alt={user.name}
+                                        />
+                                    {/if}
+                                    <AvatarFallback
+                                        class="bg-[#dce9df] text-[#205c3b]"
+                                    >
+                                        {getInitials(user.name)}
+                                    </AvatarFallback>
+                                </Avatar>
+                            </Button>
+                        {/snippet}
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" class="w-56">
+                        <UserMenuContent {user} />
+                    </DropdownMenuContent>
+                </DropdownMenu>
+            {/if}
 
             <div class="hidden sm:block">
                 <TeamSwitcher inHeader={true} />

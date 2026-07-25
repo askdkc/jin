@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Actions\CheckIns\SubmitCheckInAnswer;
+use App\Actions\CheckIns\UpdateCheckInAnswer;
 use App\Enums\ActivityType;
 use App\Http\Requests\Phase3\SaveMessageBoardPostReactionRequest as SaveReactionRequest;
 use App\Http\Requests\Phase9\AnswerCheckInRequest;
@@ -26,6 +28,11 @@ use Inertia\Response;
 
 class CheckInController extends Controller
 {
+    public function __construct(
+        private SubmitCheckInAnswer $submitCheckInAnswer,
+        private UpdateCheckInAnswer $updateCheckInAnswer,
+    ) {}
+
     public function index(Team $currentTeam, Project $project): Response
     {
         Gate::authorize('view', $project);
@@ -262,12 +269,20 @@ class CheckInController extends Controller
         CheckIn $checkIn,
     ): RedirectResponse {
         Gate::authorize('update', $checkIn);
-        $checkIn->update([
-            'paused_at' => $checkIn->paused_at === null ? now() : null,
-            'next_run_at' => $checkIn->paused_at === null || $checkIn->next_run_at->isFuture()
-                ? $checkIn->next_run_at
-                : now(),
-        ]);
+
+        DB::transaction(function () use ($checkIn): void {
+            $checkIn = CheckIn::query()
+                ->lockForUpdate()
+                ->findOrFail($checkIn->id);
+            $wasPaused = $checkIn->paused_at !== null;
+
+            $checkIn->update([
+                'paused_at' => $wasPaused ? null : now(),
+                'next_run_at' => $wasPaused && $checkIn->next_run_at->isPast()
+                    ? now()
+                    : $checkIn->next_run_at,
+            ]);
+        }, attempts: 5);
 
         return back();
     }
@@ -300,13 +315,14 @@ class CheckInController extends Controller
         Project $project,
         CheckIn $checkIn,
     ): RedirectResponse {
-        $prompt = $checkIn->prompts()->create([
-            'user_id' => $request->user()->id,
-            'scheduled_for' => now(),
-            'requested_at' => now(),
-        ]);
+        $this->submitCheckInAnswer->handle(
+            $project,
+            $checkIn,
+            $request->user(),
+            $request->validated('answer'),
+        );
 
-        return $this->answer($request, $currentTeam, $project, $checkIn, $prompt);
+        return back();
     }
 
     public function answer(
@@ -316,30 +332,13 @@ class CheckInController extends Controller
         CheckIn $checkIn,
         CheckInPrompt $prompt,
     ): RedirectResponse {
-        DB::transaction(function () use ($request, $project, $prompt): void {
-            $prompt = CheckInPrompt::query()
-                ->lockForUpdate()
-                ->findOrFail($prompt->id);
-            $prompt->update([
-                'answer' => $request->validated('answer'),
-                'answered_at' => now(),
-            ]);
-
-            InlineAttachments::syncFromBody(
-                $prompt,
-                $project,
-                $request->user()->id,
-                $prompt->answer,
-            );
-
-            Activity::record(
-                $project,
-                $request->user(),
-                ActivityType::CheckInAnswered,
-                $prompt,
-                $prompt->checkIn->question,
-            );
-        });
+        $this->submitCheckInAnswer->handle(
+            $project,
+            $checkIn,
+            $request->user(),
+            $request->validated('answer'),
+            $prompt,
+        );
 
         return back();
     }
@@ -351,19 +350,13 @@ class CheckInController extends Controller
         CheckIn $checkIn,
         CheckInPrompt $prompt,
     ): RedirectResponse {
-        DB::transaction(function () use ($request, $project, $prompt): void {
-            $prompt = CheckInPrompt::query()
-                ->lockForUpdate()
-                ->findOrFail($prompt->id);
-            $prompt->update(['answer' => $request->validated('answer')]);
-
-            InlineAttachments::syncFromBody(
-                $prompt,
-                $project,
-                $request->user()->id,
-                $prompt->answer,
-            );
-        });
+        $this->updateCheckInAnswer->handle(
+            $project,
+            $checkIn,
+            $prompt,
+            $request->user(),
+            $request->validated('answer'),
+        );
 
         return back();
     }

@@ -16,6 +16,7 @@ use DOMElement;
 use DOMXPath;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class InlineAttachments
@@ -29,72 +30,114 @@ class InlineAttachments
         int $uploaderId,
         ?string $body,
     ): void {
-        $matches = [];
-        preg_match_all('/\/files\/(\d+)/', $body ?? '', $matches);
-        $fileIds = array_values(array_unique(array_map('intval', $matches[1])));
+        $fileIds = self::referencedFileIds($body);
         $morphClass = $attachable->getMorphClass();
         $attachableId = $attachable->getKey();
 
-        $attachedInlineFiles = StoredFile::query()
-            ->where('attachable_type', $morphClass)
-            ->where('attachable_id', $attachableId)
-            ->where('is_inline', true);
+        DB::transaction(function () use ($attachable, $project, $uploaderId, $fileIds, $morphClass, $attachableId): void {
+            $attachedInlineFiles = StoredFile::query()
+                ->where('attachable_type', $morphClass)
+                ->where('attachable_id', $attachableId)
+                ->where('is_inline', true);
 
-        if ($fileIds === []) {
-            $attachedInlineFiles->update([
-                'attachable_type' => null,
-                'attachable_id' => null,
-            ]);
+            if ($fileIds === []) {
+                $attachedInlineFiles->update([
+                    'attachable_type' => null,
+                    'attachable_id' => null,
+                ]);
 
-            return;
-        }
+                return;
+            }
 
-        $attachedInlineFiles
-            ->whereNotIn('id', $fileIds)
-            ->update([
-                'attachable_type' => null,
-                'attachable_id' => null,
-            ]);
+            $filesById = [];
 
-        $claimableFileIds = StoredFile::query()
-            ->where('project_id', $project->id)
-            ->where('uploaded_by', $uploaderId)
-            ->where('is_inline', true)
-            ->whereIn('id', $fileIds)
-            ->pluck('id')
-            ->map(fn (int|string $id): int => (int) $id)
-            ->all();
+            foreach (StoredFile::query()->whereIn('id', $fileIds)->lockForUpdate()->get() as $file) {
+                $filesById[$file->id] = $file;
+            }
 
-        StoredFile::query()
-            ->whereIn('id', $claimableFileIds)
-            ->whereNull('attachable_type')
-            ->whereNull('attachable_id')
-            ->where(function (Builder $query): void {
-                $query->whereNull('preview_status')
-                    ->orWhere('preview_status', '!=', 'deleting');
-            })
-            ->update([
-                'attachable_type' => $morphClass,
-                'attachable_id' => $attachableId,
-            ]);
+            if (count($filesById) !== count($fileIds)) {
+                self::throwUnavailable($attachable);
+            }
 
-        $attachedFileIds = StoredFile::query()
-            ->whereIn('id', $claimableFileIds)
-            ->where('attachable_type', $morphClass)
-            ->where('attachable_id', $attachableId)
-            ->where(function (Builder $query): void {
-                $query->whereNull('preview_status')
-                    ->orWhere('preview_status', '!=', 'deleting');
-            })
-            ->pluck('id')
-            ->map(fn (int|string $id): int => (int) $id)
-            ->all();
+            $inlineFileIds = [];
+            $claimableFileIds = [];
 
-        if (array_diff($claimableFileIds, $attachedFileIds) !== []) {
-            throw ValidationException::withMessages([
-                (self::bodyAttribute($attachable) ?? 'attachments') => __('One or more inline attachments are no longer available. Remove them and try again.'),
-            ]);
-        }
+            foreach ($fileIds as $fileId) {
+                $file = $filesById[$fileId];
+
+                if (! $file->is_inline) {
+                    continue;
+                }
+
+                $inlineFileIds[] = $fileId;
+
+                if ($file->project_id !== $project->id || $file->preview_status === 'deleting') {
+                    self::throwUnavailable($attachable);
+                }
+
+                $isAttachedToTarget = $file->attachable_type === $morphClass
+                    && $file->attachable_id === $attachableId;
+
+                if ($isAttachedToTarget) {
+                    continue;
+                }
+
+                $isUnattached = $file->attachable_type === null && $file->attachable_id === null;
+
+                if (! $isUnattached || $file->uploaded_by !== $uploaderId) {
+                    self::throwUnavailable($attachable);
+                }
+
+                $claimableFileIds[] = $fileId;
+            }
+
+            $attachedInlineFiles
+                ->whereNotIn('id', $inlineFileIds)
+                ->update([
+                    'attachable_type' => null,
+                    'attachable_id' => null,
+                ]);
+
+            if ($claimableFileIds !== []) {
+                $claimed = StoredFile::query()
+                    ->whereIn('id', $claimableFileIds)
+                    ->where('project_id', $project->id)
+                    ->where('uploaded_by', $uploaderId)
+                    ->where('is_inline', true)
+                    ->whereNull('attachable_type')
+                    ->whereNull('attachable_id')
+                    ->where(function (Builder $query): void {
+                        $query->whereNull('preview_status')
+                            ->orWhere('preview_status', '!=', 'deleting');
+                    })
+                    ->update([
+                        'attachable_type' => $morphClass,
+                        'attachable_id' => $attachableId,
+                    ]);
+
+                if ($claimed !== count($claimableFileIds)) {
+                    self::throwUnavailable($attachable);
+                }
+            }
+
+            if ($inlineFileIds !== []) {
+                $attached = StoredFile::query()
+                    ->whereIn('id', $inlineFileIds)
+                    ->where('project_id', $project->id)
+                    ->where('is_inline', true)
+                    ->where('attachable_type', $morphClass)
+                    ->where('attachable_id', $attachableId)
+                    ->where(function (Builder $query): void {
+                        $query->whereNull('preview_status')
+                            ->orWhere('preview_status', '!=', 'deleting');
+                    })
+                    ->count();
+
+                if ($attached !== count($inlineFileIds)) {
+                    self::throwUnavailable($attachable);
+                }
+            }
+        });
     }
 
     public static function detach(Model $attachable): void
@@ -136,7 +179,7 @@ class InlineAttachments
             return;
         }
 
-        $cleaned = self::removeFileReferences($body, $needle);
+        $cleaned = self::removeFileReferences($body, $file->id);
 
         if ($cleaned !== $body) {
             $attachable->setAttribute($attribute, $cleaned)->save();
@@ -165,15 +208,78 @@ class InlineAttachments
         };
     }
 
-    private static function removeFileReferences(string $body, ?string $needle = null): string
+    /** @return list<int> */
+    private static function referencedFileIds(?string $body): array
     {
-        $document = new DOMDocument('1.0', 'UTF-8');
-        $loaded = $document->loadHTML(
-            "<?xml encoding=\"UTF-8\"><body>{$body}</body>",
-            LIBXML_HTML_NODEFDTD | LIBXML_HTML_NOIMPLIED | LIBXML_NOERROR | LIBXML_NOWARNING,
-        );
+        if ($body === null || ! str_contains($body, '/files/')) {
+            return [];
+        }
 
-        if (! $loaded) {
+        $document = self::loadDocument($body);
+
+        if (! $document instanceof DOMDocument) {
+            return [];
+        }
+
+        $nodes = (new DOMXPath($document))->query('//*[@href or @src]');
+
+        if ($nodes === false) {
+            return [];
+        }
+
+        $fileIds = [];
+
+        foreach (iterator_to_array($nodes) as $node) {
+            if (! $node instanceof DOMElement) {
+                continue;
+            }
+
+            foreach (['href', 'src'] as $attribute) {
+                if (! $node->hasAttribute($attribute)) {
+                    continue;
+                }
+
+                $fileId = self::fileIdFromReference($node->getAttribute($attribute));
+
+                if ($fileId !== null) {
+                    $fileIds[] = $fileId;
+                }
+            }
+        }
+
+        return array_values(array_unique($fileIds));
+    }
+
+    private static function fileIdFromReference(string $reference): ?int
+    {
+        $reference = trim($reference);
+
+        if (! str_starts_with($reference, '/') || str_starts_with($reference, '//')) {
+            return null;
+        }
+
+        $path = parse_url($reference, PHP_URL_PATH);
+
+        if (! is_string($path)
+            || preg_match('~(?:^|/)files/([1-9][0-9]*)/preview/?$~', $path, $matches) !== 1) {
+            return null;
+        }
+
+        return (int) $matches[1];
+    }
+
+    private static function throwUnavailable(Model $attachable): never
+    {
+        throw ValidationException::withMessages([
+            (self::bodyAttribute($attachable) ?? 'attachments') => __('One or more inline attachments are no longer available. Remove them and try again.'),
+        ]);
+    }
+
+    private static function removeFileReferences(string $body, ?int $fileId = null): string
+    {
+        $document = self::loadDocument($body);
+
+        if (! $document instanceof DOMDocument) {
             return $body;
         }
 
@@ -188,11 +294,22 @@ class InlineAttachments
                 continue;
             }
 
-            $reference = $node->getAttribute('href').$node->getAttribute('src');
+            $matches = false;
 
-            if ($needle === null
-                ? preg_match('/\/files\/\d+/', $reference) !== 1
-                : ! str_contains($reference, $needle)) {
+            foreach (['href', 'src'] as $attribute) {
+                if (! $node->hasAttribute($attribute)) {
+                    continue;
+                }
+
+                $referencedFileId = self::fileIdFromReference($node->getAttribute($attribute));
+
+                if ($referencedFileId !== null && ($fileId === null || $referencedFileId === $fileId)) {
+                    $matches = true;
+                    break;
+                }
+            }
+
+            if (! $matches) {
                 continue;
             }
 
@@ -220,5 +337,16 @@ class InlineAttachments
         }
 
         return $cleaned;
+    }
+
+    private static function loadDocument(string $body): ?DOMDocument
+    {
+        $document = new DOMDocument('1.0', 'UTF-8');
+        $loaded = $document->loadHTML(
+            "<?xml encoding=\"UTF-8\"><body>{$body}</body>",
+            LIBXML_HTML_NODEFDTD | LIBXML_HTML_NOIMPLIED | LIBXML_NOERROR | LIBXML_NOWARNING,
+        );
+
+        return $loaded ? $document : null;
     }
 }

@@ -9,6 +9,7 @@ use App\Models\TodoList;
 use App\Models\TodoReminderDelivery;
 use App\Models\User;
 use App\Notifications\TodoActivityNotification;
+use App\Support\TodoReminderDispatcher;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
@@ -333,6 +334,73 @@ test('pending due reminder dispatch failures return a failure and retry later th
 
     expect($delivery->refresh()->dispatched_at)->not->toBeNull()
         ->and($delivery->last_error)->toBeNull();
+});
+
+test('terminal due reminder failures become dispatchable again without reopening finished deliveries', function () {
+    $owner = User::factory()->create();
+    $assignee = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($assignee, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([$owner->id, $assignee->id]);
+    $list = TodoList::factory()->for($project)->create();
+    $todos = Todo::factory()
+        ->count(3)
+        ->for($list, 'todoList')
+        ->for($owner, 'creator')
+        ->for($assignee, 'assignee')
+        ->create(['due_on' => today()]);
+    $failedDelivery = TodoReminderDelivery::query()->create([
+        'todo_id' => $todos[0]->id,
+        'user_id' => $assignee->id,
+        'reminder_on' => today(),
+        'dispatched_at' => now(),
+        'processing_at' => now(),
+    ]);
+    $queuedDelivery = TodoReminderDelivery::query()->create([
+        'todo_id' => $todos[1]->id,
+        'user_id' => $assignee->id,
+        'reminder_on' => today(),
+        'dispatched_at' => now(),
+        'queued_at' => now(),
+    ]);
+    $skippedDelivery = TodoReminderDelivery::query()->create([
+        'todo_id' => $todos[2]->id,
+        'user_id' => $assignee->id,
+        'reminder_on' => today(),
+        'dispatched_at' => now(),
+        'skipped_at' => now(),
+        'skip_reason' => 'todo_completed',
+    ]);
+    $exception = new RuntimeException('terminal reminder failure');
+
+    (new QueueTodoDueReminder($failedDelivery->id))->failed($exception);
+    (new QueueTodoDueReminder($queuedDelivery->id))->failed($exception);
+    (new QueueTodoDueReminder($skippedDelivery->id))->failed($exception);
+
+    expect($failedDelivery->refresh())
+        ->dispatched_at->toBeNull()
+        ->processing_at->toBeNull()
+        ->last_error->toBe('terminal reminder failure')
+        ->and($queuedDelivery->refresh()->dispatched_at)->not->toBeNull()
+        ->and($queuedDelivery->last_error)->toBeNull()
+        ->and($skippedDelivery->refresh()->dispatched_at)->not->toBeNull()
+        ->and($skippedDelivery->last_error)->toBeNull();
+
+    $bus = Mockery::mock(Dispatcher::class);
+    $bus->shouldReceive('dispatch')
+        ->once()
+        ->with(Mockery::type(QueueTodoDueReminder::class))
+        ->andReturn(1);
+    $this->app->instance(Dispatcher::class, $bus);
+
+    $result = app(TodoReminderDispatcher::class)->dispatchPending();
+
+    expect($result)->toBe(['dispatched' => 1, 'failed' => 0])
+        ->and($failedDelivery->refresh()->dispatched_at)->not->toBeNull()
+        ->and($failedDelivery->processing_at)->toBeNull()
+        ->and($failedDelivery->last_error)->toBeNull();
 });
 
 test('pending due reminder dispatcher is registered with the scheduler', function () {

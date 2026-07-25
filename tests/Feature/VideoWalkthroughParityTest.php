@@ -61,6 +61,35 @@ test('owners can organize projects and configure the project workspace', functio
             ->where('project.enabledTools', ['messages', 'todos', 'timesheets']));
 });
 
+test('project folders append and resequence to contiguous positions after deletion', function () {
+    $this->actingAs($this->owner);
+
+    foreach (['最初', '中央', '最後'] as $name) {
+        $this->post(route('project-folders.store', $this->team), ['name' => $name])
+            ->assertRedirect();
+    }
+
+    expect(ProjectFolder::query()
+        ->where('team_id', $this->team->id)
+        ->orderBy('position')
+        ->pluck('position')
+        ->all())->toBe([0, 1, 2]);
+
+    $middleFolder = ProjectFolder::query()
+        ->where('team_id', $this->team->id)
+        ->where('name', '中央')
+        ->sole();
+
+    $this->delete(route('project-folders.destroy', [$this->team, $middleFolder]))
+        ->assertRedirect();
+
+    expect(ProjectFolder::query()
+        ->where('team_id', $this->team->id)
+        ->orderBy('position')
+        ->pluck('position')
+        ->all())->toBe([0, 1]);
+});
+
 test('regular members cannot create project folders', function () {
     $member = User::factory()->create();
     $this->team->members()->attach($member, ['role' => TeamRole::Member->value]);

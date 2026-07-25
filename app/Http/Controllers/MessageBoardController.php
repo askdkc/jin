@@ -33,8 +33,10 @@ class MessageBoardController extends Controller
         $posts = $project->messageBoardPosts()
             ->withCount('comments')
             ->with('user:id,name')
+            ->orderByRaw('CASE WHEN pinned_at IS NULL THEN 1 ELSE 0 END')
             ->orderByDesc('pinned_at')
-            ->latest('published_at')
+            ->orderByDesc('published_at')
+            ->orderByDesc('id')
             ->paginate(20)
             ->through(fn (MessageBoardPost $post): array => [
                 'id' => $post->id,

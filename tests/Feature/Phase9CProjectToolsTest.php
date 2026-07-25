@@ -201,7 +201,10 @@ test('project participants can create folders and external links in the material
         ->post(route('projects.material-folders.store', [$team, $project]), ['name' => '企画資料'])
         ->assertRedirect(route('projects.materials.index', [$team, $project]));
 
-    $folder = MaterialFolder::query()->firstOrFail();
+    $this->post(route('projects.material-folders.store', [$team, $project]), ['name' => '参考資料'])
+        ->assertRedirect(route('projects.materials.index', [$team, $project]));
+
+    $folder = MaterialFolder::query()->where('name', '企画資料')->sole();
 
     $this->actingAs($member)
         ->post(route('projects.external-links.store', [$team, $project]), [
@@ -214,7 +217,7 @@ test('project participants can create folders and external links in the material
     $link = ExternalLink::query()->firstOrFail();
 
     expect($folder->created_by)->toBe($member->id)
-        ->and($folder->position)->toBe(1)
+        ->and(MaterialFolder::query()->orderBy('position')->pluck('position')->all())->toBe([0, 1])
         ->and($link->material_folder_id)->toBe($folder->id)
         ->and($link->created_by)->toBe($member->id)
         ->and(Activity::query()->where('type', ActivityType::ExternalLinkCreated)->exists())->toBeTrue();
@@ -371,7 +374,15 @@ test('folder deletion clears material references and respects author permissions
     $team->members()->attach($otherMember, ['role' => TeamRole::Member->value]);
     $project = Project::factory()->for($team)->for($owner, 'creator')->create();
     $project->members()->attach([$author->id, $otherMember->id]);
-    $folder = MaterialFolder::factory()->for($project)->for($author, 'creator')->create();
+    $firstFolder = MaterialFolder::factory()->for($project)->for($author, 'creator')->create([
+        'position' => 2,
+    ]);
+    $folder = MaterialFolder::factory()->for($project)->for($author, 'creator')->create([
+        'position' => 8,
+    ]);
+    $lastFolder = MaterialFolder::factory()->for($project)->for($author, 'creator')->create([
+        'position' => 13,
+    ]);
     $document = Document::factory()->for($project)->for($author, 'creator')->create([
         'material_folder_id' => $folder->id,
     ]);
@@ -392,7 +403,11 @@ test('folder deletion clears material references and respects author permissions
 
     expect($document->fresh()->material_folder_id)->toBeNull()
         ->and($file->fresh()->material_folder_id)->toBeNull()
-        ->and($link->fresh()->material_folder_id)->toBeNull();
+        ->and($link->fresh()->material_folder_id)->toBeNull()
+        ->and(MaterialFolder::query()->orderBy('position')->pluck('id')->all())
+        ->toBe([$firstFolder->id, $lastFolder->id])
+        ->and(MaterialFolder::query()->orderBy('position')->pluck('position')->all())
+        ->toBe([0, 1]);
 });
 
 test('only link authors and team managers can delete an external link', function () {

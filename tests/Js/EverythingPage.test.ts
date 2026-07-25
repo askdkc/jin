@@ -38,8 +38,9 @@ test('everything page uses a responsive refinement rail and divided result feed'
     assert.match(everythingPage, /results\.total/);
 });
 
-test('file results reuse previews and navigate to exact file details', () => {
-    assert.match(everythingPage, /ProjectFileController\.show\(\[/);
+test('file results reuse previews and navigate with server-owned hrefs', () => {
+    assert.match(everythingPage, /href=\{item\.href\}/);
+    assert.doesNotMatch(everythingPage, /ProjectFileController/);
     assert.match(
         everythingPage,
         /<ProjectFileThumbnail[\s\S]*?variant="result"/,

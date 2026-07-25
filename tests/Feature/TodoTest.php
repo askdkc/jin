@@ -8,7 +8,9 @@ use App\Models\Team;
 use App\Models\Todo;
 use App\Models\TodoList;
 use App\Models\User;
+use App\Notifications\MentionNotification;
 use App\Notifications\NewTodoListCommentNotification;
+use App\Notifications\TodoActivityNotification;
 use Illuminate\Support\Facades\Notification;
 use Inertia\Testing\AssertableInertia as Assert;
 
@@ -26,6 +28,8 @@ test('project participants can create and complete assigned todos', function () 
         ->assertRedirect(route('projects.todos.index', [$team, $project]));
 
     $list = TodoList::query()->firstOrFail();
+
+    expect($list->position)->toBe(0);
 
     $this->actingAs($member)
         ->patch(route('projects.todo-lists.update', [$team, $project, $list]), [
@@ -68,7 +72,9 @@ test('project participants can create and complete assigned todos', function () 
             ->missing('lists.0.todos.0.subtasks')
             ->missing('lists.0.todos.0.comments'));
 
-    expect($todo->fresh()->completed_by)->toBe($owner->id);
+    expect($todo->fresh())
+        ->completed_by->toBe($owner->id)
+        ->position->toBe(0);
 });
 
 test('project participants can open todo details while outsiders cannot', function () {
@@ -153,6 +159,8 @@ test('todos can be created with subtasks and completion watchers in one request'
     $todo = Todo::query()->whereNull('parent_id')->firstOrFail();
 
     expect($todo->completion_notify_ids)->toBe([$member->id])
+        ->and($todo->position)->toBe(0)
+        ->and($todo->subtasks()->orderBy('position')->pluck('position')->all())->toBe([0, 1])
         ->and($todo->subtasks()->orderBy('position')->pluck('title')->all())
         ->toBe(['チェックリスト作成', '最終確認'])
         ->and($todo->subtasks()->orderBy('position')->first()->assignee_id)->toBe($member->id)
@@ -177,6 +185,35 @@ test('todos can be created with subtasks and completion watchers in one request'
             ]],
         ])
         ->assertSessionHasErrors('subtasks.0.assignee_id');
+});
+
+test('top-level todo positions ignore subtask positions', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($owner);
+    $list = TodoList::factory()->for($project)->create();
+    $firstTodo = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->create([
+        'position' => 0,
+    ]);
+    Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->create([
+        'parent_id' => $firstTodo->id,
+        'position' => 99,
+    ]);
+
+    $this->actingAs($owner)
+        ->post(route('projects.todos.store', [$team, $project, $list]), [
+            'title' => '次のトップレベル任務',
+        ])
+        ->assertRedirect()
+        ->assertSessionHasNoErrors();
+
+    expect($list->todos()
+        ->whereNull('parent_id')
+        ->orderBy('position')
+        ->pluck('position')
+        ->all())->toBe([0, 1]);
 });
 
 test('todo assignees must participate in the project', function () {
@@ -321,6 +358,7 @@ test('todo routes scope lists and todos to their project', function () {
     $firstProject = Project::factory()->for($team)->for($owner, 'creator')->create();
     $secondProject = Project::factory()->for($team)->for($owner, 'creator')->create();
     $firstList = TodoList::factory()->for($firstProject)->create();
+    $wrongSourceList = TodoList::factory()->for($firstProject)->create();
     $firstTodo = Todo::factory()->for($firstList, 'todoList')->create();
     $secondList = TodoList::factory()->for($secondProject)->create();
     $secondTodo = Todo::factory()->for($secondList, 'todoList')->create();
@@ -338,6 +376,12 @@ test('todo routes scope lists and todos to their project', function () {
 
     $this->get(route('projects.todos.show', [$team, $firstProject, $firstList, $secondTodo]))
         ->assertNotFound();
+
+    $this->patch(route('projects.todos.move', [$team, $firstProject, $wrongSourceList, $firstTodo]), [
+        'target_list_id' => $wrongSourceList->id,
+    ])->assertNotFound();
+
+    expect($firstTodo->fresh()->todo_list_id)->toBe($firstList->id);
 
     $this->actingAs($owner)
         ->post(route('projects.todos.comments.store', [$team, $firstProject, $firstList, $secondTodo]), [
@@ -388,6 +432,69 @@ test('deleting todos or lists removes their comments', function () {
         ->and($listComment->fresh())->toBeNull();
 });
 
+test('todo and list deletions close position gaps in the affected sibling scope', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($owner);
+    $firstList = TodoList::factory()->for($project)->create(['position' => 2]);
+    $list = TodoList::factory()->for($project)->create(['position' => 7]);
+    $lastList = TodoList::factory()->for($project)->create(['position' => 13]);
+    $firstTodo = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->create([
+        'position' => 2,
+    ]);
+    $middleTodo = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->create([
+        'position' => 7,
+    ]);
+    $lastTodo = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->create([
+        'position' => 13,
+    ]);
+    $firstSubtask = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->create([
+        'parent_id' => $firstTodo->id,
+        'position' => 3,
+    ]);
+    $middleSubtask = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->create([
+        'parent_id' => $firstTodo->id,
+        'position' => 8,
+    ]);
+    $lastSubtask = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->create([
+        'parent_id' => $firstTodo->id,
+        'position' => 15,
+    ]);
+
+    $this->actingAs($owner)
+        ->delete(route('projects.todos.destroy', [$team, $project, $list, $middleTodo]))
+        ->assertRedirect();
+
+    expect($list->todos()
+        ->whereNull('parent_id')
+        ->orderBy('position')
+        ->pluck('id')
+        ->all())->toBe([$firstTodo->id, $lastTodo->id])
+        ->and($list->todos()
+            ->whereNull('parent_id')
+            ->orderBy('position')
+            ->pluck('position')
+            ->all())->toBe([0, 1]);
+
+    $this->delete(route('projects.todos.destroy', [$team, $project, $list, $middleSubtask]))
+        ->assertRedirect();
+
+    expect($firstTodo->subtasks()->orderBy('position')->pluck('id')->all())
+        ->toBe([$firstSubtask->id, $lastSubtask->id])
+        ->and($firstTodo->subtasks()->orderBy('position')->pluck('position')->all())
+        ->toBe([0, 1]);
+
+    $this->delete(route('projects.todo-lists.destroy', [$team, $project, $list]))
+        ->assertRedirect();
+
+    expect($project->todoLists()->orderBy('position')->pluck('id')->all())
+        ->toBe([$firstList->id, $lastList->id])
+        ->and($project->todoLists()->orderBy('position')->pluck('position')->all())
+        ->toBe([0, 1]);
+});
+
 test('project participants can create complete and view subtasks', function () {
     $owner = User::factory()->create();
     $member = User::factory()->create();
@@ -417,6 +524,7 @@ test('project participants can create complete and view subtasks', function () {
     expect($subtask)
         ->todo_list_id->toBe($list->id)
         ->parent_id->toBe($todo->id)
+        ->position->toBe(0)
         ->created_by->toBe($member->id)
         ->assignee_id->toBe($owner->id)
         ->and($subtask->due_on?->toDateString())->toBe('2026-08-03');
@@ -673,4 +781,117 @@ test('a member can toggle their subscription to a to-do list', function () {
         ->patch(route('projects.todo-lists.subscription.toggle', [$team, $project, $list]))
         ->assertRedirect();
     expect($list->subscribers()->whereKey($member->id)->exists())->toBeFalse();
+});
+
+test('todo updates change only submitted fields and explicit empty values still clear fields', function () {
+    $owner = User::factory()->create();
+    $assignee = User::factory()->create();
+    $watcher = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach([$assignee->id, $watcher->id], ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([$owner->id, $assignee->id, $watcher->id]);
+    $list = TodoList::factory()->for($project)->create();
+    $todo = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->create([
+        'title' => '変更前',
+        'details' => '<p>残すメモ</p>',
+        'assignee_id' => $assignee->id,
+        'due_on' => '2026-08-20',
+        'completion_notify_ids' => [$watcher->id],
+    ]);
+    Notification::fake();
+
+    $this->actingAs($owner)
+        ->patch(route('projects.todos.update', [$team, $project, $list, $todo]), [
+            'title' => '名称だけ変更',
+        ])
+        ->assertRedirect()
+        ->assertSessionHasNoErrors();
+
+    expect($todo->fresh())
+        ->title->toBe('名称だけ変更')
+        ->details->toBe('<p>残すメモ</p>')
+        ->assignee_id->toBe($assignee->id)
+        ->completion_notify_ids->toBe([$watcher->id])
+        ->and($todo->fresh()->due_on?->toDateString())->toBe('2026-08-20');
+    Notification::assertNothingSent();
+
+    $this->patch(route('projects.todos.update', [$team, $project, $list, $todo]), [
+        'details' => null,
+        'assignee_id' => '',
+        'due_on' => '',
+        'completion_notify_ids' => [],
+    ])->assertRedirect()->assertSessionHasNoErrors();
+
+    expect($todo->fresh())
+        ->title->toBe('名称だけ変更')
+        ->details->toBeNull()
+        ->assignee_id->toBeNull()
+        ->completion_notify_ids->toBe([])
+        ->due_on->toBeNull();
+    Notification::assertNothingSent();
+});
+
+test('todo updates notify only for changed assignment and note concerns', function () {
+    $owner = User::factory()->create();
+    $firstAssignee = User::factory()->create();
+    $secondAssignee = User::factory()->create();
+    $mentioned = User::factory()->create(['name' => '田中太郎']);
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach(
+        [$firstAssignee->id, $secondAssignee->id, $mentioned->id],
+        ['role' => TeamRole::Member->value],
+    );
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach([
+        $owner->id,
+        $firstAssignee->id,
+        $secondAssignee->id,
+        $mentioned->id,
+    ]);
+    $list = TodoList::factory()->for($project)->create();
+    $todo = Todo::factory()->for($list, 'todoList')->for($owner, 'creator')->create([
+        'title' => '公開前チェック',
+        'details' => '<p>確認事項</p>',
+        'assignee_id' => $firstAssignee->id,
+    ]);
+    Notification::fake();
+
+    $this->actingAs($owner)
+        ->patch(route('projects.todos.update', [$team, $project, $list, $todo]), [
+            'due_on' => '2026-08-21',
+        ])
+        ->assertRedirect();
+    Notification::assertNothingSent();
+
+    $this->patch(route('projects.todos.update', [$team, $project, $list, $todo]), [
+        'assignee_id' => $secondAssignee->id,
+    ])->assertRedirect();
+    Notification::assertSentTo(
+        $secondAssignee,
+        TodoActivityNotification::class,
+        fn (TodoActivityNotification $notification): bool => $notification->type === TodoActivityNotification::Assigned,
+    );
+    Notification::assertNotSentTo($firstAssignee, TodoActivityNotification::class);
+
+    Notification::fake();
+
+    $this->patch(route('projects.todos.update', [$team, $project, $list, $todo]), [
+        'details' => "<p>@{$mentioned->name} 確認してください。</p>",
+    ])->assertRedirect();
+    Notification::assertSentTo(
+        $mentioned,
+        MentionNotification::class,
+        fn (MentionNotification $notification): bool => $notification->type === MentionNotification::Todo
+            && $notification->title === $todo->title,
+    );
+
+    Notification::fake();
+
+    $this->patch(route('projects.todos.update', [$team, $project, $list, $todo]), [
+        'title' => '公開前チェック（更新）',
+    ])->assertRedirect();
+    Notification::assertNothingSent();
 });

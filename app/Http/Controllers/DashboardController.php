@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Enums\TeamRole;
 use App\Models\Activity;
 use App\Models\Project;
-use App\Models\ScheduleEvent;
 use App\Models\Team;
 use App\Models\TeamInvitation;
 use App\Models\Todo;
@@ -74,8 +73,6 @@ class DashboardController extends Controller
 
         $today = today();
         $endOfWeek = $today->copy()->endOfWeek();
-        $eventWindowStart = now();
-        $eventWindowEnd = $eventWindowStart->copy()->addDays(7);
         $todoData = fn (Todo $todo): array => [
             'id' => $todo->id,
             'title' => $todo->title,
@@ -137,31 +134,6 @@ class DashboardController extends Controller
                             'name' => $member->name,
                         ])
                         ->values(),
-                ]),
-            'myEvents' => ScheduleEvent::query()
-                ->select(['id', 'project_id', 'title', 'starts_at', 'ends_at', 'all_day'])
-                ->with('project:id,team_id,name')
-                ->where('starts_at', '<=', $eventWindowEnd)
-                ->where('ends_at', '>=', $eventWindowStart)
-                ->whereHas('project', fn (Builder $query) => $query
-                    ->whereIn(
-                        'projects.id',
-                        Project::query()->visibleTo($user, $currentTeam)->select('projects.id'),
-                    )
-                    ->whereNull('archived_at'))
-                ->oldest('starts_at')
-                ->limit(10)
-                ->get()
-                ->map(fn (ScheduleEvent $event): array => [
-                    'id' => $event->id,
-                    'title' => $event->title,
-                    'startsAt' => $event->starts_at->toISOString(),
-                    'endsAt' => $event->ends_at->toISOString(),
-                    'allDay' => $event->all_day,
-                    'project' => [
-                        'id' => $event->project->id,
-                        'name' => $event->project->name,
-                    ],
                 ]),
             'projectFolders' => $currentTeam->projectFolders()
                 ->orderBy('position')

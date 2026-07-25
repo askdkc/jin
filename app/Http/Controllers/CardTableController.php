@@ -17,6 +17,7 @@ use App\Models\Project;
 use App\Models\Team;
 use App\Models\User;
 use App\Support\InlineAttachments;
+use App\Support\OrderedPositions;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -28,8 +29,6 @@ use Inertia\Response;
 
 class CardTableController extends Controller
 {
-    private const POSITION_UPDATE_CHUNK_SIZE = 250;
-
     public function index(Team $currentTeam, Project $project): Response
     {
         Gate::authorize('view', $project);
@@ -133,9 +132,11 @@ class CardTableController extends Controller
         Project $project,
     ): RedirectResponse {
         DB::transaction(function () use ($request, $project): void {
+            $project = Project::query()->lockForUpdate()->findOrFail($project->id);
+            $lastPosition = $project->cardTables()->max('position');
             $cardTable = $project->cardTables()->create([
                 ...$request->validated(),
-                'position' => ((int) $project->cardTables()->max('position')) + 1,
+                'position' => $lastPosition === null ? 0 : ((int) $lastPosition) + 1,
             ]);
             $cardTable->cardColumns()->createMany([
                 [
@@ -156,7 +157,7 @@ class CardTableController extends Controller
                     'is_done' => true,
                 ],
             ]);
-        });
+        }, attempts: 5);
 
         return to_route('projects.card-tables.index', [$currentTeam, $project]);
     }
@@ -178,22 +179,31 @@ class CardTableController extends Controller
         CardTable $cardTable,
     ): RedirectResponse {
         Gate::authorize('delete', $cardTable);
-        DB::transaction(function () use ($cardTable): void {
-            $columnIds = $cardTable->cardColumns()->pluck('id');
+        DB::transaction(function () use ($project, $cardTable): void {
+            $project = Project::query()->lockForUpdate()->findOrFail($project->id);
+            $cardTable = $project->cardTables()->lockForUpdate()->findOrFail($cardTable->id);
+            $columnIds = $cardTable->cardColumns()
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->pluck('id');
+            $cardIds = Card::query()
+                ->whereIn('card_column_id', $columnIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->pluck('id');
             $commentIds = Comment::query()
                 ->where('commentable_type', (new CardColumn)->getMorphClass())
                 ->whereIn('commentable_id', $columnIds)
                 ->pluck('id');
             InlineAttachments::detachMany((new Comment)->getMorphClass(), $commentIds);
             Comment::query()->whereIn('id', $commentIds)->delete();
-            InlineAttachments::detachMany(
-                (new Card)->getMorphClass(),
-                Card::query()
-                    ->whereHas('cardColumn', fn ($query) => $query->where('card_table_id', $cardTable->id))
-                    ->pluck('id'),
-            );
+            InlineAttachments::detachMany((new Card)->getMorphClass(), $cardIds);
             $cardTable->delete();
-        });
+            OrderedPositions::resequence(
+                new CardTable,
+                $project->cardTables()->orderBy('position')->orderBy('id')->pluck('id'),
+            );
+        }, attempts: 5);
 
         return to_route('projects.card-tables.index', [$currentTeam, $project]);
     }
@@ -204,16 +214,19 @@ class CardTableController extends Controller
         Project $project,
         CardTable $cardTable,
     ): RedirectResponse {
-        $lastPosition = $cardTable->cardColumns()
-            ->where('is_triage', false)
-            ->where('is_not_now', false)
-            ->where('is_done', false)
-            ->max('position');
+        DB::transaction(function () use ($request, $cardTable): void {
+            $cardTable = CardTable::query()->lockForUpdate()->findOrFail($cardTable->id);
+            $lastPosition = $cardTable->cardColumns()
+                ->where('is_triage', false)
+                ->where('is_not_now', false)
+                ->where('is_done', false)
+                ->max('position');
 
-        $cardTable->cardColumns()->create([
-            ...$request->validated(),
-            'position' => $lastPosition === null ? 0 : ((int) $lastPosition) + 1,
-        ]);
+            $cardTable->cardColumns()->create([
+                ...$request->validated(),
+                'position' => $lastPosition === null ? 0 : ((int) $lastPosition) + 1,
+            ]);
+        }, attempts: 5);
 
         return to_route('projects.card-tables.index', [$currentTeam, $project]);
     }
@@ -240,6 +253,7 @@ class CardTableController extends Controller
         abort_if($this->isSystemColumn($cardColumn), 404);
 
         DB::transaction(function () use ($request, $cardTable, $cardColumn): void {
+            $cardTable = CardTable::query()->lockForUpdate()->findOrFail($cardTable->id);
             $columnIds = $cardTable->cardColumns()
                 ->where('is_triage', false)
                 ->where('is_not_now', false)
@@ -253,7 +267,7 @@ class CardTableController extends Controller
             $targetPosition = min((int) $request->validated('target_position'), $columnIds->count());
             $columnIds->splice($targetPosition, 0, [$cardColumn->id]);
             $this->normalizeColumnPositions($columnIds);
-        }, attempts: 3);
+        }, attempts: 5);
 
         return to_route('projects.card-tables.index', [$currentTeam, $project]);
     }
@@ -282,10 +296,13 @@ class CardTableController extends Controller
         abort_if($this->isSystemColumn($cardColumn), 404);
 
         DB::transaction(function () use ($cardColumn, $cardTable): void {
+            $cardTable = CardTable::query()->lockForUpdate()->findOrFail($cardTable->id);
+            $cardColumn = $cardTable->cardColumns()->lockForUpdate()->findOrFail($cardColumn->id);
+            $cardIds = $cardColumn->cards()->orderBy('id')->lockForUpdate()->pluck('id');
             $commentIds = $cardColumn->comments()->pluck('id');
             InlineAttachments::detachMany((new Comment)->getMorphClass(), $commentIds);
             $cardColumn->comments()->delete();
-            InlineAttachments::detachMany((new Card)->getMorphClass(), $cardColumn->cards()->pluck('id'));
+            InlineAttachments::detachMany((new Card)->getMorphClass(), $cardIds);
             $cardColumn->delete();
             $this->normalizeColumnPositions(
                 $cardTable->cardColumns()
@@ -296,7 +313,7 @@ class CardTableController extends Controller
                     ->orderBy('id')
                     ->pluck('id'),
             );
-        });
+        }, attempts: 5);
 
         return to_route('projects.card-tables.index', [$currentTeam, $project]);
     }
@@ -314,10 +331,12 @@ class CardTableController extends Controller
         CardColumn $cardColumn,
     ): RedirectResponse {
         DB::transaction(function () use ($request, $project, $cardColumn): void {
+            $cardColumn = CardColumn::query()->lockForUpdate()->findOrFail($cardColumn->id);
+            $lastPosition = $cardColumn->cards()->max('position');
             $card = $cardColumn->cards()->create([
                 ...$request->safe()->except('version'),
                 'created_by' => $request->user()->id,
-                'position' => ((int) $cardColumn->cards()->max('position')) + 1,
+                'position' => $lastPosition === null ? 0 : ((int) $lastPosition) + 1,
                 'version' => 1,
             ]);
 
@@ -329,7 +348,7 @@ class CardTableController extends Controller
             );
 
             Activity::record($project, $request->user(), ActivityType::CardCreated, $card, $card->title);
-        });
+        }, attempts: 5);
 
         return back(fallback: route('projects.card-tables.index', [$currentTeam, $project]));
     }
@@ -385,6 +404,11 @@ class CardTableController extends Controller
             $cardColumn,
             $card,
         ): void {
+            CardColumn::query()
+                ->whereIn('id', array_values(array_unique([$cardColumn->id, $targetColumn->id])))
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
             $updated = Card::query()
                 ->whereKey($card->id)
                 ->where('card_column_id', $cardColumn->id)
@@ -427,7 +451,7 @@ class CardTableController extends Controller
             }
 
             $this->normalizeCardPositions($targetCardIds);
-        }, attempts: 3);
+        }, attempts: 5);
 
         return to_route('projects.card-tables.index', [$currentTeam, $project]);
     }
@@ -444,12 +468,14 @@ class CardTableController extends Controller
         abort_unless($card->created_by === $request->user()->id || Gate::allows('delete', $cardTable), 403);
 
         DB::transaction(function () use ($card, $cardColumn): void {
+            $cardColumn = CardColumn::query()->lockForUpdate()->findOrFail($cardColumn->id);
+            $card = $cardColumn->cards()->lockForUpdate()->findOrFail($card->id);
             InlineAttachments::detach($card);
             $card->delete();
             $this->normalizeCardPositions(
                 $cardColumn->cards()->orderBy('position')->orderBy('id')->pluck('id'),
             );
-        });
+        }, attempts: 5);
 
         return to_route('projects.card-tables.index', [$currentTeam, $project]);
     }
@@ -461,7 +487,7 @@ class CardTableController extends Controller
             return;
         }
 
-        $this->updatePositions('card_columns', $columnIds);
+        OrderedPositions::resequence(new CardColumn, $columnIds);
     }
 
     /**
@@ -517,37 +543,7 @@ class CardTableController extends Controller
             return;
         }
 
-        $this->updatePositions('cards', $cardIds);
-    }
-
-    /** @param Collection<int, int> $ids */
-    private function updatePositions(string $tableName, Collection $ids): void
-    {
-        $connection = DB::connection();
-        $grammar = $connection->getQueryGrammar();
-        $table = $grammar->wrapTable($tableName);
-        $idColumn = $grammar->wrap('id');
-        $positionColumn = $grammar->wrap('position');
-        $updatedAtColumn = $grammar->wrap('updated_at');
-
-        foreach ($ids->chunk(self::POSITION_UPDATE_CHUNK_SIZE) as $chunk) {
-            $caseClauses = implode(' ', array_fill(0, $chunk->count(), 'WHEN ? THEN ?'));
-            $wherePlaceholders = implode(', ', array_fill(0, $chunk->count(), '?'));
-
-            // Bind every value: only hard-coded, grammar-quoted identifiers enter SQL.
-            // CASE is update-only, so a concurrent delete cannot recreate a row.
-            $sql = "UPDATE {$table} SET {$positionColumn} = CASE {$idColumn} {$caseClauses} ELSE {$positionColumn} END, {$updatedAtColumn} = ? WHERE {$idColumn} IN ({$wherePlaceholders})";
-            $caseBindings = $chunk
-                ->flatMap(fn (int $id, int $position): array => [$id, $position])
-                ->values()
-                ->all();
-
-            $connection->update($sql, [
-                ...$caseBindings,
-                now(),
-                ...$chunk->values()->all(),
-            ]);
-        }
+        OrderedPositions::resequence(new Card, $cardIds);
     }
 
     /** @throws ValidationException */

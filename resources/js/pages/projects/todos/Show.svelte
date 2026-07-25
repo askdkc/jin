@@ -35,6 +35,7 @@
 </script>
 
 <script lang="ts">
+    import type { RequestPayload } from '@inertiajs/core';
     import { Form, Link, router } from '@inertiajs/svelte';
     import Check from 'lucide-svelte/icons/check';
     import Download from 'lucide-svelte/icons/download';
@@ -99,21 +100,14 @@
     let titleDraft = $state(''); // set from todo.title in openField('title') before use
     let notifyDraft = $state<number[]>([]);
 
-    // ponytail: updateTodo requires a full valid payload (title is required, and an
-    // absent completion_notify_ids wipes it), so every inline save resends current
-    // values and overrides just the edited field — no backend partial-update support.
-    const patchField = (overrides: Record<string, unknown>): void => {
+    const patchField = (data: RequestPayload): void => {
         router.patch(
             ProjectTodoController.updateTodo(routeArguments).url,
+            data,
             {
-                title: todo.title,
-                details: todo.details ?? '',
-                assignee_id: todo.assigneeId ?? '',
-                due_on: todo.dueOn ?? '',
-                completion_notify_ids: todo.completionNotifyIds,
-                ...overrides,
+                preserveScroll: true,
+                onSuccess: () => (editingField = null),
             },
-            { preserveScroll: true, onSuccess: () => (editingField = null) },
         );
     };
     const openField = (field: EditableField): void => {
@@ -470,28 +464,6 @@
                             class="space-y-2"
                         >
                             {#snippet children({ errors, processing })}
-                                <input
-                                    type="hidden"
-                                    name="title"
-                                    value={todo.title}
-                                />
-                                <input
-                                    type="hidden"
-                                    name="assignee_id"
-                                    value={todo.assigneeId ?? ''}
-                                />
-                                <input
-                                    type="hidden"
-                                    name="due_on"
-                                    value={todo.dueOn ?? ''}
-                                />
-                                {#each todo.completionNotifyIds as notifyId (notifyId)}
-                                    <input
-                                        type="hidden"
-                                        name="completion_notify_ids[]"
-                                        value={notifyId}
-                                    />
-                                {/each}
                                 <RichTextEditor
                                     id="todo-details"
                                     name="details"

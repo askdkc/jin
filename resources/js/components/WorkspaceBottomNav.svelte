@@ -52,7 +52,7 @@
     // Recipients are mutable, so refresh them with pings before enabling a send.
     const pingsLazyData = ['workspaceBar.pings', 'navigationPeople'];
     const currentUser = $derived(page.props.auth.user);
-    const currentUserId = $derived(page.props.auth.user.id);
+    const currentUserId = $derived(currentUser?.id ?? 0);
     const unreadNotifications = $derived(
         workspace.notifications.filter((item) => !item.read).length,
     );
@@ -211,6 +211,10 @@
     };
 
     onMount(() => {
+        if (!currentUser) {
+            return;
+        }
+
         const timer = window.setInterval(() => (now = Date.now()), 30_000);
         const openHandler = (): void => openNewForYou();
         window.addEventListener('jin:new-for-you', openHandler);
@@ -870,7 +874,9 @@
                 sideOffset={8}
                 class="w-64"
             >
-                <UserMenuContent user={currentUser} />
+                {#if currentUser}
+                    <UserMenuContent user={currentUser} />
+                {/if}
             </DropdownMenuContent>
         </DropdownMenu>
         <div class="flex min-w-0 items-stretch justify-center">

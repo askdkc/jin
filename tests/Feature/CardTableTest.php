@@ -30,6 +30,7 @@ test('project participants can create and view card tables columns and cards', f
     $notNow = $cardTable->cardColumns()->where('is_not_now', true)->sole();
     $done = $cardTable->cardColumns()->where('is_done', true)->sole();
 
+    expect($cardTable->position)->toBe(0);
     expect($triage)
         ->name->toBe('Triage')
         ->is_collapsed->toBeFalse();
@@ -58,9 +59,11 @@ test('project participants can create and view card tables columns and cards', f
 
     $card = Card::query()->firstOrFail();
 
+    expect($column->position)->toBe(0);
     expect($card)
         ->created_by->toBe($member->id)
         ->assignee_id->toBe($member->id)
+        ->position->toBe(0)
         ->version->toBe(1);
     expect(Activity::query()->where('type', ActivityType::CardCreated)->exists())->toBeTrue();
 
@@ -351,6 +354,85 @@ test('only project managers can delete card tables and columns', function () {
         ->assertRedirect();
 
     expect($cardTable->fresh())->toBeNull();
+});
+
+test('card deletions close gaps without resequencing system columns', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($owner);
+    $firstTable = CardTable::factory()->for($project)->create(['position' => 2]);
+    $middleTable = CardTable::factory()->for($project)->create(['position' => 8]);
+    $lastTable = CardTable::factory()->for($project)->create(['position' => 13]);
+    $firstColumn = CardColumn::factory()->for($firstTable)->create(['position' => 2]);
+    $middleColumn = CardColumn::factory()->for($firstTable)->create(['position' => 8]);
+    $lastColumn = CardColumn::factory()->for($firstTable)->create(['position' => 13]);
+    $systemColumnPositions = $firstTable->cardColumns()
+        ->where(fn ($query) => $query
+            ->where('is_triage', true)
+            ->orWhere('is_not_now', true)
+            ->orWhere('is_done', true))
+        ->pluck('position', 'id')
+        ->all();
+    $firstCard = Card::factory()->for($firstColumn, 'cardColumn')->for($owner, 'creator')->create([
+        'position' => 2,
+    ]);
+    $middleCard = Card::factory()->for($firstColumn, 'cardColumn')->for($owner, 'creator')->create([
+        'position' => 8,
+    ]);
+    $lastCard = Card::factory()->for($firstColumn, 'cardColumn')->for($owner, 'creator')->create([
+        'position' => 13,
+    ]);
+
+    $this->actingAs($owner)
+        ->delete(route('projects.cards.destroy', [
+            $team,
+            $project,
+            $firstTable,
+            $firstColumn,
+            $middleCard,
+        ]))
+        ->assertRedirect();
+
+    expect($firstColumn->cards()->orderBy('position')->pluck('id')->all())
+        ->toBe([$firstCard->id, $lastCard->id])
+        ->and($firstColumn->cards()->orderBy('position')->pluck('position')->all())
+        ->toBe([0, 1]);
+
+    $this->delete(route('projects.card-columns.destroy', [
+        $team,
+        $project,
+        $firstTable,
+        $middleColumn,
+    ]))->assertRedirect();
+
+    expect($firstTable->cardColumns()
+        ->where('is_triage', false)
+        ->where('is_not_now', false)
+        ->where('is_done', false)
+        ->orderBy('position')
+        ->pluck('id')
+        ->all())->toBe([$firstColumn->id, $lastColumn->id])
+        ->and($firstTable->cardColumns()
+            ->where('is_triage', false)
+            ->where('is_not_now', false)
+            ->where('is_done', false)
+            ->orderBy('position')
+            ->pluck('position')
+            ->all())->toBe([0, 1])
+        ->and($firstTable->cardColumns()
+            ->whereKey(array_keys($systemColumnPositions))
+            ->pluck('position', 'id')
+            ->all())->toBe($systemColumnPositions);
+
+    $this->delete(route('projects.card-tables.destroy', [$team, $project, $middleTable]))
+        ->assertRedirect();
+
+    expect($project->cardTables()->orderBy('position')->pluck('id')->all())
+        ->toBe([$firstTable->id, $lastTable->id])
+        ->and($project->cardTables()->orderBy('position')->pluck('position')->all())
+        ->toBe([0, 1]);
 });
 
 test('system columns can be renamed without changing their system behavior', function () {

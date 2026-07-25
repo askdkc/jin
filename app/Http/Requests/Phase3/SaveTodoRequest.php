@@ -35,35 +35,46 @@ class SaveTodoRequest extends FormRequest
     public function rules(): array
     {
         $project = $this->route('project');
-
-        return [
-            'title' => ['required', 'string', 'max:255'],
-            'details' => ['nullable', 'string', 'max:5000'],
+        $isUpdate = $this->route('todo') instanceof Todo;
+        $sometimes = $isUpdate ? ['sometimes'] : [];
+        $rules = [
+            'title' => [...$sometimes, 'required', 'string', 'max:255'],
+            'details' => [...$sometimes, 'nullable', 'string', 'max:5000'],
             'assignee_id' => [
+                ...$sometimes,
                 'nullable',
                 'integer',
                 Rule::exists('project_user', 'user_id')->where('project_id', $project instanceof Project ? $project->id : 0),
             ],
-            'due_on' => ['nullable', 'date_format:Y-m-d'],
-            'completion_notify_ids' => ['nullable', 'array', 'max:50'],
+            'due_on' => [...$sometimes, 'nullable', 'date_format:Y-m-d'],
+            'completion_notify_ids' => [...$sometimes, 'nullable', 'array', 'max:50'],
             'completion_notify_ids.*' => [
                 'integer',
                 Rule::exists('project_user', 'user_id')->where('project_id', $project instanceof Project ? $project->id : 0),
             ],
-            'subtasks' => ['nullable', 'array', 'max:50'],
-            'subtasks.*' => ['required', 'array:title,assignee_id,due_on'],
-            'subtasks.*.title' => ['required', 'string', 'max:255'],
-            'subtasks.*.assignee_id' => [
-                'nullable',
-                'integer',
-                Rule::exists('project_user', 'user_id')->where('project_id', $project instanceof Project ? $project->id : 0),
-            ],
-            'subtasks.*.due_on' => ['nullable', 'date_format:Y-m-d'],
         ];
+
+        if (! $isUpdate) {
+            $rules += [
+                'subtasks' => ['nullable', 'array', 'max:50'],
+                'subtasks.*' => ['required', 'array:title,assignee_id,due_on'],
+                'subtasks.*.title' => ['required', 'string', 'max:255'],
+                'subtasks.*.assignee_id' => [
+                    'nullable',
+                    'integer',
+                    Rule::exists('project_user', 'user_id')->where('project_id', $project instanceof Project ? $project->id : 0),
+                ],
+                'subtasks.*.due_on' => ['nullable', 'date_format:Y-m-d'],
+            ];
+        }
+
+        return $rules;
     }
 
     protected function prepareForValidation(): void
     {
-        $this->merge(['details' => RichText::sanitizeInput($this->input('details'))]);
+        if ($this->exists('details')) {
+            $this->merge(['details' => RichText::sanitizeInput($this->input('details'))]);
+        }
     }
 }

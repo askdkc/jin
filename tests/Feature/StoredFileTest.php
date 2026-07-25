@@ -222,6 +222,7 @@ test('folder uploads create or reuse a material folder for every uploaded file',
 
     expect($folder->name)->toBe('Client Assets')
         ->and($folder->created_by)->toBe($owner->id)
+        ->and($folder->position)->toBe(0)
         ->and(StoredFile::query()->pluck('material_folder_id')->all())
         ->toBe([$folder->id, $folder->id]);
 

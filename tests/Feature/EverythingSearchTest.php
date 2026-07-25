@@ -1,6 +1,8 @@
 <?php
 
 use App\Enums\TeamRole;
+use App\Models\CardColumn;
+use App\Models\CardTable;
 use App\Models\CheckIn;
 use App\Models\CheckInPrompt;
 use App\Models\Comment;
@@ -14,7 +16,9 @@ use App\Models\Team;
 use App\Models\Todo;
 use App\Models\TodoList;
 use App\Models\User;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia as Assert;
 
@@ -28,9 +32,9 @@ test('everything view combines the searchable project content types', function (
     $project->members()->attach($member);
     $message = MessageBoardPost::factory()->for($project)->for($member, 'user')->create(['title' => '告知']);
     $todoList = TodoList::factory()->for($project)->create();
-    Todo::factory()->for($todoList)->for($member, 'creator')->create(['title' => '確認作業']);
+    $todo = Todo::factory()->for($todoList)->for($member, 'creator')->create(['title' => '確認作業']);
     Document::factory()->for($project)->for($member, 'creator')->create(['title' => '運用文書']);
-    StoredFile::factory()->for($project)->for($member, 'uploader')->create(['original_name' => '仕様.pdf']);
+    $file = StoredFile::factory()->for($project)->for($member, 'uploader')->create(['original_name' => '仕様.pdf']);
     ExternalLink::factory()->for($project)->for($member, 'creator')->create(['title' => '参考リンク']);
     Comment::factory()->for($project)->for($member, 'user')->for($message, 'commentable')->create(['body' => '確認コメント']);
 
@@ -40,13 +44,100 @@ test('everything view combines the searchable project content types', function (
         ->assertInertia(fn (Assert $page) => $page
             ->component('everything/Index')
             ->has('results.data', 6)
-            ->where('results.data', function (Collection $items): bool {
+            ->where('results.data', function (Collection $items) use ($file, $message, $project, $team, $todo, $todoList): bool {
                 $types = $items->pluck('type')->sort()->values()->all();
+                $byType = $items->keyBy('type');
 
-                return $types === ['comment', 'document', 'file', 'link', 'message', 'todo'];
+                return $types === ['comment', 'document', 'file', 'link', 'message', 'todo']
+                    && $byType['message']['href'] === route(
+                        'projects.messages.show',
+                        [$team, $project, $message],
+                        absolute: false,
+                    )
+                    && $byType['todo']['href'] === route(
+                        'projects.todos.show',
+                        [$team, $project, $todoList, $todo],
+                        absolute: false,
+                    )
+                    && $byType['document']['href'] === route(
+                        'projects.documents.index',
+                        [$team, $project],
+                        absolute: false,
+                    )
+                    && $byType['file']['href'] === route(
+                        'projects.files.show',
+                        [$team, $project, $file],
+                        absolute: false,
+                    )
+                    && $byType['link']['href'] === route(
+                        'projects.materials.index',
+                        [$team, $project],
+                        absolute: false,
+                    )
+                    && $byType['comment']['href'] === route(
+                        'projects.messages.show',
+                        [$team, $project, $message],
+                        absolute: false,
+                    )
+                    && $items->every(fn (array $item): bool => ! array_key_exists('target', $item));
             })
             ->where('projects.0.id', $project->id)
             ->where('projects.0.name', '横断対象'));
+});
+
+test('everything results fall back to the project when destination tools are disabled', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create([
+        'enabled_tools' => [],
+    ]);
+    $message = MessageBoardPost::factory()->for($project)->for($owner, 'user')->create([
+        'title' => '無効ツールのメッセージ',
+    ]);
+    $todoList = TodoList::factory()->for($project)->create();
+    $todo = Todo::factory()->for($todoList)->for($owner, 'creator')->create([
+        'title' => '無効ツールのTo-do',
+    ]);
+    Document::factory()->for($project)->for($owner, 'creator')->create([
+        'title' => '無効ツールの文書',
+    ]);
+    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'original_name' => '無効ツールのファイル.txt',
+        'preview_path' => "projects/{$project->id}/previews/disabled-tool.webp",
+        'preview_status' => 'ready',
+    ]);
+    ExternalLink::factory()->for($project)->for($owner, 'creator')->create([
+        'title' => '無効ツールのリンク',
+    ]);
+    $event = ScheduleEvent::factory()->for($project)->for($owner, 'creator')->create();
+    $checkIn = CheckIn::factory()->for($project)->for($owner, 'creator')->create();
+    $prompt = CheckInPrompt::factory()->for($checkIn)->for($owner)->create();
+    $cardTable = CardTable::factory()->for($project)->create();
+    $cardColumn = CardColumn::factory()->for($cardTable)->create();
+
+    foreach ([$message, $todo, $todoList, $file, $event, $prompt, $cardColumn] as $commentable) {
+        Comment::factory()
+            ->for($project)
+            ->for($owner, 'user')
+            ->for($commentable, 'commentable')
+            ->create(['body' => '無効ツールのコメント']);
+    }
+
+    $fallback = route('projects.show', [$team, $project], absolute: false);
+
+    $this->actingAs($owner)
+        ->get(route('everything.index', [$team, 'q' => '無効ツール']))
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('results.data', 12)
+            ->where(
+                'results.data',
+                fn (Collection $items): bool => $items->every(
+                    fn (array $item): bool => $item['href'] === $fallback,
+                )
+                    && $items->firstWhere('type', 'file')['thumbnailUrl'] === null
+                    && $items->firstWhere('type', 'file')['canAccessFile'] === false,
+            ));
 });
 
 test('everything search finds files by extension or full filename', function (string $query) {
@@ -75,6 +166,56 @@ test('everything search finds files by extension or full filename', function (st
     'extension' => '.pdf',
     'full filename' => '仕様.pdf',
 ]);
+
+test('everything search links subtasks to their parent todo detail', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $todoList = TodoList::factory()->for($project)->create();
+    $parent = Todo::factory()->for($todoList, 'todoList')->for($owner, 'creator')->create();
+    $subtask = Todo::factory()->for($todoList, 'todoList')->for($owner, 'creator')->create([
+        'parent_id' => $parent->id,
+        'title' => '検索対象の子任務',
+    ]);
+
+    $this->actingAs($owner)
+        ->get(route('everything.index', [$team, 'q' => '検索対象の子任務', 'type' => 'todo']))
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('results.data', 1)
+            ->where('results.data.0.id', $subtask->id)
+            ->where('results.data.0.href', route(
+                'projects.todos.show',
+                [$team, $project, $todoList, $parent],
+                absolute: false,
+            )));
+});
+
+test('comments attached to subtasks link to the todo index', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $todoList = TodoList::factory()->for($project)->create();
+    $parent = Todo::factory()->for($todoList, 'todoList')->for($owner, 'creator')->create();
+    $subtask = Todo::factory()->for($todoList, 'todoList')->for($owner, 'creator')->create([
+        'parent_id' => $parent->id,
+    ]);
+    Comment::factory()
+        ->for($project)
+        ->for($owner, 'user')
+        ->for($subtask, 'commentable')
+        ->create(['body' => '子任務だけのコメント']);
+
+    $this->actingAs($owner)
+        ->get(route('everything.index', [$team, 'q' => '子任務だけのコメント', 'type' => 'comment']))
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('results.data', 1)
+            ->where(
+                'results.data.0.href',
+                route('projects.todos.index', [$team, $project], absolute: false),
+            ));
+});
 
 test('everything search exposes rich file metadata without private storage fields', function () {
     Storage::fake('public');
@@ -105,18 +246,27 @@ test('everything search exposes rich file metadata without private storage field
             ->where('results.data.0.id', $file->id)
             ->where('results.data.0.type', 'file')
             ->where('results.data.0.title', 'design-preview.pdf')
+            ->where('results.data.0.href', route(
+                'projects.files.show',
+                [$team, $project, $file],
+                absolute: false,
+            ))
             ->where('results.data.0.mimeType', 'application/pdf')
             ->where('results.data.0.thumbnailUrl', route(
                 'projects.files.thumbnail',
                 [$team, $project, $file],
                 absolute: false,
             ))
+            ->where('results.data.0.canAccessFile', true)
             ->where('results.data.0.size', 4096)
             ->where('results.data.0.uploader.id', $owner->id)
             ->where('results.data.0.uploader.name', $owner->name)
             ->where('results.data.0.uploader.avatar', $owner->avatar)
             ->where('results.data.0.createdAt', $file->created_at?->toISOString())
             ->missing('results.data.0.snippet')
+            ->missing('results.data.0.target')
+            ->missing('results.data.0.route_parent_id')
+            ->missing('results.data.0.route_resource_id')
             ->missing('results.data.0.disk')
             ->missing('results.data.0.path')
             ->missing('results.data.0.preview_path')
@@ -237,7 +387,7 @@ test('everything results are paginated and retain search filters', function () {
             )));
 });
 
-test('comments link back to their parent tool', function () {
+test('comments link back to their exact parent records', function () {
     $owner = User::factory()->create();
     $team = Team::factory()->create();
     $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
@@ -249,21 +399,98 @@ test('comments link back to their parent tool', function () {
     $event = ScheduleEvent::factory()->for($project)->for($owner, 'creator')->create();
     $checkIn = CheckIn::factory()->for($project)->for($owner, 'creator')->create();
     $prompt = CheckInPrompt::factory()->for($checkIn)->for($owner)->create();
+    $cardTable = CardTable::factory()->for($project)->create();
+    $cardColumn = CardColumn::factory()->for($cardTable)->create();
     Comment::factory()->for($project)->for($owner, 'user')->for($message, 'commentable')->create(['body' => 'メッセージ側コメント']);
     Comment::factory()->for($project)->for($owner, 'user')->for($todo, 'commentable')->create(['body' => 'To-do側コメント']);
+    Comment::factory()->for($project)->for($owner, 'user')->for($todoList, 'commentable')->create(['body' => 'To-doリスト側コメント']);
     Comment::factory()->for($project)->for($owner, 'user')->for($file, 'commentable')->create(['body' => 'ファイル側コメント']);
     Comment::factory()->for($project)->for($owner, 'user')->for($event, 'commentable')->create(['body' => '予定側コメント']);
     Comment::factory()->for($project)->for($owner, 'user')->for($prompt, 'commentable')->create(['body' => 'チェックイン側コメント']);
+    Comment::factory()->for($project)->for($owner, 'user')->for($cardColumn, 'commentable')->create(['body' => 'カード列側コメント']);
+
+    $expectedHrefs = [
+        'メッセージ側コメント' => route('projects.messages.show', [$team, $project, $message], absolute: false),
+        'To-do側コメント' => route('projects.todos.show', [$team, $project, $todoList, $todo], absolute: false),
+        'To-doリスト側コメント' => route('projects.todo-lists.show', [$team, $project, $todoList], absolute: false),
+        'ファイル側コメント' => route('projects.files.show', [$team, $project, $file], absolute: false),
+        '予定側コメント' => route('projects.schedule.show', [$team, $project, $event], absolute: false),
+        'チェックイン側コメント' => route(
+            'projects.check-ins.show',
+            [$team, $project, $checkIn],
+            absolute: false,
+        ),
+        'カード列側コメント' => route(
+            'projects.card-columns.show',
+            [$team, $project, $cardTable, $cardColumn],
+            absolute: false,
+        ),
+    ];
 
     $this->actingAs($owner)
         ->get(route('everything.index', [$team, 'type' => 'comment']))
         ->assertInertia(fn (Assert $page) => $page
-            ->has('results.data', 5)
-            ->where('results.data', function (Collection $items): bool {
-                $targets = $items->pluck('target')->sort()->values()->all();
+            ->has('results.data', 7)
+            ->where('results.data', function (Collection $items) use ($expectedHrefs): bool {
+                $hrefs = $items->mapWithKeys(fn (array $item): array => [
+                    $item['snippet'] => $item['href'],
+                ])->all();
+                ksort($hrefs);
+                ksort($expectedHrefs);
 
-                return $targets === ['check_ins', 'files', 'messages', 'schedule', 'todos']
-                    && $items->every(fn (array $item): bool => $item['project']['id'] > 0
+                return $hrefs === $expectedHrefs
+                    && $items->every(fn (array $item): bool => ! array_key_exists('target', $item)
+                        && $item['project']['id'] > 0
                         && preg_match('/^\d{4}-\d{2}-\d{2}/', $item['updatedAt']) === 1);
             }));
+});
+
+test('comments with missing parents fall back to their project', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $comment = Comment::factory()->for($project)->for($owner, 'user')->make([
+        'body' => '親なしコメント',
+    ]);
+    $comment->commentable_type = MessageBoardPost::class;
+    $comment->commentable_id = 999_999;
+    $comment->save();
+
+    $this->actingAs($owner)
+        ->get(route('everything.index', [$team, 'type' => 'comment']))
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('results.data', 1)
+            ->where(
+                'results.data.0.href',
+                route('projects.show', [$team, $project], absolute: false),
+            ));
+});
+
+test('comment parent records are hydrated in batches', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $message = MessageBoardPost::factory()->for($project)->for($owner, 'user')->create();
+    Comment::factory()
+        ->count(5)
+        ->for($project)
+        ->for($owner, 'user')
+        ->for($message, 'commentable')
+        ->create();
+    $queries = [];
+    DB::listen(function (QueryExecuted $query) use (&$queries): void {
+        $queries[] = $query->sql;
+    });
+
+    $this->actingAs($owner)
+        ->get(route('everything.index', [$team, 'type' => 'comment']))
+        ->assertOk();
+
+    $messageParentQueries = collect($queries)->filter(
+        fn (string $sql): bool => str_contains($sql, 'from "message_board_posts"'),
+    );
+
+    expect($messageParentQueries)->toHaveCount(1);
 });

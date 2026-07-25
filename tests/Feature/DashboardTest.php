@@ -263,7 +263,7 @@ test('dashboard hides project work after a member leaves the project', function 
             ->has('availableRoles', 0));
 });
 
-test('dashboard includes upcoming events from visible projects for the personal dock', function () {
+test('dashboard does not duplicate personal dock events in page props', function () {
     $this->travelTo('2026-07-15 09:00:00');
 
     $user = User::factory()->create();
@@ -272,7 +272,7 @@ test('dashboard includes upcoming events from visible projects for the personal 
     $project->members()->attach($user);
     $user->favoriteProjects()->attach($project);
 
-    $upcomingEvent = ScheduleEvent::factory()->for($project)->create([
+    ScheduleEvent::factory()->for($project)->create([
         'title' => '来週の作戦会議',
         'starts_at' => now()->addDays(2),
         'ends_at' => now()->addDays(2)->addHour(),
@@ -295,9 +295,6 @@ test('dashboard includes upcoming events from visible projects for the personal 
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
             ->component('Dashboard')
-            ->has('myEvents', 1)
-            ->where('myEvents.0.id', $upcomingEvent->id)
-            ->where('myEvents.0.title', '来週の作戦会議')
-            ->where('myEvents.0.project.id', $project->id)
+            ->missing('myEvents')
             ->where('myProjects.0.isFavorite', true));
 });

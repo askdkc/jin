@@ -9,9 +9,11 @@ use App\Models\CheckIn;
 use App\Models\CheckInNotificationDelivery;
 use App\Models\CheckInPrompt;
 use App\Models\Project;
+use App\Models\StoredFile;
 use App\Models\Team;
 use App\Models\User;
 use App\Notifications\CheckInDueNotification;
+use App\Support\CheckInNotificationDispatcher;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -609,4 +611,126 @@ test('check-in dispatch failures return a failed command and keep the delivery p
 
     expect($delivery->refresh()->dispatched_at)->toBeNull()
         ->and($delivery->last_error)->toBe('queue unavailable');
+});
+
+test('terminal check-in notification failures become dispatchable again without reopening finished deliveries', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($owner);
+    $checkIn = CheckIn::factory()->for($project)->for($owner, 'creator')->create();
+    $checkIn->targets()->attach($owner);
+    $prompts = CheckInPrompt::factory()->count(3)->for($checkIn)->for($owner)->create();
+    $failedDelivery = CheckInNotificationDelivery::query()->create([
+        'check_in_prompt_id' => $prompts[0]->id,
+        'dispatched_at' => now(),
+        'processing_at' => now(),
+    ]);
+    $queuedDelivery = CheckInNotificationDelivery::query()->create([
+        'check_in_prompt_id' => $prompts[1]->id,
+        'dispatched_at' => now(),
+        'queued_at' => now(),
+    ]);
+    $skippedDelivery = CheckInNotificationDelivery::query()->create([
+        'check_in_prompt_id' => $prompts[2]->id,
+        'dispatched_at' => now(),
+        'skipped_at' => now(),
+        'skip_reason' => 'target_removed',
+    ]);
+    $exception = new RuntimeException('terminal notification failure');
+
+    (new QueueCheckInDueNotification($failedDelivery->id))->failed($exception);
+    (new QueueCheckInDueNotification($queuedDelivery->id))->failed($exception);
+    (new QueueCheckInDueNotification($skippedDelivery->id))->failed($exception);
+
+    expect($failedDelivery->refresh())
+        ->dispatched_at->toBeNull()
+        ->processing_at->toBeNull()
+        ->last_error->toBe('terminal notification failure')
+        ->and($queuedDelivery->refresh()->dispatched_at)->not->toBeNull()
+        ->and($queuedDelivery->last_error)->toBeNull()
+        ->and($skippedDelivery->refresh()->dispatched_at)->not->toBeNull()
+        ->and($skippedDelivery->last_error)->toBeNull();
+
+    $bus = Mockery::mock(Dispatcher::class);
+    $bus->shouldReceive('dispatch')
+        ->once()
+        ->with(Mockery::type(QueueCheckInDueNotification::class))
+        ->andReturn(1);
+    $this->app->instance(Dispatcher::class, $bus);
+
+    $result = app(CheckInNotificationDispatcher::class)->dispatchPending();
+
+    expect($result)->toBe(['dispatched' => 1, 'failed' => 0])
+        ->and($failedDelivery->refresh()->dispatched_at)->not->toBeNull()
+        ->and($failedDelivery->processing_at)->toBeNull()
+        ->and($failedDelivery->last_error)->toBeNull();
+});
+
+test('a submitted check-in answer cannot be overwritten by a stale initial submission', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($owner);
+    $checkIn = CheckIn::factory()->for($project)->for($owner, 'creator')->create();
+    $prompt = CheckInPrompt::factory()->for($checkIn)->for($owner)->create();
+
+    $this->actingAs($owner)
+        ->post(route('projects.check-ins.answer', [$team, $project, $checkIn, $prompt]), [
+            'answer' => '最初の回答',
+        ])
+        ->assertRedirect();
+
+    $this->post(route('projects.check-ins.answer', [$team, $project, $checkIn, $prompt]), [
+        'answer' => '古い画面からの回答',
+    ])->assertSessionHasErrors('answer');
+
+    expect($prompt->fresh()->answer)->toBe('最初の回答')
+        ->and(Activity::query()->where('type', ActivityType::CheckInAnswered)->count())->toBe(1);
+});
+
+test('an ad hoc check-in prompt rolls back when its inline attachment cannot be claimed', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($owner);
+    $checkIn = CheckIn::factory()->for($project)->for($owner, 'creator')->create();
+    $checkIn->targets()->attach($owner);
+    $file = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($project)
+        ->for($owner, 'uploader')
+        ->create([
+            'is_inline' => true,
+            'preview_status' => 'deleting',
+        ]));
+
+    $this->actingAs($owner)
+        ->post(route('projects.check-ins.respond', [$team, $project, $checkIn]), [
+            'answer' => "<a href=\"/files/{$file->id}/preview\">添付</a>",
+        ])
+        ->assertSessionHasErrors('answer');
+
+    expect($checkIn->prompts()->count())->toBe(0)
+        ->and($file->fresh()->attachable_id)->toBeNull();
+});
+
+test('pending check-in answers cannot be edited before submission', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($owner);
+    $checkIn = CheckIn::factory()->for($project)->for($owner, 'creator')->create();
+    $prompt = CheckInPrompt::factory()->for($checkIn)->for($owner)->create();
+
+    $this->actingAs($owner)
+        ->patch(route('projects.check-ins.answers.update', [$team, $project, $checkIn, $prompt]), [
+            'answer' => '未送信の編集',
+        ])
+        ->assertSessionHasErrors('answer');
+
+    expect($prompt->fresh()->answer)->toBeNull();
 });

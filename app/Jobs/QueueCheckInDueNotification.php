@@ -151,6 +151,7 @@ class QueueCheckInDueNotification implements ShouldBeUnique, ShouldQueue
             ->whereNull('skipped_at')
             ->update([
                 'processing_at' => null,
+                'dispatched_at' => null,
                 'last_error' => $exception === null
                     ? 'Check-in notification job failed.'
                     : Str::limit($exception->getMessage(), 2000),

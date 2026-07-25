@@ -234,18 +234,10 @@ export type MaterialFilters = {
 export type EverythingType =
     'message' | 'todo' | 'document' | 'file' | 'link' | 'comment';
 
-export type EverythingTarget =
-    | 'messages'
-    | 'todos'
-    | 'documents'
-    | 'files'
-    | 'materials'
-    | 'schedule'
-    | 'check_ins';
-
 type EverythingItemBase = {
     id: number;
     title: string;
+    href: string;
     project: ProjectTool;
     updatedAt: string;
 };
@@ -253,13 +245,13 @@ type EverythingItemBase = {
 export type EverythingTextItem = EverythingItemBase & {
     type: Exclude<EverythingType, 'file'>;
     snippet: string;
-    target: EverythingTarget;
 };
 
 export type EverythingFileItem = EverythingItemBase & {
     type: 'file';
     mimeType: string | null;
     thumbnailUrl: string | null;
+    canAccessFile: boolean;
     size: number;
     uploader: {
         id: number;

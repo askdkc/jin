@@ -160,6 +160,7 @@ class QueueTodoDueReminder implements ShouldBeUnique, ShouldQueue
             ->whereNull('skipped_at')
             ->update([
                 'processing_at' => null,
+                'dispatched_at' => null,
                 'last_error' => $exception === null
                     ? 'Todo due reminder job failed.'
                     : Str::limit($exception->getMessage(), 2000),

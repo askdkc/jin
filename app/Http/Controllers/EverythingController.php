@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\StoredFileContentStatus;
 use App\Http\Requests\Phase10\EverythingIndexRequest;
 use App\Models\CardColumn;
 use App\Models\CheckInPrompt;
@@ -16,9 +17,12 @@ use App\Models\TodoList;
 use App\Models\User;
 use App\Support\OnlyOfficeDocumentTypeResolver;
 use App\Support\RichText;
+use App\Support\StoredFileContentSearch;
+use App\Support\StoredFileContentSnippet;
 use Illuminate\Contracts\Database\Query\Expression;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
@@ -28,6 +32,8 @@ class EverythingController extends Controller
 {
     public function __construct(
         private OnlyOfficeDocumentTypeResolver $onlyOfficeDocumentTypeResolver,
+        private StoredFileContentSearch $storedFileContentSearch,
+        private StoredFileContentSnippet $storedFileContentSnippet,
     ) {}
 
     public function __invoke(EverythingIndexRequest $request, Team $currentTeam): Response
@@ -86,6 +92,7 @@ class EverythingController extends Controller
             ->map(fn (object $item): array => get_object_vars($item))
             ->filter(fn (array $item): bool => $item['type'] === 'file')
             ->map(fn (array $item): int => (int) $item['id'])
+            ->values()
             ->all();
         $files = StoredFile::query()
             ->with('uploader:id,name,avatar_path')
@@ -101,6 +108,7 @@ class EverythingController extends Controller
                 'created_at',
             ])
             ->keyBy('id');
+        $fileSnippets = $this->fileSnippets($fileIds, $search);
         $commentIds = collect($results->items())
             ->map(fn (object $item): array => get_object_vars($item))
             ->filter(fn (array $item): bool => $item['type'] === 'comment')
@@ -122,11 +130,20 @@ class EverythingController extends Controller
             ->get()
             ->keyBy('id');
 
-        $results->through(function (object $item) use ($comments, $currentTeam, $files, $projects): array {
+        $results->through(function (object $item) use (
+            $comments,
+            $currentTeam,
+            $files,
+            $fileSnippets,
+            $projects,
+        ): array {
             $values = get_object_vars($item);
             $project = $projects->get((int) $values['project_id']);
             $file = $values['type'] === 'file'
                 ? $files->get((int) $values['id'])
+                : null;
+            $fileSnippet = $values['type'] === 'file'
+                ? $fileSnippets->get((int) $values['id'])
                 : null;
             $comment = $values['type'] === 'comment'
                 ? $comments->get((int) $values['id'])
@@ -135,6 +152,7 @@ class EverythingController extends Controller
             return $this->transformResult(
                 $item,
                 $file instanceof StoredFile ? $file : null,
+                is_string($fileSnippet) ? $fileSnippet : null,
                 $comment instanceof Comment ? $comment : null,
                 $project instanceof Project ? $project : null,
                 $currentTeam,
@@ -234,10 +252,67 @@ class EverythingController extends Controller
             ])
             ->selectRaw('? as type, NULL as route_parent_id, NULL as route_resource_id', ['file']);
 
-        $this->applySearch($query, $search, ['stored_files.original_name']);
+        if ($search !== null) {
+            $query->where(function (Builder $searchQuery) use ($search): void {
+                $searchQuery->where(
+                    'stored_files.original_name',
+                    'like',
+                    "%{$search}%",
+                );
+                $this->storedFileContentSearch->addContentMatch(
+                    $searchQuery,
+                    $search,
+                );
+            });
+        }
+
         $this->applyFileCategoryFilters($query, $fileCategories);
 
         return $this->scopeProjectAccess($query, $team, $user, $projectId);
+    }
+
+    /**
+     * @param  array<int, int>  $fileIds
+     * @return Collection<int, string>
+     */
+    private function fileSnippets(array $fileIds, ?string $search): Collection
+    {
+        if ($search === null || $fileIds === []) {
+            return collect();
+        }
+
+        return DB::table('stored_file_contents')
+            ->join(
+                'stored_files',
+                'stored_files.id',
+                '=',
+                'stored_file_contents.stored_file_id',
+            )
+            ->whereIn('stored_file_contents.stored_file_id', $fileIds)
+            ->whereColumn(
+                'stored_file_contents.source_checksum',
+                'stored_files.checksum',
+            )
+            ->where(
+                'stored_file_contents.status',
+                StoredFileContentStatus::Ready->value,
+            )
+            ->whereNotNull('stored_file_contents.content')
+            ->get([
+                'stored_file_contents.stored_file_id',
+                'stored_file_contents.content',
+            ])
+            ->mapWithKeys(function (object $contentRow) use ($search): array {
+                $values = get_object_vars($contentRow);
+                $snippet = $this->storedFileContentSnippet->make(
+                    (string) $values['content'],
+                    $search,
+                );
+
+                return $snippet === null
+                    ? []
+                    : [(int) $values['stored_file_id'] => $snippet];
+            });
     }
 
     private function linkQuery(Team $team, User $user, ?string $search, ?int $projectId): Builder
@@ -428,7 +503,7 @@ class EverythingController extends Controller
      *     href: string,
      *     project: array{id: int, name: string},
      *     updatedAt: string,
-     *     snippet?: string,
+     *     snippet: string|null,
      *     mimeType?: string|null,
      *     thumbnailUrl?: string|null,
      *     canAccessFile?: bool,
@@ -440,6 +515,7 @@ class EverythingController extends Controller
     private function transformResult(
         object $item,
         ?StoredFile $file,
+        ?string $fileSnippet,
         ?Comment $comment,
         ?Project $project,
         Team $team,
@@ -474,6 +550,7 @@ class EverythingController extends Controller
         if ($file === null) {
             return [
                 ...$result,
+                'snippet' => $fileSnippet,
                 'mimeType' => $fallbackMimeType,
                 'thumbnailUrl' => null,
                 'canAccessFile' => $canAccessFile,
@@ -485,6 +562,7 @@ class EverythingController extends Controller
 
         return [
             ...$result,
+            'snippet' => $fileSnippet,
             'mimeType' => $file->mime_type ?? $fallbackMimeType,
             'thumbnailUrl' => $canAccessFile
                 && $file->preview_status === 'ready'

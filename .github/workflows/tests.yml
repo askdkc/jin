@@ -83,7 +83,7 @@ jobs:
       DB_PASSWORD: postgres
     services:
       postgres:
-        image: postgres:17-alpine
+        image: groonga/pgroonga:4.0.6-alpine-17@sha256:71665e330db82bb162a021c34d9ccf4bc933505bd78c65f8770eddbeaee8b3ab
         env:
           POSTGRES_DB: jin_test
           POSTGRES_USER: postgres
@@ -134,6 +134,104 @@ jobs:
 
       - name: Run PostgreSQL Tests
         run: php artisan test --compact
+
+  file-content-extractors:
+    needs: ci
+    runs-on: ubuntu-latest
+    env:
+      STORED_FILE_CONTENT_INTEGRATION: 'true'
+      STORED_FILE_CONTENT_MARKITDOWN_PATH: ${{ github.workspace }}/.venv-file-content/bin/markitdown
+      STORED_FILE_CONTENT_ANTIWORD_PATH: /usr/bin/antiword
+      STORED_FILE_CONTENT_CATDOC_PATH: /usr/bin/catdoc
+      STORED_FILE_CONTENT_XLS2CSV_PATH: /usr/bin/xls2csv
+      STORED_FILE_CONTENT_CATPPT_PATH: /usr/bin/catppt
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, sqlite3, zip
+          tools: composer:v2
+          coverage: none
+
+      - name: Install Extractor Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            antiword \
+            catdoc \
+            libreoffice-calc \
+            libreoffice-impress \
+            libreoffice-writer \
+            python3-venv \
+            qpdf
+          python3 -m venv .venv-file-content
+          .venv-file-content/bin/python -m pip install \
+            --disable-pip-version-check \
+            --requirement requirements-file-content.txt \
+            'msoffcrypto-tool==6.0.0'
+
+      - name: Install PHP Dependencies
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Configure Application
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      - name: Generate Non-Sensitive Extractor Fixtures
+        run: |
+          fixture_dir="${{ github.workspace }}/tests/Fixtures/StoredFileContent"
+          generated_dir="${fixture_dir}/generated"
+          source_dir="$(mktemp -d)"
+          trap 'rm -rf "$source_dir"' EXIT
+          rm -rf "$generated_dir"
+          mkdir -p "$generated_dir"
+          cp "${fixture_dir}/source.fodt" "${source_dir}/supported.fodt"
+          cp "${fixture_dir}/source.fods" "${source_dir}/supported.fods"
+          cp "${fixture_dir}/source.fodp" "${source_dir}/supported.fodp"
+
+          libreoffice --headless --convert-to 'docx:Office Open XML Text' \
+            --outdir "$generated_dir" "${source_dir}/supported.fodt"
+          libreoffice --headless --convert-to 'doc:MS Word 97' \
+            --outdir "$generated_dir" "${source_dir}/supported.fodt"
+          libreoffice --headless --convert-to 'pdf:writer_pdf_Export' \
+            --outdir "$generated_dir" "${source_dir}/supported.fodt"
+          libreoffice --headless --convert-to 'xlsx:Calc MS Excel 2007 XML' \
+            --outdir "$generated_dir" "${source_dir}/supported.fods"
+          libreoffice --headless --convert-to 'xls:MS Excel 97' \
+            --outdir "$generated_dir" "${source_dir}/supported.fods"
+          libreoffice --headless --convert-to 'pptx:Impress MS PowerPoint 2007 XML' \
+            --outdir "$generated_dir" "${source_dir}/supported.fodp"
+          libreoffice --headless --convert-to 'ppt:MS PowerPoint 97' \
+            --outdir "$generated_dir" "${source_dir}/supported.fodp"
+
+          qpdf --encrypt fixture-password fixture-password 256 -- \
+            "$generated_dir/supported.pdf" "$generated_dir/protected.pdf"
+          .venv-file-content/bin/python - <<'PY'
+          from pathlib import Path
+          from msoffcrypto.format.ooxml import OOXMLFile
+
+          generated = Path('tests/Fixtures/StoredFileContent/generated')
+          with (generated / 'supported.docx').open('rb') as source:
+              with (generated / 'protected.docx').open('wb') as output:
+                  OOXMLFile(source).encrypt('fixture-password', output)
+          PY
+
+          for extension in doc docx xls xlsx ppt pptx pdf; do
+            test -s "$generated_dir/supported.$extension"
+          done
+          test -s "$generated_dir/protected.docx"
+          test -s "$generated_dir/protected.pdf"
+
+      - name: Run Real Extractor Tests
+        run: php artisan test --compact tests/Integration/StoredFileContentExtractorTest.php
 
   onlyoffice:
     needs: ci

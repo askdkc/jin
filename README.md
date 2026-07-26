@@ -16,7 +16,7 @@ Basecampの情報設計を参考にしていますが、名称、画面、配色
 - プロジェクト別リアルタイムチャット
 - ドラッグ＆ドロップ対応カードテーブル（Kanban）
 - 定期チェックインと回答履歴
-- アクティビティ、全体検索、ラインアップ、横断レポート
+- アクティビティ、ファイル本文を含む全体検索、ラインアップ、横断レポート
 - 署名付きURLによる外部カレンダー購読（iCal）
 - メール確認、2要素認証、Passkey
 - IPv4、IPv6、CIDR対応の全サイトIP制限
@@ -24,28 +24,30 @@ Basecampの情報設計を参考にしていますが、名称、画面、配色
 
 ## 技術構成
 
-| 領域           | 使用技術                                 |
-| -------------- | ---------------------------------------- |
-| Backend        | PHP 8.4, 8.5 / Laravel 13                     |
-| Frontend       | Inertia.js 3 / Svelte 5 / TypeScript     |
-| UI             | Tailwind CSS 4                           |
-| Rich text      | Trix 2 / Symfony HTML Sanitizer 8        |
-| Realtime       | Laravel Reverb / Laravel Echo            |
-| Authentication | Laravel Fortify / Passkeys / 2FA         |
-| Typed routes   | Laravel Wayfinder                        |
-| Queue          | Laravel database queue                   |
-| Database       | SQLite（初期設定）                       |
-| Test           | Pest 4 / PHPStan / Svelte Check / ESLint |
+| 領域           | 使用技術                                              |
+| -------------- | ----------------------------------------------------- |
+| Backend        | PHP 8.4, 8.5 / Laravel 13                             |
+| Frontend       | Inertia.js 3 / Svelte 5 / TypeScript                  |
+| UI             | Tailwind CSS 4                                        |
+| Rich text      | Trix 2 / Symfony HTML Sanitizer 8                     |
+| Realtime       | Laravel Reverb / Laravel Echo                         |
+| Authentication | Laravel Fortify / Passkeys / 2FA                      |
+| Typed routes   | Laravel Wayfinder                                     |
+| Queue          | Laravel database queue（開発）/ Redis（本番）         |
+| Database       | SQLite FTS5（開発）/ PostgreSQL 17 + PGroonga（本番） |
+| Test           | Pest 4 / PHPStan / Svelte Check / ESLint              |
 
 ## 動作環境
 
 - PHP 8.4.1以上とComposer 2
 - Node.js 22.12以上とnpm
-- PHPのSQLite拡張（初期設定で使用）
+- PHPのSQLite拡張（ローカル開発と通常テストで使用）
+- Python 3.10以上、MarkItDown、`antiword`、`catdoc`（ファイル本文検索を有効にする場合）
 - ImageMagickとPoppler（PDFの先頭ページサムネイル生成用）
+- PostgreSQL 17とPGroonga（本番のファイル本文検索で使用）
 - ONLYOFFICE Docs（macOS開発はAppleの`container`、CIはGitHub Actions service、Ubuntu本番はAPTパッケージ）
 
-MySQLやPostgreSQLへ変更する場合は、対応するPHP拡張と`.env`のDB設定を別途追加してください。
+ローカル開発はSQLite FTS5、本番はPostgreSQL 17とPGroongaを前提にしています。MySQLはファイル本文検索の本番構成として扱いません。
 
 ## macOS開発環境
 
@@ -55,7 +57,7 @@ MySQLやPostgreSQLへ変更する場合は、対応するPHP拡張と`.env`のDB
 
 ```bash
 xcode-select --install
-brew install php composer node@22 imagemagick poppler
+brew install php composer node@22 python antiword catdoc imagemagick poppler
 
 export PATH="$(brew --prefix php@8.4)/bin:$(brew --prefix node@22)/bin:$PATH"
 php --version
@@ -85,6 +87,8 @@ sudo container system dns create host.container.internal --localhost 203.0.113.1
 
 ```bash
 composer install
+python3 -m venv .venv-file-content
+.venv-file-content/bin/python -m pip install --requirement requirements-file-content.txt
 cp .env.example .env
 php artisan key:generate
 php artisan migrate --seed
@@ -92,11 +96,22 @@ npm install
 npm run build
 ```
 
-`.env.example`にはmacOSローカル開発用のURLとファイル上限が設定済みです。ONLYOFFICEを使う場合は、コピーした`.env`で次の2項目を設定してください。
+`.env.example`にはmacOSローカル開発用のURLとファイル上限が設定済みです。ファイル本文検索を使う場合は、コピーした`.env`で機能を有効化し、実行ファイルを絶対パスで指定します。
 
-| パラメータ              | 設定値                                      |
-| ----------------------- | ------------------------------------------- |
-| `ONLYOFFICE_ENABLED`    | `true`                                      |
+```dotenv
+STORED_FILE_CONTENT_ENABLED=true
+STORED_FILE_CONTENT_MARKITDOWN_PATH=/absolute/path/to/jin/.venv-file-content/bin/markitdown
+STORED_FILE_CONTENT_ANTIWORD_PATH=/opt/homebrew/bin/antiword
+STORED_FILE_CONTENT_CATDOC_PATH=/opt/homebrew/bin/catdoc
+STORED_FILE_CONTENT_XLS2CSV_PATH=/opt/homebrew/bin/xls2csv
+STORED_FILE_CONTENT_CATPPT_PATH=/opt/homebrew/bin/catppt
+```
+
+`command -v antiword catdoc xls2csv catppt`で実際のパスを確認してください。ONLYOFFICEを使う場合は、さらに次の2項目を設定します。
+
+| パラメータ              | 設定値                                        |
+| ----------------------- | --------------------------------------------- |
+| `ONLYOFFICE_ENABLED`    | `true`                                        |
 | `ONLYOFFICE_JWT_SECRET` | 32 bytes以上のランダムな値（Gitへ保存しない） |
 
 設定変更後に`php artisan optimize:clear`を実行します。
@@ -184,13 +199,19 @@ php artisan serve --host=127.0.0.1 --port=8000
 npm run dev
 ```
 
-ターミナル3（Queue）:
+ターミナル3（通常Queue）:
 
 ```bash
 php artisan queue:work --queue=broadcasts,notifications,previews,default --timeout=240
 ```
 
-ターミナル4（Reverb）:
+ターミナル4（ファイル本文抽出Queue、本文検索を有効にした場合）:
+
+```bash
+php artisan queue:work --queue=file-content --tries=4 --timeout=180 --memory=512 --max-time=3600
+```
+
+ターミナル5（Reverb）:
 
 ```bash
 php artisan reverb:start
@@ -233,24 +254,24 @@ Claude Codeなど、`.mcp.json`形式に対応するクライアントでは次�
 
 ```json
 {
-  "mcpServers": {
-    "jin": {
-      "command": "php",
-      "args": [
-        "/absolute/path/to/jin/artisan",
-        "jin:mcp",
-        "user@example.com"
-      ]
+    "mcpServers": {
+        "jin": {
+            "command": "php",
+            "args": [
+                "/absolute/path/to/jin/artisan",
+                "jin:mcp",
+                "user@example.com"
+            ]
+        }
     }
-  }
 }
 ```
 
 本番相当の`composer install --no-dev --optimize-autoloader`でも`jin:mcp`を使用できます。接続確認には`php artisan mcp:inspector jin`ではなく、固定ユーザーを設定できる上記コマンドをMCPクライアントへ登録してください。
 
-## Ubuntu Server 24.04 / 26.04 公開環境
+## Ubuntu Server 26.04 公開環境
 
-以下は新規サーバーでJinを`/var/www/jin`へ配置し、Nginx + PHP-FPMで公開し、同じホストにONLYOFFICE Docsの公式APTパッケージを入れる例です。Docker Engineは不要です。既存のWebサーバー、firewall、DBがある場合は、その設定を消さず差分だけ適用してください。
+以下は新規のUbuntu Server 26.04でJinを`/var/www/jin`へ配置し、Nginx + PHP-FPMで公開し、同じホストにPostgreSQL 17、PGroonga、ONLYOFFICE Docsを入れる例です。Docker Engineは不要です。Ubuntu 26.04を本番対象として維持し、PGroongaはこの環境向けの公式APTパッケージが提供されるまで固定versionをsourceからbuildします。既存のWebサーバー、firewall、DBがある場合は、その設定を消さず差分だけ適用してください。
 
 前提:
 
@@ -271,32 +292,37 @@ export ONLYOFFICE_HOST_PORT=8081
 
 SMTPの接続情報は後述する`.env`のパラメータへ設定します。STARTTLSを使う587番portは通常`MAIL_SCHEME=smtp`、implicit TLSを使う465番portは`MAIL_SCHEME=smtps`です。providerの指定を優先してください。localhost SMTPはこの手順では使用しません。
 
-### 1. OSパッケージ、PHP 8.4、Node.js 22、Composerを入れる
+### 1. OSパッケージ、PostgreSQL 17、PGroonga、PHP 8.4、Node.js 22、Composerを入れる
 
 ```bash
 sudo apt update
 sudo apt install -y \
-  ca-certificates curl git gnupg nginx certbot python3-certbot-nginx \
-  imagemagick poppler-utils fonts-noto-cjk supervisor unzip software-properties-common
+  build-essential ca-certificates curl git gnupg lsb-release nginx certbot \
+  python3-certbot-nginx wget pkg-config python3 python3-venv antiword catdoc \
+  imagemagick poppler-utils fonts-noto-cjk supervisor unzip
 
-. /etc/os-release
-case "$VERSION_ID" in
-  24.04)
-    sudo add-apt-repository -y ppa:ondrej/php
-    sudo apt update
-    ;;
-  26.04)
-    ;;
-  *)
-    printf 'Unsupported Ubuntu version: %s\n' "$VERSION_ID" >&2
-    exit 1
-    ;;
-esac
+sudo apt install -y postgresql-common
+sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+
+PGROONGA_APT_SOURCE="groonga-apt-source-latest-$(lsb_release --codename --short).deb"
+wget "https://packages.groonga.org/ubuntu/${PGROONGA_APT_SOURCE}"
+sudo apt install -y -V "./${PGROONGA_APT_SOURCE}"
+rm -f "$PGROONGA_APT_SOURCE"
+sudo apt update
 
 sudo apt install -y \
-  postgresql redis-server \
+  postgresql-17 postgresql-server-dev-17 redis-server libgroonga-dev libmsgpack-dev \
   php8.4-cli php8.4-fpm php8.4-pgsql php8.4-redis php8.4-mbstring php8.4-xml \
   php8.4-curl php8.4-zip php8.4-intl php8.4-bcmath php8.4-gd
+
+PGROONGA_VERSION=4.0.6
+wget "https://packages.groonga.org/source/pgroonga/pgroonga-${PGROONGA_VERSION}.tar.gz"
+tar xvf "pgroonga-${PGROONGA_VERSION}.tar.gz"
+cd "pgroonga-${PGROONGA_VERSION}"
+make HAVE_MSGPACK=1 PG_CONFIG=/usr/lib/postgresql/17/bin/pg_config
+sudo make HAVE_MSGPACK=1 PG_CONFIG=/usr/lib/postgresql/17/bin/pg_config install
+cd ..
+rm -rf "pgroonga-${PGROONGA_VERSION}" "pgroonga-${PGROONGA_VERSION}.tar.gz"
 
 curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh
 sudo -E bash /tmp/nodesource_setup.sh
@@ -310,11 +336,13 @@ sudo php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=compose
 rm -f /tmp/composer-setup.php
 
 php --version
+python3 --version
+psql --version
 node --version
 composer --version
 ```
 
-Ubuntu 24.04の標準PHPは8.3のため、上記は[Ondřej SurýのPHP PPA](https://launchpad.net/~ondrej/+archive/ubuntu/php)を使います。Ubuntu 26.04ではディストリビューションのPHP 8.4パッケージを使います。Node.jsは[NodeSourceの22.x setup script](https://github.com/nodesource/distributions/blob/master/scripts/deb/setup_22.x)、Composerは[公式のchecksum検証手順](https://getcomposer.org/doc/faqs/how-to-install-composer-programmatically.md)に合わせています。
+Ubuntu 26.04ではUbuntu公式repositoryのversion付きPHP 8.4 packageを使います。PostgreSQL 17はPGDG、GroongaはUbuntu 26.04（`resolute`）向けのGroonga公式APT repositoryを使います。PGroongaの公式Ubuntu install手順は現時点で26.04用packageを掲載していないため、Jinが使用する4.0.6をsourceからbuildし、PostgreSQL 17へinstallします。Node.jsは[NodeSourceの22.x setup script](https://github.com/nodesource/distributions/blob/master/scripts/deb/setup_22.x)、Composerは[公式のchecksum検証手順](https://getcomposer.org/doc/faqs/how-to-install-composer-programmatically.md)に合わせています。
 
 ### 2. ONLYOFFICEのAPTリポジトリを追加する
 
@@ -341,6 +369,8 @@ git clone "$JIN_REPOSITORY" "$JIN_PATH"
 cd "$JIN_PATH"
 
 composer install --no-dev --optimize-autoloader
+python3 -m venv .venv-file-content
+.venv-file-content/bin/python -m pip install --requirement requirements-file-content.txt
 npm ci
 
 cp .env.example .env
@@ -385,44 +415,53 @@ PY
 
 `.env.example`に必要なパラメータはすべて記載されています。コピーした`.env`を直接編集し、本番環境では次の値へ変更してください。`<...>`は実際のdomain、credential、ランダムなsecretへ置き換え、Gitへコミットしません。
 
-| パラメータ                            | 本番設定                                      |
-| ------------------------------------- | --------------------------------------------- |
-| `APP_ENV`                             | `production`                                  |
-| `APP_DEBUG`                           | `false`                                       |
-| `APP_URL`                             | `https://<JIN_DOMAIN>`                        |
-| `DB_CONNECTION`                      | `pgsql`                                       |
-| `DB_HOST` / `DB_PORT`                 | `127.0.0.1` / `5432`                          |
-| `DB_DATABASE` / `DB_USERNAME`         | `jin` / `jin`                                 |
-| `DB_PASSWORD`                         | PostgreSQLへ設定するランダムなpassword        |
-| `REDIS_CLIENT` / `REDIS_HOST`         | `phpredis` / `127.0.0.1`                      |
-| `QUEUE_CONNECTION`                    | `redis`                                       |
-| `CACHE_STORE`                         | `redis`                                       |
-| `SESSION_DRIVER`                      | `redis`                                       |
-| `SESSION_SECURE_COOKIE`               | `true`                                        |
-| `IP_RESTRICTION_ENABLED`              | 公開する場合は`false`、制限する場合は`true`   |
-| `REVERB_APP_ID`                       | 一意のランダム値                              |
-| `REVERB_APP_KEY` / `REVERB_APP_SECRET` | 一意のランダムなcredential                    |
-| `REVERB_HOST`                         | `<JIN_DOMAIN>`                                |
-| `REVERB_PORT` / `REVERB_SCHEME`       | `443` / `https`                               |
-| `REVERB_ALLOWED_ORIGINS`              | `<JIN_DOMAIN>`                                |
-| `MAIL_MAILER`                         | `smtp`                                        |
-| `MAIL_SCHEME` / `MAIL_HOST` / `MAIL_PORT` | SMTP providerの指定値                     |
-| `MAIL_USERNAME` / `MAIL_PASSWORD`     | SMTP providerのcredential                     |
-| `MAIL_FROM_ADDRESS`                   | providerで検証済みの送信元address             |
-| `ONLYOFFICE_ENABLED`                  | `true`                                        |
-| `ONLYOFFICE_DOCUMENT_SERVER_URL`      | `http://127.0.0.1:<ONLYOFFICE_HOST_PORT>`     |
-| `ONLYOFFICE_PUBLIC_URL`               | `https://<OFFICE_DOMAIN>`                     |
-| `APP_ONLYOFFICE_INTERNAL_URL`         | `https://<JIN_DOMAIN>`                        |
-| `ONLYOFFICE_JWT_SECRET`               | APTインストール時と同じ`ONLYOFFICE_SECRET`    |
-| `ONLYOFFICE_INSTANCE_ID`              | 共有DocumentServer内で一意の固定値            |
+| パラメータ                                | 本番設定                                         |
+| ----------------------------------------- | ------------------------------------------------ |
+| `APP_ENV`                                 | `production`                                     |
+| `APP_DEBUG`                               | `false`                                          |
+| `APP_URL`                                 | `https://<JIN_DOMAIN>`                           |
+| `DB_CONNECTION`                           | `pgsql`                                          |
+| `DB_HOST` / `DB_PORT`                     | `127.0.0.1` / `5432`                             |
+| `DB_DATABASE` / `DB_USERNAME`             | `jin` / `jin`                                    |
+| `DB_PASSWORD`                             | PostgreSQLへ設定するランダムなpassword           |
+| `STORED_FILE_CONTENT_ENABLED`             | `true`                                           |
+| `STORED_FILE_CONTENT_QUEUE`               | `file-content`                                   |
+| `STORED_FILE_CONTENT_MARKITDOWN_PATH`     | `/var/www/jin/.venv-file-content/bin/markitdown` |
+| `STORED_FILE_CONTENT_ANTIWORD_PATH`       | `/usr/bin/antiword`                              |
+| `STORED_FILE_CONTENT_CATDOC_PATH`         | `/usr/bin/catdoc`                                |
+| `STORED_FILE_CONTENT_XLS2CSV_PATH`        | `/usr/bin/xls2csv`                               |
+| `STORED_FILE_CONTENT_CATPPT_PATH`         | `/usr/bin/catppt`                                |
+| `REDIS_CLIENT` / `REDIS_HOST`             | `phpredis` / `127.0.0.1`                         |
+| `QUEUE_CONNECTION`                        | `redis`                                          |
+| `CACHE_STORE`                             | `redis`                                          |
+| `SESSION_DRIVER`                          | `redis`                                          |
+| `SESSION_SECURE_COOKIE`                   | `true`                                           |
+| `IP_RESTRICTION_ENABLED`                  | 公開する場合は`false`、制限する場合は`true`      |
+| `REVERB_APP_ID`                           | 一意のランダム値                                 |
+| `REVERB_APP_KEY` / `REVERB_APP_SECRET`    | 一意のランダムなcredential                       |
+| `REVERB_HOST`                             | `<JIN_DOMAIN>`                                   |
+| `REVERB_PORT` / `REVERB_SCHEME`           | `443` / `https`                                  |
+| `REVERB_ALLOWED_ORIGINS`                  | `<JIN_DOMAIN>`                                   |
+| `MAIL_MAILER`                             | `smtp`                                           |
+| `MAIL_SCHEME` / `MAIL_HOST` / `MAIL_PORT` | SMTP providerの指定値                            |
+| `MAIL_USERNAME` / `MAIL_PASSWORD`         | SMTP providerのcredential                        |
+| `MAIL_FROM_ADDRESS`                       | providerで検証済みの送信元address                |
+| `ONLYOFFICE_ENABLED`                      | `true`                                           |
+| `ONLYOFFICE_DOCUMENT_SERVER_URL`          | `http://127.0.0.1:<ONLYOFFICE_HOST_PORT>`        |
+| `ONLYOFFICE_PUBLIC_URL`                   | `https://<OFFICE_DOMAIN>`                        |
+| `APP_ONLYOFFICE_INTERNAL_URL`             | `https://<JIN_DOMAIN>`                           |
+| `ONLYOFFICE_JWT_SECRET`                   | APTインストール時と同じ`ONLYOFFICE_SECRET`       |
+| `ONLYOFFICE_INSTANCE_ID`                  | 共有DocumentServer内で一意の固定値               |
 
-upload上限とONLYOFFICEのファイル上限は`.env.example`の200 MiB／500 MiB設定をそのまま使用します。ダウンロード、印刷、コピーの許可も`.env.example`の値を必要に応じて変更してください。
+upload上限とONLYOFFICEのファイル上限は`.env.example`の200 MiB／500 MiB設定をそのまま使用します。本文抽出はsource 50 MiB、process出力16 MiB、検索index 2 MiB、process timeout 120秒、job timeout 180秒が初期値です。`STORED_FILE_CONTENT_JOB_TIMEOUT`はprocess timeoutより大きく、Redisの`retry_after`より小さくし、processing leaseはjob timeoutより大きくしてください。ダウンロード、印刷、コピーの許可も`.env.example`の値を必要に応じて変更してください。
 
 `.env`の`DB_PASSWORD`と同じpasswordを使ってPostgreSQLのユーザーとDBを作成します。
 
 ```sql
 CREATE USER jin WITH ENCRYPTED PASSWORD '<DB_PASSWORDと同じ値>';
 CREATE DATABASE jin OWNER jin;
+\connect jin
+CREATE EXTENSION pgroonga;
 ```
 
 ```bash
@@ -430,6 +469,7 @@ sudo -u postgres psql
 # 上のSQLを実行してから \q で終了する
 
 php artisan optimize:clear
+php artisan app:production-check
 npm run build
 chmod 600 .env
 ```
@@ -571,6 +611,7 @@ cd "$JIN_PATH"
 php artisan migrate --force
 php artisan stored-files:backfill-checksums
 php artisan stored-files:backfill-previews
+php artisan stored-files:backfill-content
 php artisan optimize
 
 sudo chgrp -R www-data storage bootstrap/cache
@@ -579,7 +620,7 @@ sudo chown "$USER":www-data .env
 sudo chmod 640 .env
 ```
 
-`stored-files:backfill-checksums`は既存Office原本のcontent versionを補完します。`stored-files:backfill-previews`がQueueへ送るのは既存PDFの先頭ページ生成だけで、Office文書はローカル変換しません。
+`stored-files:backfill-checksums`は既存Office原本のcontent versionを補完します。`stored-files:backfill-previews`がQueueへ送るのは既存PDFの先頭ページ生成だけで、Office文書はローカル変換しません。`stored-files:backfill-content`は未処理またはchecksumが変わった対応ファイルを`file-content` Queueへ送ります。失敗した現行ファイルを再試行する場合は`--retry-failed`、extractor更新後に全対応ファイルを再抽出する場合は`--reindex`を付けます。大量データではworker負荷を監視し、通常のbackfill完了後だけ必要なoptionを実行してください。
 
 QueueとReverbはSupervisorで常駐させます。systemdから各プロセスを直接起動せず、systemdはSupervisor自体の起動だけを管理します。
 
@@ -627,6 +668,20 @@ stopwaitsecs=300
 redirect_stderr=true
 stdout_logfile=${JIN_PATH}/storage/logs/preview-worker-%(process_num)02d.log
 
+[program:jin-file-content]
+process_name=%(program_name)s_%(process_num)02d
+command=/usr/bin/php ${JIN_PATH}/artisan queue:work --queue=file-content --sleep=3 --tries=4 --timeout=180 --memory=512 --max-time=3600
+directory=${JIN_PATH}
+user=www-data
+numprocs=1
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+stopwaitsecs=240
+redirect_stderr=true
+stdout_logfile=${JIN_PATH}/storage/logs/file-content-worker-%(process_num)02d.log
+
 [program:jin-default]
 process_name=%(program_name)s_%(process_num)02d
 command=/usr/bin/php ${JIN_PATH}/artisan queue:work --queue=default --sleep=3 --tries=3 --timeout=60
@@ -659,7 +714,7 @@ EOF
 sudo systemctl enable --now nginx php8.4-fpm postgresql redis-server supervisor
 sudo supervisorctl reread
 sudo supervisorctl update
-sudo supervisorctl status "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-default:*" jin-reverb
+sudo supervisorctl status "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-file-content:*" "jin-default:*" jin-reverb
 
 printf '%s\n' \
   "* * * * * www-data cd ${JIN_PATH} && /usr/bin/php artisan schedule:run >/dev/null 2>&1" | \
@@ -667,7 +722,7 @@ printf '%s\n' \
 sudo chmod 644 /etc/cron.d/jin-scheduler
 ```
 
-`jin-previews`はPDF変換を最大8件並列処理します。CPUコア数、RAM、PDFサイズを監視し、負荷が高い場合は`numprocs`を下げてください。本番構成はPostgreSQLとRedis Queue/Cache/Sessionを前提とするため、preview workerを8プロセスまで並列化できます。SQLiteはローカル開発専用です。小規模な検証環境でSQLiteを使う場合はworkerを1プロセスに抑えてください。
+`jin-previews`はPDF変換を最大8件並列処理します。CPUコア数、RAM、PDFサイズを監視し、負荷が高い場合は`numprocs`を下げてください。`jin-file-content`はMarkItDownやlegacy Office toolがCPUとmemoryを使うため、初期値は1 process、memory 512 MiBです。実ファイルの処理時間とpeak memoryを確認してから少しずつ並列数を増やし、`--timeout=180`を`STORED_FILE_CONTENT_JOB_TIMEOUT`と一致させてください。本番構成はPostgreSQLとRedis Queue/Cache/Sessionを前提とします。SQLiteはローカル開発専用で、SQLiteを使う検証環境では各workerを1 processに抑えてください。
 
 #### OS再起動時の自動起動
 
@@ -678,7 +733,7 @@ sudo systemctl enable nginx php8.4-fpm postgresql redis-server supervisor
 
 systemctl is-enabled nginx php8.4-fpm supervisor
 systemctl is-active ds-converter ds-docservice
-sudo supervisorctl status "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-default:*" jin-reverb
+sudo supervisorctl status "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-file-content:*" "jin-default:*" jin-reverb
 ```
 
 期待値はNginx、PHP-FPM、Supervisorが`enabled`、ds系serviceが`active`、Supervisor配下の全プロセスが`RUNNING`です。macOS開発ではOS再起動後に`container system start`、localhost用DNS mappingの再作成、`container start jin-onlyoffice`を実行します。
@@ -696,10 +751,10 @@ composer check-platform-reqs --no-dev
 SMTP_SMOKE_TEST_RECIPIENT=recipient@example.com php artisan tinker --execute '\Illuminate\Support\Facades\Mail::raw("Jin SMTP smoke test", function (\Illuminate\Mail\Message $message): void { $message->to((string) getenv("SMTP_SMOKE_TEST_RECIPIENT"))->subject("Jin SMTP smoke test"); });'
 
 sudo systemctl --no-pager --full status nginx php8.4-fpm supervisor ds-converter ds-docservice
-sudo supervisorctl status "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-default:*" jin-reverb
+sudo supervisorctl status "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-file-content:*" "jin-default:*" jin-reverb
 ```
 
-`app:production-check`はHTTPS、デバッグ、Queue、Reverb、Cookie、upload上限が安全でない場合に失敗します。SMTPを使う場合はlocalhost、port、scheme、credentialの未設定も拒否しますが、providerへの接続と受信は保証しません。smoke test mailが指定した受信箱へ届き、送信元domainのSPF、DKIM、DMARCがproviderの要件を満たすことまで確認してください。ONLYOFFICEを有効にした場合は、JinのOffice file上限がupload上限または宣言したDocumentServerの`maxDownloadBytes`を超えていても失敗します。
+`app:production-check`はHTTPS、デバッグ、Queue、Reverb、Cookie、upload上限が安全でない場合に失敗します。ファイル本文検索を有効にした場合は、5つのextractor command、timeoutとsizeの関係、Queueの`retry_after`、PostgreSQL上のPGroonga extensionも確認しますが、利用者ファイルを解析するprobeは実行しません。SMTPを使う場合はlocalhost、port、scheme、credentialの未設定も拒否しますが、providerへの接続と受信は保証しません。smoke test mailが指定した受信箱へ届き、送信元domainのSPF、DKIM、DMARCがproviderの要件を満たすことまで確認してください。ONLYOFFICEを有効にした場合は、JinのOffice file上限がupload上限または宣言したDocumentServerの`maxDownloadBytes`を超えていても失敗します。
 
 Officeプレビューが`Download failed`になる場合は、DocumentServerから`${JIN_DOMAIN}`へのDNS、TLS chain、Nginx、egress firewall、LaravelのIP制限を確認してください。
 
@@ -711,17 +766,21 @@ Officeプレビューが`Download failed`になる場合は、DocumentServerか�
 
   cd "$JIN_PATH"
   php artisan down --retry=60
-  sudo supervisorctl stop "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-default:*" jin-reverb
+  sudo supervisorctl stop "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-file-content:*" "jin-default:*" jin-reverb
   git pull --ff-only
   composer install --no-dev --optimize-autoloader
+  python3 -m venv --upgrade-deps .venv-file-content
+  .venv-file-content/bin/python -m pip install --requirement requirements-file-content.txt
   npm ci
   npm run build
+  php artisan optimize:clear
+  php artisan app:production-check
   php artisan migrate --force
   php artisan stored-files:backfill-checksums
+  php artisan stored-files:backfill-content
   php artisan optimize
-  php artisan app:production-check
   sudo systemctl reload php8.4-fpm
-  sudo supervisorctl start "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-default:*" jin-reverb
+  sudo supervisorctl start "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-file-content:*" "jin-default:*" jin-reverb
   php artisan up
 )
 ```
@@ -740,6 +799,32 @@ cleanup未完了のrowがある場合、migration自身もrollbackを拒否し�
 
 DB、`storage/app/private`、`.env`、`/etc/onlyoffice/documentserver/local.json`をバックアップ対象に含めてください。DocumentServerの待受portはインターネットへ公開しません。
 
+## ファイル本文検索
+
+Everythingはファイル名に加えて、非同期抽出が完了した次の形式の本文を検索します。
+
+| 形式         | 拡張子 | extractor                                          |
+| ------------ | ------ | -------------------------------------------------- |
+| Word         | `docx` | MarkItDown                                         |
+| Excel        | `xlsx` | MarkItDown                                         |
+| PowerPoint   | `pptx` | MarkItDown                                         |
+| PDF          | `pdf`  | MarkItDown                                         |
+| 旧Word       | `doc`  | `antiword`、通常の解析失敗時だけ`catdoc`へfallback |
+| 旧Excel      | `xls`  | `xls2csv`                                          |
+| 旧PowerPoint | `ppt`  | `catppt`                                           |
+
+`xlsm`、`odt`、`ods`、`odp`とその他の形式はファイル名だけを検索します。暗号化またはpassword保護されたPDF／Officeファイルもファイル名だけを検索し、passwordを受け取ったり保存したりextractorへ渡したりしません。保護、失敗、上限超過、古いgenerationのpartial outputはindexへ公開しません。
+
+既存ファイルを登録するcommand:
+
+```bash
+php artisan stored-files:backfill-content
+php artisan stored-files:backfill-content --retry-failed
+php artisan stored-files:backfill-content --reindex
+```
+
+通常はoptionなしを実行します。`--retry-failed`は現行checksumで失敗した行だけを再試行し、`--reindex`はextractorや正規化処理を更新した時に全対応ファイルを再抽出します。
+
 ## ONLYOFFICE補足
 
 Office文書は、macOS開発ではApple `container`上の公式OCI image、Ubuntu公開環境ではAPTパッケージ`onlyoffice-documentserver`を使って閲覧専用表示します。PDFと画像は既存viewerを使います。
@@ -752,11 +837,11 @@ Office文書は、macOS開発ではApple `container`上の公式OCI image、Ubun
 
 Browser、Laravel、DocumentServerで通信方向が違うため、3つのURLを分けて設定します。
 
-| 通信                     | 設定                             | 開発例                                     | 公開環境例                   |
-| ------------------------ | -------------------------------- | ------------------------------------------ | ---------------------------- |
-| Laravel → DocumentServer | `ONLYOFFICE_DOCUMENT_SERVER_URL` | `http://127.0.0.1:8081`                    | `http://127.0.0.1:8081`      |
-| Browser → DocumentServer | `ONLYOFFICE_PUBLIC_URL`          | `http://127.0.0.1:8081`                    | `https://office.example.com` |
-| DocumentServer → Laravel | `APP_ONLYOFFICE_INTERNAL_URL`    | `http://host.container.internal:8000`      | `https://jin.example.com`    |
+| 通信                     | 設定                             | 開発例                                | 公開環境例                   |
+| ------------------------ | -------------------------------- | ------------------------------------- | ---------------------------- |
+| Laravel → DocumentServer | `ONLYOFFICE_DOCUMENT_SERVER_URL` | `http://127.0.0.1:8081`               | `http://127.0.0.1:8081`      |
+| Browser → DocumentServer | `ONLYOFFICE_PUBLIC_URL`          | `http://127.0.0.1:8081`               | `https://office.example.com` |
+| DocumentServer → Laravel | `APP_ONLYOFFICE_INTERNAL_URL`    | `http://host.container.internal:8000` | `https://jin.example.com`    |
 
 ### DocumentServerの待受ポートを変更する
 
@@ -774,11 +859,11 @@ Jinの`ONLYOFFICE_MAX_FILE_SIZE_BYTES`は、`UPLOAD_MAX_FILE_MB`をbytes換算�
 
 ```json
 {
-  "FileConverter": {
-    "converter": {
-      "maxDownloadBytes": 209715200
+    "FileConverter": {
+        "converter": {
+            "maxDownloadBytes": 209715200
+        }
     }
-  }
 }
 ```
 
@@ -873,7 +958,7 @@ Clientへの公開境界はプロジェクト単位です。Clientに許可し�
 - **カレンダー**: 日、週、月、ガント表示を切り替えて予定と期間を確認
 - **ラインアップ**: 複数プロジェクトの期間を時系列で確認
 - **アクティビティ**: アクセス可能なプロジェクトの更新を時系列で確認
-- **Everything**: プロジェクト横断でコンテンツを検索
+- **Everything**: プロジェクト横断でコンテンツと対応ファイルの本文を検索
 - **レポート**: 未完了、期限超過、未割り当て、最近の完了数、担当者別負荷を確認
 
 ### 7. 外部カレンダーで購読する

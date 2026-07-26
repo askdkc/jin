@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\StoredFileContentStatus;
 use App\Enums\TeamRole;
 use App\Models\CardColumn;
 use App\Models\CardTable;
@@ -12,6 +13,7 @@ use App\Models\MessageBoardPost;
 use App\Models\Project;
 use App\Models\ScheduleEvent;
 use App\Models\StoredFile;
+use App\Models\StoredFileContent;
 use App\Models\Team;
 use App\Models\Todo;
 use App\Models\TodoList;
@@ -21,6 +23,23 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia as Assert;
+
+function storedFileSearchContent(
+    StoredFile $storedFile,
+    string $content,
+    StoredFileContentStatus $status = StoredFileContentStatus::Ready,
+    ?string $sourceChecksum = null,
+): StoredFileContent {
+    return StoredFileContent::factory()->create([
+        'stored_file_id' => $storedFile->id,
+        'source_checksum' => $sourceChecksum ?? $storedFile->checksum,
+        'status' => $status,
+        'extractor' => 'markitdown',
+        'content' => $content,
+        'content_bytes' => strlen($content),
+        'extracted_at' => now(),
+    ]);
+}
 
 test('everything view combines the searchable project content types', function () {
     $owner = User::factory()->create();
@@ -167,6 +186,227 @@ test('everything search finds files by extension or full filename', function (st
     'full filename' => '仕様.pdf',
 ]);
 
+test('everything search finds current ready file content and returns a centered snippet', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $file = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($project)
+        ->for($owner, 'uploader')
+        ->create([
+            'original_name' => 'quarterly-report.pdf',
+            'mime_type' => 'application/pdf',
+        ]));
+    $search = '固有本文検索語';
+    $content = str_repeat('前方の説明文 ', 30)
+        .$search
+        .str_repeat(' 後方の説明文', 30);
+    storedFileSearchContent($file, $content);
+
+    $this->actingAs($owner)
+        ->get(route('everything.index', [$team, 'q' => $search]))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('results.data', 1)
+            ->where('results.data.0.id', $file->id)
+            ->where('results.data.0.type', 'file')
+            ->where('results.data.0.snippet', function (mixed $snippet) use ($search): bool {
+                return is_string($snippet)
+                    && mb_strlen($snippet) <= 240
+                    && str_starts_with($snippet, '…')
+                    && str_ends_with($snippet, '…')
+                    && str_contains($snippet, $search);
+            })
+            ->missing('results.data.0.content')
+            ->missing('results.data.0.source_checksum')
+            ->missing('results.data.0.failure_code'));
+});
+
+test('everything file content search supports terms shorter than three characters', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $file = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($project)
+        ->for($owner, 'uploader')
+        ->create(['original_name' => 'annual-plan.pdf']));
+    storedFileSearchContent($file, '来期の予算と採用計画をまとめます。');
+
+    $this->actingAs($owner)
+        ->get(route('everything.index', [$team, 'q' => '予算']))
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('results.data', 1)
+            ->where('results.data.0.id', $file->id)
+            ->where('results.data.0.snippet', '来期の予算と採用計画をまとめます。'));
+});
+
+test('filename matches never expose content from non-ready extraction states', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+
+    foreach ([
+        StoredFileContentStatus::Pending,
+        StoredFileContentStatus::Processing,
+        StoredFileContentStatus::Protected,
+        StoredFileContentStatus::Unsupported,
+        StoredFileContentStatus::Failed,
+    ] as $status) {
+        $file = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+            ->for($project)
+            ->for($owner, 'uploader')
+            ->create([
+                'original_name' => "filename-match-{$status->value}.pdf",
+            ]));
+        storedFileSearchContent(
+            $file,
+            'filename-match must remain private until ready',
+            $status,
+        );
+    }
+
+    $this->actingAs($owner)
+        ->get(route('everything.index', [$team, 'q' => 'filename-match']))
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('results.data', 5)
+            ->where('results.data', fn (Collection $items): bool => $items->every(
+                fn (array $item): bool => $item['type'] === 'file'
+                    && $item['snippet'] === null,
+            )));
+});
+
+test('everything content search excludes stale source generations', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $file = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($project)
+        ->for($owner, 'uploader')
+        ->create(['original_name' => 'historical-report.pdf']));
+    storedFileSearchContent(
+        $file,
+        'stale-generation-search-term',
+        sourceChecksum: str_repeat('f', 64),
+    );
+
+    $this->actingAs($owner)
+        ->get(route('everything.index', [
+            $team,
+            'q' => 'stale-generation-search-term',
+            'type' => 'file',
+        ]))
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('results.data', 0)
+            ->where('results.total', 0));
+});
+
+test('content matches compose with file category project and authorization filters', function () {
+    $owner = User::factory()->create();
+    $member = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $otherProject = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $hiddenProject = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($member);
+    $otherProject->members()->attach($member);
+    $search = 'content-filter-term';
+
+    $visiblePdf = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($project)
+        ->for($member, 'uploader')
+        ->create([
+            'original_name' => 'visible-report.pdf',
+            'mime_type' => 'application/pdf',
+        ]));
+    $visibleWord = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($project)
+        ->for($member, 'uploader')
+        ->create([
+            'original_name' => 'visible-report.docx',
+            'mime_type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        ]));
+    $otherPdf = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($otherProject)
+        ->for($member, 'uploader')
+        ->create([
+            'original_name' => 'other-report.pdf',
+            'mime_type' => 'application/pdf',
+        ]));
+    $hiddenPdf = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($hiddenProject)
+        ->for($owner, 'uploader')
+        ->create([
+            'original_name' => 'hidden-report.pdf',
+            'mime_type' => 'application/pdf',
+        ]));
+
+    foreach ([$visiblePdf, $visibleWord, $otherPdf, $hiddenPdf] as $file) {
+        storedFileSearchContent($file, "Indexed {$search} body");
+    }
+
+    $this->actingAs($member)
+        ->get(route('everything.index', [
+            $team,
+            'q' => $search,
+            'project' => $project->id,
+            'file_categories' => ['pdf'],
+        ]))
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('results.data', 1)
+            ->where('results.data.0.id', $visiblePdf->id)
+            ->where('results.data.0.snippet', "Indexed {$search} body")
+            ->where('filters.type', 'file')
+            ->where('filters.project', $project->id)
+            ->where('filters.fileCategories', ['pdf']));
+});
+
+test('file content snippets are hydrated in one batch query', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+
+    foreach (range(1, 5) as $index) {
+        $file = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+            ->for($project)
+            ->for($owner, 'uploader')
+            ->create(['original_name' => "batch-report-{$index}.pdf"]));
+        storedFileSearchContent($file, "batch-content-term entry {$index}");
+    }
+
+    $queries = [];
+    DB::listen(function (QueryExecuted $query) use (&$queries): void {
+        $queries[] = $query->sql;
+    });
+
+    $this->actingAs($owner)
+        ->get(route('everything.index', [$team, 'q' => 'batch-content-term']))
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('results.data', 5)
+            ->where('results.data', fn (Collection $items): bool => $items->every(
+                fn (array $item): bool => is_string($item['snippet'])
+                    && str_contains($item['snippet'], 'batch-content-term'),
+            )));
+
+    $contentHydrationQueries = collect($queries)->filter(
+        fn (string $sql): bool => str_contains(
+            $sql,
+            'from "stored_file_contents" inner join "stored_files"',
+        ) && str_contains(
+            $sql,
+            '"stored_file_contents"."content"',
+        ),
+    );
+
+    expect($contentHydrationQueries)->toHaveCount(1);
+});
+
 test('everything search links subtasks to their parent todo detail', function () {
     $owner = User::factory()->create();
     $team = Team::factory()->create();
@@ -263,7 +503,7 @@ test('everything search exposes rich file metadata without private storage field
             ->where('results.data.0.uploader.name', $owner->name)
             ->where('results.data.0.uploader.avatar', $owner->avatar)
             ->where('results.data.0.createdAt', $file->created_at?->toISOString())
-            ->missing('results.data.0.snippet')
+            ->where('results.data.0.snippet', null)
             ->missing('results.data.0.target')
             ->missing('results.data.0.route_parent_id')
             ->missing('results.data.0.route_resource_id')

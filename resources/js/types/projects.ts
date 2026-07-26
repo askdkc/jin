@@ -249,6 +249,7 @@ export type EverythingTextItem = EverythingItemBase & {
 
 export type EverythingFileItem = EverythingItemBase & {
     type: 'file';
+    snippet: string | null;
     mimeType: string | null;
     thumbnailUrl: string | null;
     canAccessFile: boolean;

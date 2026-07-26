@@ -480,6 +480,14 @@
                                             {item.title}
                                         </Link>
 
+                                        {#if item.snippet}
+                                            <p
+                                                class="mt-1.5 line-clamp-2 break-words text-sm leading-5 text-muted-foreground"
+                                            >
+                                                {item.snippet}
+                                            </p>
+                                        {/if}
+
                                         <div
                                             class="mt-3 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground"
                                         >

@@ -91,6 +91,11 @@ test('file results reuse previews and navigate with server-owned hrefs', () => {
     assert.match(everythingPage, /<StoredFilePreviewDialog/);
     assert.match(everythingPage, /canPreviewStoredFile\(item\.title\)/);
     assert.match(everythingPage, /mt-4 inline-block max-w-full/);
+    assert.match(
+        everythingPage,
+        /\{#if item\.snippet\}[\s\S]*?line-clamp-2[\s\S]*?\{item\.snippet\}[\s\S]*?\{\/if\}[\s\S]*?item\.uploader/,
+    );
+    assert.doesNotMatch(everythingPage, /\{@html\s+item\.snippet/);
     assert.match(fileThumbnail, /'index' \| 'result' \| 'summary'/);
     assert.match(fileThumbnail, /max-h-56/);
     assert.match(fileThumbnail, /max-w-72/);

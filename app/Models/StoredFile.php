@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\StoredFileContentDispatcher;
 use App\Support\StoredFilePreviewDispatcher;
 use App\Support\StoredFilePreviewGenerator;
 use Database\Factories\StoredFileFactory;
@@ -12,6 +13,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Filesystem\FilesystemAdapter;
@@ -41,6 +43,7 @@ use RuntimeException;
  * @property-read User|null $uploader
  * @property-read Model|null $attachable
  * @property-read MaterialFolder|null $materialFolder
+ * @property-read StoredFileContent|null $contentSearchIndex
  * @property-read Collection<int, Comment> $comments
  * @property-read Collection<int, User> $reactors
  */
@@ -82,6 +85,9 @@ class StoredFile extends Model
                 app(StoredFilePreviewDispatcher::class)
                     ->dispatchAfterCommit($storedFile->id, $storedFile->path);
             }
+
+            app(StoredFileContentDispatcher::class)
+                ->prepareAndDispatch($storedFile);
         });
     }
 
@@ -142,6 +148,12 @@ class StoredFile extends Model
     public function attachable(): MorphTo
     {
         return $this->morphTo();
+    }
+
+    /** @return HasOne<StoredFileContent, $this> */
+    public function contentSearchIndex(): HasOne
+    {
+        return $this->hasOne(StoredFileContent::class);
     }
 
     /** @return MorphMany<Comment, $this> */

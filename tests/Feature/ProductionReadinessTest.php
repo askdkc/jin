@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 
 beforeEach(function () {
     config([
@@ -23,6 +24,18 @@ beforeEach(function () {
         'uploads.max_file_megabytes' => 200,
         'uploads.max_files_per_request' => 20,
         'uploads.max_request_megabytes' => 500,
+        'stored-file-content.enabled' => false,
+        'stored-file-content.markitdown_path' => PHP_BINARY,
+        'stored-file-content.antiword_path' => PHP_BINARY,
+        'stored-file-content.catdoc_path' => PHP_BINARY,
+        'stored-file-content.xls2csv_path' => PHP_BINARY,
+        'stored-file-content.catppt_path' => PHP_BINARY,
+        'stored-file-content.process_timeout' => 120,
+        'stored-file-content.job_timeout' => 180,
+        'stored-file-content.processing_lease_seconds' => 300,
+        'stored-file-content.max_source_bytes' => 50 * 1024 * 1024,
+        'stored-file-content.max_output_bytes' => 16 * 1024 * 1024,
+        'stored-file-content.max_indexed_bytes' => 2 * 1024 * 1024,
         'onlyoffice.enabled' => false,
         'onlyoffice.max_file_size' => 209715200,
         'onlyoffice.document_server_max_download_bytes' => 209715200,
@@ -55,6 +68,102 @@ test('public production configuration does not require an IP allowlist', functio
     $this->artisan('app:production-check')
         ->expectsOutput('Production configuration is ready.')
         ->assertSuccessful();
+});
+
+test('enabled file content search passes with executable extractors and pgroonga', function () {
+    config(['stored-file-content.enabled' => true]);
+    DB::shouldReceive('selectOne')
+        ->once()
+        ->andReturn((object) ['installed' => true]);
+
+    $this->artisan('app:production-check')
+        ->expectsOutput('Production configuration is ready.')
+        ->assertSuccessful();
+});
+
+test('enabled file content search requires executable extractor commands', function () {
+    config([
+        'stored-file-content.enabled' => true,
+        'stored-file-content.markitdown_path' => '/missing/file-content/markitdown',
+    ]);
+    DB::shouldReceive('selectOne')
+        ->once()
+        ->andReturn((object) ['installed' => true]);
+
+    $this->artisan('app:production-check')
+        ->expectsOutput('STORED_FILE_CONTENT extractor commands must be executable when enabled.')
+        ->assertFailed();
+});
+
+test('enabled file content search requires safe resource budgets', function (string $key, int $value, string $message) {
+    config([
+        'stored-file-content.enabled' => true,
+        $key => $value,
+    ]);
+    DB::shouldReceive('selectOne')
+        ->once()
+        ->andReturn((object) ['installed' => true]);
+
+    $this->artisan('app:production-check')
+        ->expectsOutput($message)
+        ->assertFailed();
+})->with([
+    'process timeout' => [
+        'stored-file-content.process_timeout',
+        0,
+        'STORED_FILE_CONTENT_PROCESS_TIMEOUT must be at least 1 second.',
+    ],
+    'job timeout' => [
+        'stored-file-content.job_timeout',
+        120,
+        'STORED_FILE_CONTENT_JOB_TIMEOUT must exceed STORED_FILE_CONTENT_PROCESS_TIMEOUT.',
+    ],
+    'processing lease' => [
+        'stored-file-content.processing_lease_seconds',
+        180,
+        'STORED_FILE_CONTENT_PROCESSING_LEASE_SECONDS must exceed STORED_FILE_CONTENT_JOB_TIMEOUT.',
+    ],
+    'source bytes minimum' => [
+        'stored-file-content.max_source_bytes',
+        0,
+        'STORED_FILE_CONTENT_MAX_SOURCE_BYTES must be between 1 byte and UPLOAD_MAX_FILE_MB.',
+    ],
+    'source bytes upload ceiling' => [
+        'stored-file-content.max_source_bytes',
+        201 * 1024 * 1024,
+        'STORED_FILE_CONTENT_MAX_SOURCE_BYTES must be between 1 byte and UPLOAD_MAX_FILE_MB.',
+    ],
+    'output bytes' => [
+        'stored-file-content.max_output_bytes',
+        0,
+        'STORED_FILE_CONTENT_MAX_OUTPUT_BYTES must be at least 1 byte.',
+    ],
+    'indexed bytes minimum' => [
+        'stored-file-content.max_indexed_bytes',
+        0,
+        'STORED_FILE_CONTENT_MAX_INDEXED_BYTES must be between 1 byte and STORED_FILE_CONTENT_MAX_OUTPUT_BYTES.',
+    ],
+    'indexed bytes output ceiling' => [
+        'stored-file-content.max_indexed_bytes',
+        17 * 1024 * 1024,
+        'STORED_FILE_CONTENT_MAX_INDEXED_BYTES must be between 1 byte and STORED_FILE_CONTENT_MAX_OUTPUT_BYTES.',
+    ],
+    'queue retry budget' => [
+        'queue.connections.redis.retry_after',
+        180,
+        'Queue retry_after must exceed STORED_FILE_CONTENT_JOB_TIMEOUT.',
+    ],
+]);
+
+test('enabled file content search requires pgroonga', function () {
+    config(['stored-file-content.enabled' => true]);
+    DB::shouldReceive('selectOne')
+        ->once()
+        ->andReturn((object) ['installed' => false]);
+
+    $this->artisan('app:production-check')
+        ->expectsOutput('PGroonga extension must be installed when file-content search is enabled.')
+        ->assertFailed();
 });
 
 test('unsafe production configuration fails with an actionable error', function (string $key, mixed $value, string $message) {

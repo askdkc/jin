@@ -15,6 +15,7 @@ use App\Models\Team;
 use App\Models\User;
 use App\Support\OnlyOfficeDocumentTypeResolver;
 use App\Support\Reactions;
+use App\Support\StoredFileContentDispatcher;
 use App\Support\StoredFileDeletion;
 use App\Support\StoredFilePreviewDispatcher;
 use App\Support\StoredFilePreviewGenerator;
@@ -175,6 +176,7 @@ class ProjectFileController extends Controller
         Team $currentTeam,
         Project $project,
         StoredFile $storedFile,
+        StoredFileContentDispatcher $contentDispatcher,
     ): RedirectResponse {
         /** @var UploadedFile $file */
         $file = $request->file('file');
@@ -187,7 +189,7 @@ class ProjectFileController extends Controller
         try {
             $newChecksum = StoredFile::checksumFor($disk, $newPath);
             $newSize = $disk->size($newPath);
-            $replacement = DB::transaction(function () use ($storedFile, $expectedOldPath, $newPath, $file, $newChecksum, $newSize): ?array {
+            $replacement = DB::transaction(function () use ($storedFile, $expectedOldPath, $newPath, $file, $newChecksum, $newSize, $contentDispatcher): ?array {
                 $current = StoredFile::query()
                     ->whereKey($storedFile->id)
                     ->lockForUpdate()
@@ -213,6 +215,8 @@ class ProjectFileController extends Controller
                     'preview_status' => $previewStatus,
                 ]), RuntimeException::class, 'File replacement failed.');
 
+                $contentPending = $contentDispatcher->prepare($current, force: true);
+
                 return [
                     'id' => $current->id,
                     'disk' => $current->disk,
@@ -220,6 +224,8 @@ class ProjectFileController extends Controller
                     'preview_path' => $oldPreviewPath,
                     'preview_status' => $previewStatus,
                     'new_path' => $newPath,
+                    'checksum' => $newChecksum,
+                    'content_pending' => $contentPending,
                 ];
             });
         } catch (Throwable $exception) {
@@ -255,6 +261,15 @@ class ProjectFileController extends Controller
         if ($replacement['preview_status'] === 'pending') {
             app(StoredFilePreviewDispatcher::class)
                 ->dispatchAfterCommit($replacement['id'], $replacement['new_path']);
+        }
+
+        if ($replacement['content_pending']) {
+            $contentDispatcher->dispatchAfterCommit(
+                $replacement['id'],
+                $replacement['checksum'],
+                $replacement['disk'],
+                $replacement['new_path'],
+            );
         }
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('File replaced.')]);

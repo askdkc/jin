@@ -166,16 +166,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             antiword \
             catdoc \
-            libreoffice-calc \
-            libreoffice-impress \
-            libreoffice-writer \
-            python3-venv \
-            qpdf
+            python3-venv
           python3 -m venv .venv-file-content
           .venv-file-content/bin/python -m pip install \
             --disable-pip-version-check \
-            --requirement requirements-file-content.txt \
-            'msoffcrypto-tool==6.0.0'
+            --requirement requirements-file-content.txt
 
       - name: Install PHP Dependencies
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
@@ -184,51 +179,6 @@ jobs:
         run: |
           cp .env.example .env
           php artisan key:generate
-
-      - name: Generate Non-Sensitive Extractor Fixtures
-        run: |
-          fixture_dir="${{ github.workspace }}/tests/Fixtures/StoredFileContent"
-          generated_dir="${fixture_dir}/generated"
-          source_dir="$(mktemp -d)"
-          trap 'rm -rf "$source_dir"' EXIT
-          rm -rf "$generated_dir"
-          mkdir -p "$generated_dir"
-          cp "${fixture_dir}/source.fodt" "${source_dir}/supported.fodt"
-          cp "${fixture_dir}/source.fods" "${source_dir}/supported.fods"
-          cp "${fixture_dir}/source.fodp" "${source_dir}/supported.fodp"
-
-          libreoffice --headless --convert-to 'docx:Office Open XML Text' \
-            --outdir "$generated_dir" "${source_dir}/supported.fodt"
-          libreoffice --headless --convert-to 'doc:MS Word 97' \
-            --outdir "$generated_dir" "${source_dir}/supported.fodt"
-          libreoffice --headless --convert-to 'pdf:writer_pdf_Export' \
-            --outdir "$generated_dir" "${source_dir}/supported.fodt"
-          libreoffice --headless --convert-to 'xlsx:Calc MS Excel 2007 XML' \
-            --outdir "$generated_dir" "${source_dir}/supported.fods"
-          libreoffice --headless --convert-to 'xls:MS Excel 97' \
-            --outdir "$generated_dir" "${source_dir}/supported.fods"
-          libreoffice --headless --convert-to 'pptx:Impress MS PowerPoint 2007 XML' \
-            --outdir "$generated_dir" "${source_dir}/supported.fodp"
-          libreoffice --headless --convert-to 'ppt:MS PowerPoint 97' \
-            --outdir "$generated_dir" "${source_dir}/supported.fodp"
-
-          qpdf --encrypt fixture-password fixture-password 256 -- \
-            "$generated_dir/supported.pdf" "$generated_dir/protected.pdf"
-          .venv-file-content/bin/python - <<'PY'
-          from pathlib import Path
-          from msoffcrypto.format.ooxml import OOXMLFile
-
-          generated = Path('tests/Fixtures/StoredFileContent/generated')
-          with (generated / 'supported.docx').open('rb') as source:
-              with (generated / 'protected.docx').open('wb') as output:
-                  OOXMLFile(source).encrypt('fixture-password', output)
-          PY
-
-          for extension in doc docx xls xlsx ppt pptx pdf; do
-            test -s "$generated_dir/supported.$extension"
-          done
-          test -s "$generated_dir/protected.docx"
-          test -s "$generated_dir/protected.pdf"
 
       - name: Run Real Extractor Tests
         run: php artisan test --compact tests/Integration/StoredFileContentExtractorTest.php

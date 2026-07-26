@@ -11,7 +11,7 @@ uses(TestCase::class);
 
 function realExtractorFixture(string $name, string $mimeType): StoredFile
 {
-    $fixturePath = base_path("tests/Fixtures/StoredFileContent/generated/{$name}");
+    $fixturePath = base_path("tests/Fixtures/StoredFileContent/files/{$name}");
     $contents = file_get_contents($fixturePath);
 
     expect($contents)->not->toBeFalse();

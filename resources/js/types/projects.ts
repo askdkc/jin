@@ -266,11 +266,14 @@ export type EverythingItem = EverythingTextItem | EverythingFileItem;
 export type EverythingSort =
     'updated_desc' | 'updated_asc' | 'name_asc' | 'name_desc';
 
+export type EverythingFileCategory = 'image' | 'video' | 'office' | 'pdf';
+
 export type EverythingFilters = {
     q: string | null;
     type: EverythingType | null;
     project: number | null;
     sort: EverythingSort;
+    fileCategories: EverythingFileCategory[];
 };
 
 export type ReportSummary = {

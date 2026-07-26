@@ -20,7 +20,23 @@ const translations = JSON.parse(
     readFileSync(new URL('../../lang/ja.json', import.meta.url), 'utf8'),
 ) as Record<string, string>;
 
-test('everything page uses a responsive refinement rail and divided result feed', () => {
+test('everything page uses a compact responsive search workspace', () => {
+    assert.match(everythingPage, /max-w-\[96rem\]/);
+    assert.match(everythingPage, /lg:grid-cols-\[13rem_minmax\(0,1fr\)\]/);
+    assert.match(
+        everythingPage,
+        /<h1[\s\S]*?text-2xl[\s\S]*?Find everything[\s\S]*?<\/h1>/,
+    );
+    assert.match(
+        everythingPage,
+        /<Input[\s\S]*?id="everything-query"[\s\S]*?class="h-9 /,
+    );
+    assert.doesNotMatch(everythingPage, /currentTeam\.name/);
+    assert.doesNotMatch(
+        everythingPage,
+        /Search messages, to-dos, documents, files, links, and comments/,
+    );
+
     assert.match(everythingPage, /<details[\s\S]*?<summary/);
     assert.match(everythingPage, /id="everything-refinement-panel"/);
     assert.match(everythingPage, /document\.querySelector<HTMLDetailsElement>/);
@@ -32,10 +48,37 @@ test('everything page uses a responsive refinement rail and divided result feed'
         everythingPage,
         /refinementPanel\.open = desktopBreakpoint\.matches/,
     );
-    assert.match(everythingPage, /<ol class="max-w-3xl divide-y">/);
+    assert.match(everythingPage, /<ol class="divide-y">/);
+    assert.match(everythingPage, /<li class="py-3\.5">/);
     assert.doesNotMatch(everythingPage, /<Card(?:Content)?\b/);
     assert.match(everythingPage, /aria-current=\{link\.active/);
     assert.match(everythingPage, /results\.total/);
+});
+
+test('everything page submits accessible multi-select file categories', () => {
+    assert.match(
+        everythingPage,
+        /<fieldset[\s\S]*?<legend[\s\S]*?File categories[\s\S]*?<\/fieldset>/,
+    );
+    assert.match(everythingPage, /name="file_categories\[\]"/);
+    assert.match(
+        everythingPage,
+        /checked=\{filters\.fileCategories\.includes\(/,
+    );
+    assert.match(everythingPage, /filters\.fileCategories\.length > 0/);
+
+    for (const value of ['image', 'video', 'office', 'pdf']) {
+        assert.match(
+            everythingPage,
+            new RegExp(`\\{ value: '${value}', label:`),
+        );
+    }
+
+    assert.equal(translations['File categories'], 'ファイル種別');
+    assert.equal(translations.Images, '画像');
+    assert.equal(translations.Videos, '動画');
+    assert.equal(translations['Office files'], 'Officeファイル');
+    assert.equal(translations['PDF files'], 'PDFファイル');
 });
 
 test('file results reuse previews and navigate with server-owned hrefs', () => {

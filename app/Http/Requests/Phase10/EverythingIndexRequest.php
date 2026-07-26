@@ -22,6 +22,21 @@ class EverythingIndexRequest extends FormRequest
 
     public const DEFAULT_SORT = self::SORT_UPDATED_DESC;
 
+    public const FILE_CATEGORY_IMAGE = 'image';
+
+    public const FILE_CATEGORY_VIDEO = 'video';
+
+    public const FILE_CATEGORY_OFFICE = 'office';
+
+    public const FILE_CATEGORY_PDF = 'pdf';
+
+    public const FILE_CATEGORY_OPTIONS = [
+        self::FILE_CATEGORY_IMAGE,
+        self::FILE_CATEGORY_VIDEO,
+        self::FILE_CATEGORY_OFFICE,
+        self::FILE_CATEGORY_PDF,
+    ];
+
     public const SORT_OPTIONS = [
         self::SORT_UPDATED_DESC,
         self::SORT_UPDATED_ASC,
@@ -54,6 +69,8 @@ class EverythingIndexRequest extends FormRequest
         return [
             'q' => ['nullable', 'string', 'max:100'],
             'type' => ['nullable', Rule::in(['message', 'todo', 'document', 'file', 'link', 'comment'])],
+            'file_categories' => ['sometimes', 'array', 'list', 'max:4'],
+            'file_categories.*' => ['string', 'distinct:strict', Rule::in(self::FILE_CATEGORY_OPTIONS)],
             'sort' => ['nullable', Rule::in(self::SORT_OPTIONS)],
             'project' => [
                 'nullable',

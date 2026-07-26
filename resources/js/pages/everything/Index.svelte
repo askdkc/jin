@@ -37,6 +37,7 @@
     import { t } from '@/lib/i18n';
     import { getInitials } from '@/lib/initials';
     import type {
+        EverythingFileCategory,
         EverythingFileItem,
         EverythingFilters,
         EverythingItem,
@@ -57,10 +58,22 @@
         filters: EverythingFilters;
     } = $props();
 
+    const fileCategoryOptions = [
+        { value: 'image', label: 'Images' },
+        { value: 'video', label: 'Videos' },
+        { value: 'office', label: 'Office files' },
+        { value: 'pdf', label: 'PDF files' },
+    ] satisfies Array<{ value: EverythingFileCategory; label: string }>;
+
     let previewFile = $state<EverythingFileItem | null>(null);
     let previewOpen = $state(false);
     const hasFilters = $derived(
-        Boolean(filters.q || filters.type || filters.project),
+        Boolean(
+            filters.q ||
+            filters.type ||
+            filters.project ||
+            filters.fileCategories.length > 0,
+        ),
     );
     const hasPaginationNavigation = $derived(
         results.links.some((link) => link.url !== null && !link.active),
@@ -140,80 +153,77 @@
 
 <AppHead title={t('Everything')} />
 
-<div class="min-h-[calc(100vh-7rem)] bg-muted/30 px-3 py-5 sm:px-6 sm:py-8">
+<div class="min-h-[calc(100vh-7rem)] bg-muted/30 px-3 py-3 sm:px-6 sm:py-4">
     <main
-        class="mx-auto w-full max-w-6xl overflow-hidden rounded-2xl border bg-card shadow-[0_16px_48px_color-mix(in_oklab,var(--foreground)_7%,transparent)]"
+        class="mx-auto w-full max-w-[96rem] overflow-hidden rounded-2xl border bg-card shadow-[0_16px_48px_color-mix(in_oklab,var(--foreground)_7%,transparent)]"
     >
-        <div class="grid lg:grid-cols-[15rem_minmax(0,1fr)]">
+        <div class="grid lg:grid-cols-[13rem_minmax(0,1fr)]">
             <Form
                 {...EverythingController.form(currentTeam.slug)}
                 id="everything-search-form"
                 class="contents"
             >
                 {#snippet children({ processing })}
-                    <header
-                        class="border-b px-5 py-6 sm:px-8 sm:py-8 lg:col-span-2"
-                    >
-                        <p class="text-sm font-semibold text-primary">
-                            {currentTeam.name}
-                        </p>
-                        <h1
-                            class="mt-1 text-3xl font-bold tracking-tight sm:text-4xl"
-                        >
-                            {t('Find everything')}
-                        </h1>
-                        <p
-                            class="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground"
-                        >
-                            {t(
-                                'Search messages, to-dos, documents, files, links, and comments',
-                            )}
-                        </p>
-
+                    <header class="border-b px-4 py-4 sm:px-6 lg:col-span-2">
                         <div
-                            class="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center"
+                            class="flex flex-col gap-3 md:flex-row md:items-center"
                         >
-                            <Label for="everything-query" class="sr-only">
-                                {t('Search')}
-                            </Label>
-                            <div class="relative min-w-0 flex-1">
-                                <Search
-                                    class="pointer-events-none absolute top-1/2 left-4 size-5 -translate-y-1/2 text-muted-foreground"
-                                    aria-hidden="true"
-                                />
-                                <Input
-                                    id="everything-query"
-                                    name="q"
-                                    type="search"
-                                    maxlength={100}
-                                    value={filters.q ?? ''}
-                                    placeholder={t('Search words')}
-                                    class="h-12 rounded-xl bg-background pr-4 pl-12 text-base shadow-sm"
-                                />
-                            </div>
-                            <Button
-                                type="submit"
-                                disabled={processing}
-                                class="h-12 rounded-xl px-6"
+                            <h1
+                                class="shrink-0 text-2xl font-semibold tracking-tight"
                             >
-                                <Search class="size-4" aria-hidden="true" />
-                                {t('Search')}
-                            </Button>
-                            {#if hasFilters}
-                                <Button variant="ghost" asChild>
-                                    {#snippet children(buttonProps)}
-                                        <Link
-                                            {...buttonProps}
-                                            href={EverythingController(
-                                                currentTeam.slug,
-                                            )}
-                                            class={buttonProps.class}
-                                        >
-                                            {t('Clear')}
-                                        </Link>
-                                    {/snippet}
+                                {t('Find everything')}
+                            </h1>
+
+                            <div
+                                class="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 md:ml-4 md:flex"
+                            >
+                                <Label for="everything-query" class="sr-only">
+                                    {t('Search')}
+                                </Label>
+                                <div class="relative min-w-0 md:flex-1">
+                                    <Search
+                                        class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+                                        aria-hidden="true"
+                                    />
+                                    <Input
+                                        id="everything-query"
+                                        name="q"
+                                        type="search"
+                                        maxlength={100}
+                                        value={filters.q ?? ''}
+                                        placeholder={t('Search words')}
+                                        class="h-9 rounded-lg bg-background pr-3 pl-9 text-sm shadow-sm"
+                                    />
+                                </div>
+                                <Button
+                                    type="submit"
+                                    disabled={processing}
+                                    class="h-9 rounded-lg px-4"
+                                >
+                                    <Search class="size-4" aria-hidden="true" />
+                                    {t('Search')}
                                 </Button>
-                            {/if}
+                                {#if hasFilters}
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        class="col-span-2 justify-self-start md:col-span-1"
+                                        asChild
+                                    >
+                                        {#snippet children(buttonProps)}
+                                            <Link
+                                                {...buttonProps}
+                                                href={EverythingController(
+                                                    currentTeam.slug,
+                                                )}
+                                                class={buttonProps.class}
+                                            >
+                                                {t('Clear')}
+                                            </Link>
+                                        {/snippet}
+                                    </Button>
+                                {/if}
+                            </div>
                         </div>
                     </header>
 
@@ -222,7 +232,7 @@
                         class="group border-b lg:row-start-2 lg:border-r lg:border-b-0"
                     >
                         <summary
-                            class="flex cursor-pointer list-none items-center justify-between px-5 py-4 font-semibold marker:hidden lg:hidden"
+                            class="flex cursor-pointer list-none items-center justify-between px-4 py-2.5 text-sm font-semibold marker:hidden sm:px-6 lg:hidden"
                         >
                             <span>{t('Refine results')}</span>
                             <ChevronDown
@@ -231,20 +241,20 @@
                             />
                         </summary>
                         <div
-                            class="space-y-6 px-5 pb-5 lg:sticky lg:top-20 lg:block lg:px-6 lg:py-8"
+                            class="grid gap-4 px-4 pb-4 sm:px-6 lg:sticky lg:top-16 lg:px-4 lg:py-5"
                         >
                             <div class="hidden lg:block">
-                                <h2 class="text-sm font-bold">
+                                <h2 class="text-sm font-semibold">
                                     {t('Refine results')}
                                 </h2>
                             </div>
 
-                            <div class="grid gap-2">
+                            <div class="grid gap-1.5">
                                 <Label for="everything-type">{t('Type')}</Label>
                                 <select
                                     id="everything-type"
                                     name="type"
-                                    class="border-input h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
+                                    class="border-input h-8 w-full rounded-md border bg-background px-2.5 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
                                 >
                                     <option value="">{t('All types')}</option>
                                     <option
@@ -286,14 +296,40 @@
                                 </select>
                             </div>
 
-                            <div class="grid gap-2">
+                            <fieldset class="grid gap-1.5">
+                                <legend class="text-sm font-medium">
+                                    {t('File categories')}
+                                </legend>
+                                <div
+                                    class="grid gap-1 sm:grid-cols-2 lg:grid-cols-1"
+                                >
+                                    {#each fileCategoryOptions as fileCategory (fileCategory.value)}
+                                        <label
+                                            class="flex min-h-7 cursor-pointer items-center gap-2 rounded px-1 text-sm text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                name="file_categories[]"
+                                                value={fileCategory.value}
+                                                checked={filters.fileCategories.includes(
+                                                    fileCategory.value,
+                                                )}
+                                                class="size-4 shrink-0 accent-primary outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                                            />
+                                            <span>{t(fileCategory.label)}</span>
+                                        </label>
+                                    {/each}
+                                </div>
+                            </fieldset>
+
+                            <div class="grid gap-1.5">
                                 <Label for="everything-project">
                                     {t('Project')}
                                 </Label>
                                 <select
                                     id="everything-project"
                                     name="project"
-                                    class="border-input h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
+                                    class="border-input h-8 w-full rounded-md border bg-background px-2.5 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
                                 >
                                     <option value="">{t('All projects')}</option
                                     >
@@ -311,6 +347,7 @@
 
                             <Button
                                 type="submit"
+                                size="sm"
                                 disabled={processing}
                                 class="w-full"
                             >
@@ -322,11 +359,11 @@
             </Form>
 
             <section
-                class="min-w-0 px-5 py-6 sm:px-8 sm:py-8 lg:col-start-2 lg:row-start-2"
+                class="min-w-0 px-4 py-4 sm:px-6 sm:py-5 lg:col-start-2 lg:row-start-2"
                 aria-labelledby="everything-results-heading"
             >
                 <div
-                    class="flex flex-wrap items-center justify-between gap-3 border-b pb-4"
+                    class="flex flex-wrap items-center justify-between gap-3 border-b pb-3"
                 >
                     <h2 id="everything-results-heading" class="font-bold">
                         {t(':count results', {
@@ -375,7 +412,7 @@
 
                 {#if results.data.length === 0}
                     <div
-                        class="flex min-h-80 flex-col items-center justify-center px-4 py-16 text-center"
+                        class="flex min-h-64 flex-col items-center justify-center px-4 py-12 text-center"
                     >
                         <span
                             class="mb-4 flex size-14 items-center justify-center rounded-full bg-muted text-muted-foreground"
@@ -413,9 +450,9 @@
                         {/if}
                     </div>
                 {:else}
-                    <ol class="max-w-3xl divide-y">
+                    <ol class="divide-y">
                         {#each results.data as item (`${item.type}-${item.id}`)}
-                            <li class="py-5">
+                            <li class="py-3.5">
                                 {#if item.type === 'file'}
                                     <article class="min-w-0">
                                         <div
@@ -560,10 +597,10 @@
                                     </article>
                                 {:else}
                                     <article
-                                        class="grid min-w-0 grid-cols-[2.5rem_minmax(0,1fr)] gap-3 sm:gap-4"
+                                        class="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)] gap-3"
                                     >
                                         <span
-                                            class="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground"
+                                            class="flex size-8 items-center justify-center rounded-full bg-muted text-muted-foreground"
                                         >
                                             {#if item.type === 'message' || item.type === 'comment'}
                                                 <MessageSquare
@@ -629,7 +666,7 @@
 
                     {#if hasPaginationNavigation}
                         <nav
-                            class="mt-6 flex flex-wrap justify-center gap-2 border-t pt-6"
+                            class="mt-4 flex flex-wrap justify-center gap-2 border-t pt-4"
                             aria-label={t('Pagination')}
                         >
                             {#each results.links as link, index (index)}

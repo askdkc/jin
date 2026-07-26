@@ -14,7 +14,9 @@ use App\Models\Team;
 use App\Models\Todo;
 use App\Models\TodoList;
 use App\Models\User;
+use App\Support\OnlyOfficeDocumentTypeResolver;
 use App\Support\RichText;
+use Illuminate\Contracts\Database\Query\Expression;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
@@ -24,13 +26,19 @@ use Inertia\Response;
 
 class EverythingController extends Controller
 {
+    public function __construct(
+        private OnlyOfficeDocumentTypeResolver $onlyOfficeDocumentTypeResolver,
+    ) {}
+
     public function __invoke(EverythingIndexRequest $request, Team $currentTeam): Response
     {
         $filters = $request->validated();
         $search = isset($filters['q']) && trim((string) $filters['q']) !== ''
             ? trim((string) $filters['q'])
             : null;
-        $type = $filters['type'] ?? null;
+        /** @var list<string> $fileCategories */
+        $fileCategories = array_values($filters['file_categories'] ?? []);
+        $type = $fileCategories === [] ? ($filters['type'] ?? null) : 'file';
         $projectId = isset($filters['project']) ? (int) $filters['project'] : null;
         $sort = isset($filters['sort'])
             ? (string) $filters['sort']
@@ -41,7 +49,7 @@ class EverythingController extends Controller
             'message' => $this->messageQuery($currentTeam, $user, $search, $projectId),
             'todo' => $this->todoQuery($currentTeam, $user, $search, $projectId),
             'document' => $this->documentQuery($currentTeam, $user, $search, $projectId),
-            'file' => $this->fileQuery($currentTeam, $user, $search, $projectId),
+            'file' => $this->fileQuery($currentTeam, $user, $search, $projectId, $fileCategories),
             'link' => $this->linkQuery($currentTeam, $user, $search, $projectId),
             'comment' => $this->commentQuery($currentTeam, $user, $search, $projectId),
         ])->when($type !== null, fn ($collection) => $collection->only((string) $type));
@@ -55,9 +63,16 @@ class EverythingController extends Controller
 
         $resultsQuery = DB::query()->fromSub($union, 'everything');
         $this->applySort($resultsQuery, $sort);
+        $paginationParameters = array_filter([
+            'q' => $search,
+            'type' => $type,
+            'project' => $projectId,
+            'sort' => $sort,
+            'file_categories' => $fileCategories,
+        ], fn (mixed $value): bool => $value !== null && $value !== []);
         $results = $resultsQuery
             ->paginate(20)
-            ->withQueryString();
+            ->appends($paginationParameters);
         $projectIds = collect($results->items())
             ->map(fn (object $item): int => (int) get_object_vars($item)['project_id'])
             ->unique()
@@ -134,6 +149,7 @@ class EverythingController extends Controller
                 'type' => $type,
                 'project' => $projectId,
                 'sort' => $sort,
+                'fileCategories' => $fileCategories,
             ],
         ]);
     }
@@ -198,8 +214,14 @@ class EverythingController extends Controller
         return $this->scopeProjectAccess($query, $team, $user, $projectId);
     }
 
-    private function fileQuery(Team $team, User $user, ?string $search, ?int $projectId): Builder
-    {
+    /** @param list<string> $fileCategories */
+    private function fileQuery(
+        Team $team,
+        User $user,
+        ?string $search,
+        ?int $projectId,
+        array $fileCategories,
+    ): Builder {
         $query = DB::table('stored_files')
             ->join('projects', 'projects.id', '=', 'stored_files.project_id')
             ->select([
@@ -213,6 +235,7 @@ class EverythingController extends Controller
             ->selectRaw('? as type, NULL as route_parent_id, NULL as route_resource_id', ['file']);
 
         $this->applySearch($query, $search, ['stored_files.original_name']);
+        $this->applyFileCategoryFilters($query, $fileCategories);
 
         return $this->scopeProjectAccess($query, $team, $user, $projectId);
     }
@@ -292,6 +315,91 @@ class EverythingController extends Controller
             foreach ($columns as $index => $column) {
                 $method = $index === 0 ? 'where' : 'orWhere';
                 $searchQuery->{$method}($column, 'like', "%{$search}%");
+            }
+        });
+    }
+
+    private function normalizedMimeTypeExpression(): Expression
+    {
+        $driver = DB::connection()->getDriverName();
+
+        if ($driver === 'pgsql') {
+            return DB::raw("LOWER(TRIM(SPLIT_PART(COALESCE(stored_files.mime_type, ''), ';', 1)))");
+        }
+
+        if ($driver === 'sqlsrv') {
+            return DB::raw("LOWER(LTRIM(RTRIM(CASE WHEN CHARINDEX(';', COALESCE(stored_files.mime_type, '')) > 0 THEN SUBSTRING(COALESCE(stored_files.mime_type, ''), 1, CHARINDEX(';', COALESCE(stored_files.mime_type, '')) - 1) ELSE COALESCE(stored_files.mime_type, '') END)))");
+        }
+
+        return DB::raw("LOWER(TRIM(CASE WHEN INSTR(COALESCE(stored_files.mime_type, ''), ';') > 0 THEN SUBSTR(COALESCE(stored_files.mime_type, ''), 1, INSTR(COALESCE(stored_files.mime_type, ''), ';') - 1) ELSE COALESCE(stored_files.mime_type, '') END))");
+    }
+
+    /** @param list<string> $fileCategories */
+    private function applyFileCategoryFilters(Builder $query, array $fileCategories): void
+    {
+        if ($fileCategories === []) {
+            return;
+        }
+
+        $query->where(function (Builder $categoryQuery) use ($fileCategories): void {
+            foreach ($fileCategories as $index => $fileCategory) {
+                $method = $index === 0 ? 'where' : 'orWhere';
+
+                $categoryQuery->{$method}(function (Builder $selectedCategoryQuery) use ($fileCategory): void {
+                    $this->applyFileCategoryFilter($selectedCategoryQuery, $fileCategory);
+                });
+            }
+        });
+    }
+
+    private function applyFileCategoryFilter(Builder $query, string $fileCategory): void
+    {
+        switch ($fileCategory) {
+            case EverythingIndexRequest::FILE_CATEGORY_IMAGE:
+                $query->where($this->normalizedMimeTypeExpression(), 'like', 'image/%');
+                break;
+            case EverythingIndexRequest::FILE_CATEGORY_VIDEO:
+                $query->where($this->normalizedMimeTypeExpression(), 'like', 'video/%');
+                break;
+            case EverythingIndexRequest::FILE_CATEGORY_OFFICE:
+                $this->applyOfficeFileFilter($query);
+                break;
+            case EverythingIndexRequest::FILE_CATEGORY_PDF:
+                $query->whereRaw('LOWER(stored_files.original_name) LIKE ?', ['%.pdf']);
+                $this->applyNormalizedMimeTypeFilter($query, ['application/pdf']);
+                break;
+        }
+    }
+
+    private function applyOfficeFileFilter(Builder $query): void
+    {
+        $query->where(function (Builder $officeQuery): void {
+            $position = 0;
+
+            foreach ($this->onlyOfficeDocumentTypeResolver->formats() as $extension => $format) {
+                $method = $position === 0 ? 'where' : 'orWhere';
+
+                $officeQuery->{$method}(function (Builder $formatQuery) use ($extension, $format): void {
+                    $formatQuery->whereRaw('LOWER(stored_files.original_name) LIKE ?', ["%.{$extension}"]);
+                    $this->applyNormalizedMimeTypeFilter($formatQuery, $format['mimes']);
+                });
+
+                $position++;
+            }
+        });
+    }
+
+    /** @param list<string> $mimeTypes */
+    private function applyNormalizedMimeTypeFilter(Builder $query, array $mimeTypes): void
+    {
+        $query->where(function (Builder $mimeQuery) use ($mimeTypes): void {
+            foreach ($mimeTypes as $index => $mimeType) {
+                $method = $index === 0 ? 'where' : 'orWhere';
+                $mimeQuery->{$method}(
+                    $this->normalizedMimeTypeExpression(),
+                    '=',
+                    $mimeType,
+                );
             }
         });
     }

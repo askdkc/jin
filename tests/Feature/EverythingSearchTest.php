@@ -311,6 +311,194 @@ test('everything search filters by words type and project', function () {
             ->where('filters.project', $project->id));
 });
 
+test('everything search filters files by their selected category', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+
+    foreach ([
+        ['original_name' => 'diagram.PNG', 'mime_type' => ' IMAGE/PNG '],
+        ['original_name' => 'recording.mp4', 'mime_type' => 'VIDEO/MP4; codecs=h264'],
+        ['original_name' => 'handbook.PDF', 'mime_type' => 'APPLICATION/PDF ; charset=binary'],
+        ['original_name' => 'proposal.docx', 'mime_type' => 'application/zip'],
+        ['original_name' => 'budget.xlsx', 'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet ; charset=binary'],
+        ['original_name' => 'slides.ppt', 'mime_type' => 'application/vnd.ms-office'],
+        ['original_name' => 'archive.zip', 'mime_type' => 'application/zip'],
+        ['original_name' => 'fake.docx', 'mime_type' => 'application/octet-stream'],
+        ['original_name' => 'wrong.pdf', 'mime_type' => 'text/plain'],
+        ['original_name' => 'tabbed.pdf', 'mime_type' => "application/pdf\t; charset=binary"],
+        ['original_name' => 'unknown.png', 'mime_type' => null],
+        ['original_name' => 'notes.txt', 'mime_type' => 'text/plain'],
+    ] as $attributes) {
+        StoredFile::factory()->for($project)->for($owner, 'uploader')->create($attributes);
+    }
+
+    MessageBoardPost::factory()->for($project)->for($owner, 'user')->create([
+        'title' => 'Non-file result',
+    ]);
+
+    foreach ([
+        'image' => ['diagram.PNG'],
+        'video' => ['recording.mp4'],
+        'pdf' => ['handbook.PDF'],
+        'office' => ['budget.xlsx', 'proposal.docx', 'slides.ppt'],
+    ] as $category => $expectedTitles) {
+        $this->actingAs($owner)
+            ->get(route('everything.index', [
+                $team,
+                'file_categories' => [$category],
+                'sort' => 'name_asc',
+            ]))
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('results.data', fn (Collection $items): bool => $items
+                    ->pluck('title')
+                    ->all() === $expectedTitles
+                    && $items->every(fn (array $item): bool => $item['type'] === 'file'))
+                ->where('filters.type', 'file')
+                ->where('filters.fileCategories', [$category]));
+    }
+});
+
+test('file category selections use OR semantics and compose with other filters', function () {
+    $owner = User::factory()->create();
+    $member = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $otherProject = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $hiddenProject = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($member);
+    $otherProject->members()->attach($member);
+
+    foreach ([
+        ['original_name' => 'campaign-image.png', 'mime_type' => 'image/png'],
+        ['original_name' => 'campaign-report.pdf', 'mime_type' => 'application/pdf'],
+        ['original_name' => 'campaign-video.mp4', 'mime_type' => 'video/mp4'],
+        ['original_name' => 'unrelated-image.png', 'mime_type' => 'image/png'],
+    ] as $attributes) {
+        StoredFile::factory()->for($project)->for($member, 'uploader')->create($attributes);
+    }
+
+    StoredFile::factory()->for($otherProject)->for($member, 'uploader')->create([
+        'original_name' => 'campaign-other-project.pdf',
+        'mime_type' => 'application/pdf',
+    ]);
+    StoredFile::factory()->for($hiddenProject)->for($owner, 'uploader')->create([
+        'original_name' => 'campaign-secret.pdf',
+        'mime_type' => 'application/pdf',
+    ]);
+
+    $this->actingAs($member)
+        ->get(route('everything.index', [
+            $team,
+            'q' => 'campaign',
+            'type' => 'message',
+            'project' => $project->id,
+            'sort' => 'name_desc',
+            'file_categories' => ['image', 'pdf'],
+        ]))
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('results.data', fn (Collection $items): bool => $items
+                ->pluck('title')
+                ->all() === ['campaign-report.pdf', 'campaign-image.png'])
+            ->where('results.total', 2)
+            ->where('filters.q', 'campaign')
+            ->where('filters.type', 'file')
+            ->where('filters.project', $project->id)
+            ->where('filters.sort', 'name_desc')
+            ->where('filters.fileCategories', ['image', 'pdf']));
+
+    $this->actingAs($member)
+        ->get(route('everything.index', [
+            $team,
+            'q' => 'campaign',
+            'sort' => 'name_desc',
+            'file_categories' => ['image', 'pdf'],
+        ]))
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('results.data', fn (Collection $items): bool => $items
+                ->pluck('title')
+                ->all() === [
+                    'campaign-report.pdf',
+                    'campaign-other-project.pdf',
+                    'campaign-image.png',
+                ])
+            ->where('results.total', 3));
+});
+
+test('everything rejects malformed file category filters', function (mixed $fileCategories, string $errorKey) {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+
+    $this->actingAs($owner)
+        ->get(route('everything.index', [$team, 'file_categories' => $fileCategories]))
+        ->assertSessionHasErrors($errorKey);
+})->with([
+    'unsupported category' => [['archive'], 'file_categories.0'],
+    'scalar value' => ['image', 'file_categories'],
+    'duplicate category' => [['image', 'image'], 'file_categories.1'],
+    'non-list array' => [[1 => 'image'], 'file_categories'],
+    'more than four categories' => [['image', 'video', 'office', 'pdf', 'image'], 'file_categories'],
+]);
+
+test('file category pagination retains normalized filters and correct totals', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    StoredFile::factory()
+        ->count(25)
+        ->for($project)
+        ->for($owner, 'uploader')
+        ->create([
+            'original_name' => fake()->unique()->lexify('image-????.png'),
+            'mime_type' => 'image/png',
+        ]);
+    StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'original_name' => 'excluded.pdf',
+        'mime_type' => 'application/pdf',
+    ]);
+
+    $this->actingAs($owner)
+        ->get(route('everything.index', [
+            $team,
+            'type' => 'comment',
+            'file_categories' => ['image'],
+            'sort' => 'name_asc',
+            'page' => 2,
+            'ignored' => 'value',
+        ]))
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('results.data', 5)
+            ->where('results.total', 25)
+            ->where('results.current_page', 2)
+            ->where('filters.type', 'file')
+            ->where('filters.fileCategories', ['image'])
+            ->where('results.links', function (Collection $links): bool {
+                $expectedQuery = [
+                    'file_categories' => ['image'],
+                    'page' => '1',
+                    'sort' => 'name_asc',
+                    'type' => 'file',
+                ];
+                ksort($expectedQuery);
+
+                return $links->contains(function (array $link) use ($expectedQuery): bool {
+                    if (! is_string($link['url'])) {
+                        return false;
+                    }
+
+                    parse_str((string) parse_url($link['url'], PHP_URL_QUERY), $query);
+                    ksort($query);
+
+                    return $query === $expectedQuery;
+                });
+            }));
+});
+
 test('everything results support update and name sorting', function () {
     $owner = User::factory()->create();
     $team = Team::factory()->create();

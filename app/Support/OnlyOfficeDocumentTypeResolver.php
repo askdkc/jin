@@ -61,12 +61,20 @@ class OnlyOfficeDocumentTypeResolver
         ],
     ];
 
+    /**
+     * @return array<string, array{documentType: string, contentType: string, mimes: list<string>}>
+     */
+    public function formats(): array
+    {
+        return self::FORMATS;
+    }
+
     /** @return array{fileType: string, documentType: string, contentType: string}|null */
     public function resolve(StoredFile $storedFile): ?array
     {
         $fileType = Str::lower(pathinfo($storedFile->original_name, PATHINFO_EXTENSION));
-        $format = self::FORMATS[$fileType] ?? null;
-        $mimeType = Str::lower(trim(Str::before((string) $storedFile->mime_type, ';')));
+        $format = $this->formats()[$fileType] ?? null;
+        $mimeType = Str::lower(trim(Str::before((string) $storedFile->mime_type, ';'), ' '));
 
         if ($format === null || ! in_array($mimeType, $format['mimes'], true)) {
             return null;

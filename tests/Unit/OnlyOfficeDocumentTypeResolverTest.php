@@ -31,11 +31,49 @@ test('resolves only matching office extensions and mime types', function (
 test('normalizes extension and mime casing and ignores mime parameters', function () {
     $file = (new StoredFile)->setRawAttributes([
         'original_name' => 'REPORT.XLSX',
-        'mime_type' => 'APPLICATION/VND.OPENXMLFORMATS-OFFICEDOCUMENT.SPREADSHEETML.SHEET; charset=binary',
+        'mime_type' => 'APPLICATION/VND.OPENXMLFORMATS-OFFICEDOCUMENT.SPREADSHEETML.SHEET ; charset=binary',
     ]);
 
     expect(app(OnlyOfficeDocumentTypeResolver::class)->resolve($file))
         ->toMatchArray(['fileType' => 'xlsx', 'documentType' => 'cell']);
+});
+
+test('exposes the compatibility registry used to resolve office files', function () {
+    $resolver = app(OnlyOfficeDocumentTypeResolver::class);
+    $formats = $resolver->formats();
+
+    expect(array_keys($formats))->toBe([
+        'doc',
+        'docx',
+        'odt',
+        'xls',
+        'xlsx',
+        'xlsm',
+        'ods',
+        'ppt',
+        'pptx',
+        'odp',
+    ]);
+
+    foreach ($formats as $extension => $format) {
+        $file = (new StoredFile)->setRawAttributes([
+            'original_name' => "report.{$extension}",
+            'mime_type' => $format['mimes'][0],
+        ]);
+
+        expect($resolver->resolve($file))->toMatchArray([
+            'fileType' => $extension,
+            'documentType' => $format['documentType'],
+            'contentType' => $format['contentType'],
+        ]);
+    }
+
+    $archive = (new StoredFile)->setRawAttributes([
+        'original_name' => 'archive.zip',
+        'mime_type' => 'application/zip',
+    ]);
+
+    expect($resolver->resolve($archive))->toBeNull();
 });
 
 test('rejects unsupported files and extension mime mismatches', function (string $name, ?string $mimeType) {
@@ -50,6 +88,7 @@ test('rejects unsupported files and extension mime mismatches', function (string
     ['report.xlsx', 'application/octet-stream'],
     ['report.xlsx', 'image/png'],
     ['report.docx', 'video/mp4'],
+    ['report.xlsx', "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\t; charset=binary"],
     ['slides.pptx', 'text/plain'],
     ['slides.pptx', null],
 ]);

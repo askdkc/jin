@@ -32,6 +32,9 @@ class EverythingController extends Controller
             : null;
         $type = $filters['type'] ?? null;
         $projectId = isset($filters['project']) ? (int) $filters['project'] : null;
+        $sort = isset($filters['sort'])
+            ? (string) $filters['sort']
+            : EverythingIndexRequest::DEFAULT_SORT;
         $user = $request->user();
 
         $queries = collect([
@@ -50,11 +53,9 @@ class EverythingController extends Controller
             $union->unionAll($query);
         }
 
-        $results = DB::query()
-            ->fromSub($union, 'everything')
-            ->orderByDesc('updated_at')
-            ->orderByDesc('id')
-            ->orderBy('type')
+        $resultsQuery = DB::query()->fromSub($union, 'everything');
+        $this->applySort($resultsQuery, $sort);
+        $results = $resultsQuery
             ->paginate(20)
             ->withQueryString();
         $projectIds = collect($results->items())
@@ -132,6 +133,7 @@ class EverythingController extends Controller
                 'q' => $search,
                 'type' => $type,
                 'project' => $projectId,
+                'sort' => $sort,
             ],
         ]);
     }
@@ -251,6 +253,30 @@ class EverythingController extends Controller
         $this->applySearch($query, $search, ['comments.body']);
 
         return $this->scopeProjectAccess($query, $team, $user, $projectId);
+    }
+
+    private function applySort(Builder $query, string $sort): void
+    {
+        match ($sort) {
+            EverythingIndexRequest::SORT_UPDATED_ASC => $query
+                ->orderByRaw('CASE WHEN updated_at IS NULL THEN 1 ELSE 0 END')
+                ->orderBy('updated_at')
+                ->orderBy('id')
+                ->orderBy('type'),
+            EverythingIndexRequest::SORT_NAME_ASC => $query
+                ->orderBy('title')
+                ->orderBy('id')
+                ->orderBy('type'),
+            EverythingIndexRequest::SORT_NAME_DESC => $query
+                ->orderByDesc('title')
+                ->orderByDesc('id')
+                ->orderBy('type'),
+            default => $query
+                ->orderByRaw('CASE WHEN updated_at IS NULL THEN 1 ELSE 0 END')
+                ->orderByDesc('updated_at')
+                ->orderByDesc('id')
+                ->orderBy('type'),
+        };
     }
 
     /**

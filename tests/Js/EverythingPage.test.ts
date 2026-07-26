@@ -54,13 +54,32 @@ test('file results reuse previews and navigate with server-owned hrefs', () => {
     assert.doesNotMatch(fileThumbnail, /aspect-\[4\/3\]/);
 });
 
-test('everything redesign exposes only the supported newest-first presentation', () => {
-    assert.match(everythingPage, /t\('Most recent'\)/);
-    assert.doesNotMatch(everythingPage, /Best match/);
-    assert.doesNotMatch(everythingPage, /name="sort"/);
+test('everything results support update and name sorting', () => {
+    assert.match(everythingPage, /id="everything-search-form"/);
+    assert.match(
+        everythingPage,
+        /<select[\s\S]*?name="sort"[\s\S]*?form="everything-search-form"[\s\S]*?onchange=\{submitSort\}/,
+    );
+    assert.match(everythingPage, /requestSubmit\(\)/);
 
-    assert.equal(translations['Refine results'], '検索結果を絞り込む');
+    for (const value of [
+        'updated_desc',
+        'updated_asc',
+        'name_asc',
+        'name_desc',
+    ]) {
+        assert.match(everythingPage, new RegExp(`value="${value}"`));
+        assert.match(
+            everythingPage,
+            new RegExp(`selected=\\{filters\\.sort === '${value}'\\}`),
+        );
+    }
+
+    assert.equal(translations['Sort results'], '並び順');
     assert.equal(translations['Most recent'], '更新が新しい順');
+    assert.equal(translations['Oldest updated'], '更新が古い順');
+    assert.equal(translations['Name ascending'], '名前の昇順');
+    assert.equal(translations['Name descending'], '名前の降順');
     assert.equal(translations[':count results'], ':count件の結果');
     assert.equal(translations['Preview :file'], ':fileをプレビュー');
 });

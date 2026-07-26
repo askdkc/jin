@@ -124,6 +124,9 @@
         lastIndex: number,
     ): string =>
         index === 0 ? t('Previous') : index === lastIndex ? t('Next') : label;
+    const submitSort = (event: Event): void => {
+        (event.currentTarget as HTMLSelectElement).form?.requestSubmit();
+    };
     const canShowVisualPreview = (item: EverythingFileItem): boolean =>
         item.canAccessFile &&
         canPreviewStoredFile(item.title) &&
@@ -144,6 +147,7 @@
         <div class="grid lg:grid-cols-[15rem_minmax(0,1fr)]">
             <Form
                 {...EverythingController.form(currentTeam.slug)}
+                id="everything-search-form"
                 class="contents"
             >
                 {#snippet children({ processing })}
@@ -233,11 +237,6 @@
                                 <h2 class="text-sm font-bold">
                                     {t('Refine results')}
                                 </h2>
-                                <p
-                                    class="mt-1 text-xs leading-5 text-muted-foreground"
-                                >
-                                    {t('Most recent')}
-                                </p>
                             </div>
 
                             <div class="grid gap-2">
@@ -334,11 +333,44 @@
                             count: String(results.total),
                         })}
                     </h2>
-                    <span
-                        class="rounded-full bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground"
-                    >
-                        {t('Most recent')}
-                    </span>
+                    <div>
+                        <Label for="everything-sort" class="sr-only">
+                            {t('Sort results')}
+                        </Label>
+                        <select
+                            id="everything-sort"
+                            name="sort"
+                            form="everything-search-form"
+                            onchange={submitSort}
+                            aria-label={t('Sort results')}
+                            class="border-input h-8 rounded-full border bg-muted px-3 text-xs font-semibold text-muted-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
+                        >
+                            <option
+                                value="updated_desc"
+                                selected={filters.sort === 'updated_desc'}
+                            >
+                                {t('Most recent')}
+                            </option>
+                            <option
+                                value="updated_asc"
+                                selected={filters.sort === 'updated_asc'}
+                            >
+                                {t('Oldest updated')}
+                            </option>
+                            <option
+                                value="name_asc"
+                                selected={filters.sort === 'name_asc'}
+                            >
+                                {t('Name ascending')}
+                            </option>
+                            <option
+                                value="name_desc"
+                                selected={filters.sort === 'name_desc'}
+                            >
+                                {t('Name descending')}
+                            </option>
+                        </select>
+                    </div>
                 </div>
 
                 {#if results.data.length === 0}

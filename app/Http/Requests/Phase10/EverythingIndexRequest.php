@@ -12,6 +12,23 @@ use Illuminate\Validation\Rule;
 
 class EverythingIndexRequest extends FormRequest
 {
+    public const SORT_UPDATED_DESC = 'updated_desc';
+
+    public const SORT_UPDATED_ASC = 'updated_asc';
+
+    public const SORT_NAME_ASC = 'name_asc';
+
+    public const SORT_NAME_DESC = 'name_desc';
+
+    public const DEFAULT_SORT = self::SORT_UPDATED_DESC;
+
+    public const SORT_OPTIONS = [
+        self::SORT_UPDATED_DESC,
+        self::SORT_UPDATED_ASC,
+        self::SORT_NAME_ASC,
+        self::SORT_NAME_DESC,
+    ];
+
     /**
      * Determine if the user is authorized to make this request.
      */
@@ -37,6 +54,7 @@ class EverythingIndexRequest extends FormRequest
         return [
             'q' => ['nullable', 'string', 'max:100'],
             'type' => ['nullable', Rule::in(['message', 'todo', 'document', 'file', 'link', 'comment'])],
+            'sort' => ['nullable', Rule::in(self::SORT_OPTIONS)],
             'project' => [
                 'nullable',
                 'integer',

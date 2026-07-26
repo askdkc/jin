@@ -311,6 +311,118 @@ test('everything search filters by words type and project', function () {
             ->where('filters.project', $project->id));
 });
 
+test('everything results support update and name sorting', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    Document::factory()->for($project)->for($owner, 'creator')->create([
+        'title' => 'Alpha',
+        'created_at' => now()->subDays(3),
+        'updated_at' => now()->subDays(3),
+    ]);
+    MessageBoardPost::factory()->for($project)->for($owner, 'user')->create([
+        'title' => 'Zulu',
+        'created_at' => now()->subDays(2),
+        'updated_at' => now()->subDays(2),
+    ]);
+    ExternalLink::factory()->for($project)->for($owner, 'creator')->create([
+        'title' => 'Mike',
+        'created_at' => now()->subDay(),
+        'updated_at' => now()->subDay(),
+    ]);
+
+    foreach ([
+        [null, ['Mike', 'Zulu', 'Alpha']],
+        ['updated_desc', ['Mike', 'Zulu', 'Alpha']],
+        ['updated_asc', ['Alpha', 'Zulu', 'Mike']],
+        ['name_asc', ['Alpha', 'Mike', 'Zulu']],
+        ['name_desc', ['Zulu', 'Mike', 'Alpha']],
+    ] as [$sort, $expectedTitles]) {
+        $parameters = $sort === null ? [$team] : [$team, 'sort' => $sort];
+
+        $this->actingAs($owner)
+            ->get(route('everything.index', $parameters))
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('results.data', fn (Collection $items): bool => $items
+                    ->pluck('title')
+                    ->all() === $expectedTitles)
+                ->where('filters.sort', $sort ?? 'updated_desc'));
+    }
+});
+
+test('everything sorting uses deterministic cross-type tie breakers', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $updatedAt = now()->subDay();
+    $sharedId = 10_000;
+    $message = MessageBoardPost::factory()->for($project)->for($owner, 'user')->create([
+        'id' => $sharedId,
+        'title' => 'Same title',
+        'created_at' => $updatedAt,
+        'updated_at' => $updatedAt,
+    ]);
+    $document = Document::factory()->for($project)->for($owner, 'creator')->create([
+        'id' => $sharedId,
+        'title' => 'Same title',
+        'created_at' => $updatedAt,
+        'updated_at' => $updatedAt,
+    ]);
+
+    expect($message->id)->toBe($document->id);
+
+    foreach (['updated_desc', 'updated_asc', 'name_asc', 'name_desc'] as $sort) {
+        $this->actingAs($owner)
+            ->get(route('everything.index', [$team, 'sort' => $sort]))
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('results.data', fn (Collection $items): bool => $items
+                    ->pluck('type')
+                    ->all() === ['document', 'message']));
+    }
+});
+
+test('everything update sorting places missing timestamps last', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    Document::factory()->for($project)->for($owner, 'creator')->create([
+        'title' => 'Dated item',
+        'created_at' => now()->subDay(),
+        'updated_at' => now()->subDay(),
+    ]);
+    $undated = Document::factory()->for($project)->for($owner, 'creator')->create([
+        'title' => 'Undated item',
+    ]);
+    DB::table('documents')->where('id', $undated->id)->update(['updated_at' => null]);
+
+    foreach (['updated_desc', 'updated_asc'] as $sort) {
+        $this->actingAs($owner)
+            ->get(route('everything.index', [$team, 'sort' => $sort]))
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('results.data', fn (Collection $items): bool => $items
+                    ->pluck('title')
+                    ->all() === ['Dated item', 'Undated item']));
+    }
+});
+
+test('everything rejects unsupported sort values', function (string $sort) {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+
+    $this->actingAs($owner)
+        ->get(route('everything.index', [$team, 'sort' => $sort]))
+        ->assertSessionHasErrors('sort');
+})->with([
+    'database column' => 'updated_at',
+    'direction only' => 'desc',
+    'SQL-like value' => 'title desc',
+    'unknown option' => 'relevance',
+]);
+
 test('everything view does not expose inaccessible archived or other team projects', function () {
     $owner = User::factory()->create();
     $member = User::factory()->create();
@@ -375,7 +487,13 @@ test('everything results are paginated and retain search filters', function () {
         ->create(['body' => 'ページング対象']);
 
     $this->actingAs($owner)
-        ->get(route('everything.index', [$team, 'q' => 'ページング対象', 'type' => 'document']))
+        ->get(route('everything.index', [
+            $team,
+            'q' => 'ページング対象',
+            'type' => 'document',
+            'project' => $project->id,
+            'sort' => 'name_desc',
+        ]))
         ->assertInertia(fn (Assert $page) => $page
             ->has('results.data', 20)
             ->where('results.total', 25)
@@ -383,7 +501,9 @@ test('everything results are paginated and retain search filters', function () {
             ->where('results.links', fn (Collection $links): bool => $links->contains(
                 fn (array $link): bool => is_string($link['url'])
                     && str_contains($link['url'], 'q=%E3%83%9A%E3%83%BC%E3%82%B8%E3%83%B3%E3%82%B0%E5%AF%BE%E8%B1%A1')
-                    && str_contains($link['url'], 'type=document'),
+                    && str_contains($link['url'], 'type=document')
+                    && str_contains($link['url'], "project={$project->id}")
+                    && str_contains($link['url'], 'sort=name_desc'),
             )));
 });
 

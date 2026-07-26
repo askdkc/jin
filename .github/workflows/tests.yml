@@ -141,10 +141,6 @@ jobs:
     env:
       STORED_FILE_CONTENT_INTEGRATION: 'true'
       STORED_FILE_CONTENT_MARKITDOWN_PATH: ${{ github.workspace }}/.venv-file-content/bin/markitdown
-      STORED_FILE_CONTENT_ANTIWORD_PATH: /usr/bin/antiword
-      STORED_FILE_CONTENT_CATDOC_PATH: /usr/bin/catdoc
-      STORED_FILE_CONTENT_XLS2CSV_PATH: /usr/bin/xls2csv
-      STORED_FILE_CONTENT_CATPPT_PATH: /usr/bin/catppt
 
     steps:
       - name: Checkout code
@@ -163,10 +159,7 @@ jobs:
       - name: Install Extractor Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            antiword \
-            catdoc \
-            python3-venv
+          sudo apt-get install -y --no-install-recommends python3-venv
           python3 -m venv .venv-file-content
           .venv-file-content/bin/python -m pip install \
             --disable-pip-version-check \

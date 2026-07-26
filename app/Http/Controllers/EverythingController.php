@@ -297,6 +297,7 @@ class EverythingController extends Controller
                 'stored_file_contents.status',
                 StoredFileContentStatus::Ready->value,
             )
+            ->where('stored_file_contents.extractor', 'markitdown')
             ->whereNotNull('stored_file_contents.content')
             ->get([
                 'stored_file_contents.stored_file_id',

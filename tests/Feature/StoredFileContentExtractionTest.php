@@ -158,59 +158,10 @@ test('encrypted PDFs publish no content without starting markitdown', function (
     Process::assertNothingRan();
 });
 
-test('password-protected legacy documents publish no content and do not use fallback', function () {
-    Storage::fake('local');
-    $storedFile = storedFileContentFile('doc', 'application/msword');
-
-    Process::fake([
-        '*' => Process::result(
-            errorOutput: 'Encrypted document: password required',
-            exitCode: 1,
-        ),
-    ]);
-
-    $result = app(StoredFileContentExtractor::class)->extract(
-        $storedFile,
-        $storedFile->checksum,
-    );
-
-    expect($result->status)->toBe(StoredFileContentStatus::Protected)
-        ->and($result->failure)->toBe(StoredFileContentFailure::EncryptedDocument)
-        ->and($result->content)->toBeNull();
-    Process::assertRanTimes(fn (PendingProcess $_process): bool => true, times: 1);
-});
-
-test('legacy word extraction falls back from antiword to catdoc', function () {
-    Storage::fake('local');
-    $storedFile = storedFileContentFile('doc', 'application/msword');
-
-    Process::fake(function (PendingProcess $process): object {
-        return match ($process->command[0]) {
-            config('stored-file-content.antiword_path') => Process::result(
-                errorOutput: 'not a Word document',
-                exitCode: 1,
-            ),
-            config('stored-file-content.catdoc_path') => Process::result(
-                output: "Legacy\n document text",
-            ),
-        };
-    });
-
-    $result = app(StoredFileContentExtractor::class)->extract(
-        $storedFile,
-        $storedFile->checksum,
-    );
-
-    expect($result->status)->toBe(StoredFileContentStatus::Ready)
-        ->and($result->extractor)->toBe('catdoc')
-        ->and($result->content)->toBe('Legacy document text');
-    Process::assertRanTimes(fn (PendingProcess $_process): bool => true, times: 2);
-});
-
 test('extractor discards output that exceeds the capture limit', function () {
     Storage::fake('local');
     config()->set('stored-file-content.max_output_bytes', 5);
-    $storedFile = storedFileContentFile('xls', 'application/vnd.ms-excel');
+    $storedFile = storedFileContentFile('pdf', 'application/pdf');
     Process::fake(['*' => Process::result(output: '123456')]);
 
     $result = app(StoredFileContentExtractor::class)->extract(

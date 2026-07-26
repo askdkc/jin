@@ -29,12 +29,13 @@ function storedFileSearchContent(
     string $content,
     StoredFileContentStatus $status = StoredFileContentStatus::Ready,
     ?string $sourceChecksum = null,
+    string $extractor = 'markitdown',
 ): StoredFileContent {
     return StoredFileContent::factory()->create([
         'stored_file_id' => $storedFile->id,
         'source_checksum' => $sourceChecksum ?? $storedFile->checksum,
         'status' => $status,
-        'extractor' => 'markitdown',
+        'extractor' => $extractor,
         'content' => $content,
         'content_bytes' => strlen($content),
         'extracted_at' => now(),
@@ -222,6 +223,45 @@ test('everything search finds current ready file content and returns a centered 
             ->missing('results.data.0.source_checksum')
             ->missing('results.data.0.failure_code'));
 });
+
+test('everything search ignores content from retired legacy extractors', function (
+    string $extension,
+    string $mimeType,
+    string $extractor,
+) {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $file = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($project)
+        ->for($owner, 'uploader')
+        ->create([
+            'original_name' => "archived-file.{$extension}",
+            'mime_type' => $mimeType,
+        ]));
+    storedFileSearchContent(
+        $file,
+        'retired-extractor-search-term',
+        extractor: $extractor,
+    );
+
+    $this->actingAs($owner)
+        ->get(route('everything.index', [$team, 'q' => 'retired-extractor-search-term']))
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('results.data', 0)
+            ->where('results.total', 0));
+
+    $this->get(route('everything.index', [$team, 'q' => 'archived-file']))
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('results.data', 1)
+            ->where('results.data.0.id', $file->id)
+            ->where('results.data.0.snippet', null));
+})->with([
+    'legacy Word' => ['doc', 'application/msword', 'antiword'],
+    'legacy Excel' => ['xls', 'application/vnd.ms-excel', 'xls2csv'],
+    'legacy PowerPoint' => ['ppt', 'application/vnd.ms-powerpoint', 'catppt'],
+]);
 
 test('everything file content search supports terms shorter than three characters', function () {
     $owner = User::factory()->create();

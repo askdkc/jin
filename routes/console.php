@@ -48,10 +48,6 @@ Artisan::command('app:production-check', function (): int {
     $executableFinder = new ExecutableFinder;
     $extractorPaths = [
         (string) config('stored-file-content.markitdown_path'),
-        (string) config('stored-file-content.antiword_path'),
-        (string) config('stored-file-content.catdoc_path'),
-        (string) config('stored-file-content.xls2csv_path'),
-        (string) config('stored-file-content.catppt_path'),
     ];
     $extractorsAvailable = array_filter(
         $extractorPaths,

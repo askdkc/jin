@@ -6,10 +6,6 @@ return [
     'queue' => env('STORED_FILE_CONTENT_QUEUE', 'file-content'),
 
     'markitdown_path' => env('STORED_FILE_CONTENT_MARKITDOWN_PATH', 'markitdown'),
-    'antiword_path' => env('STORED_FILE_CONTENT_ANTIWORD_PATH', 'antiword'),
-    'catdoc_path' => env('STORED_FILE_CONTENT_CATDOC_PATH', 'catdoc'),
-    'xls2csv_path' => env('STORED_FILE_CONTENT_XLS2CSV_PATH', 'xls2csv'),
-    'catppt_path' => env('STORED_FILE_CONTENT_CATPPT_PATH', 'catppt'),
 
     'process_timeout' => (int) env('STORED_FILE_CONTENT_PROCESS_TIMEOUT', 120),
     'job_timeout' => (int) env('STORED_FILE_CONTENT_JOB_TIMEOUT', 180),

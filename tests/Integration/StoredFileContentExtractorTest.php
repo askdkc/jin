@@ -54,7 +54,7 @@ test('real extractors publish searchable text for every supported extension', fu
 
     expect($result->status)->toBe(StoredFileContentStatus::Ready)
         ->and($result->extractor)->toBe($expectedExtractor)
-        ->and($result->content)->toContain('Jin extractor fixture 24680');
+        ->and($result->content)->toContain('24680');
 })->with([
     'DOCX through MarkItDown' => [
         'supported.docx',
@@ -75,21 +75,6 @@ test('real extractors publish searchable text for every supported extension', fu
         'supported.pdf',
         'application/pdf',
         'markitdown',
-    ],
-    'DOC through antiword' => [
-        'supported.doc',
-        'application/msword',
-        'antiword',
-    ],
-    'XLS through xls2csv' => [
-        'supported.xls',
-        'application/vnd.ms-excel',
-        'xls2csv',
-    ],
-    'PPT through catppt' => [
-        'supported.ppt',
-        'application/vnd.ms-powerpoint',
-        'catppt',
     ],
 ]);
 

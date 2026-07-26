@@ -26,11 +26,8 @@ test('supported file types resolve to the selected extractor', function (
         'extractor' => $extractor,
     ]);
 })->with([
-    'doc' => ['doc', 'application/msword', 'antiword'],
     'docx' => ['docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'markitdown'],
-    'xls' => ['xls', 'application/vnd.ms-excel', 'xls2csv'],
     'xlsx' => ['xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'markitdown'],
-    'ppt' => ['ppt', 'application/vnd.ms-powerpoint', 'catppt'],
     'pptx' => ['pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'markitdown'],
     'pdf' => ['pdf', 'application/pdf', 'markitdown'],
 ]);
@@ -41,6 +38,9 @@ test('unsupported extensions and mismatched MIME types remain filename only', fu
 ) {
     expect(resolveStoredFileContentType($name, $mimeType))->toBeNull();
 })->with([
+    'legacy Word' => ['report.doc', 'application/msword'],
+    'legacy Excel' => ['report.xls', 'application/vnd.ms-excel'],
+    'legacy PowerPoint' => ['report.ppt', 'application/vnd.ms-powerpoint'],
     'macro workbook' => ['report.xlsm', 'application/vnd.ms-excel.sheet.macroenabled.12'],
     'open document text' => ['report.odt', 'application/vnd.oasis.opendocument.text'],
     'open document sheet' => ['report.ods', 'application/vnd.oasis.opendocument.spreadsheet'],

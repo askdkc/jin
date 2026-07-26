@@ -42,7 +42,7 @@ Basecampの情報設計を参考にしていますが、名称、画面、配色
 - PHP 8.4.1以上とComposer 2
 - Node.js 22.12以上とnpm
 - PHPのSQLite拡張（ローカル開発と通常テストで使用）
-- Python 3.10以上、MarkItDown、`antiword`、`catdoc`（ファイル本文検索を有効にする場合）
+- Python 3.10以上とMarkItDown（ファイル本文検索を有効にする場合）
 - ImageMagickとPoppler（PDFの先頭ページサムネイル生成用）
 - PostgreSQL 17とPGroonga（本番のファイル本文検索で使用）
 - ONLYOFFICE Docs（macOS開発はAppleの`container`、CIはGitHub Actions service、Ubuntu本番はAPTパッケージ）
@@ -57,7 +57,7 @@ Basecampの情報設計を参考にしていますが、名称、画面、配色
 
 ```bash
 xcode-select --install
-brew install php composer node@22 python antiword catdoc imagemagick poppler
+brew install php composer node@22 python imagemagick poppler
 
 export PATH="$(brew --prefix php@8.4)/bin:$(brew --prefix node@22)/bin:$PATH"
 php --version
@@ -101,13 +101,9 @@ npm run build
 ```dotenv
 STORED_FILE_CONTENT_ENABLED=true
 STORED_FILE_CONTENT_MARKITDOWN_PATH=/absolute/path/to/jin/.venv-file-content/bin/markitdown
-STORED_FILE_CONTENT_ANTIWORD_PATH=/opt/homebrew/bin/antiword
-STORED_FILE_CONTENT_CATDOC_PATH=/opt/homebrew/bin/catdoc
-STORED_FILE_CONTENT_XLS2CSV_PATH=/opt/homebrew/bin/xls2csv
-STORED_FILE_CONTENT_CATPPT_PATH=/opt/homebrew/bin/catppt
 ```
 
-`command -v antiword catdoc xls2csv catppt`で実際のパスを確認してください。ONLYOFFICEを使う場合は、さらに次の2項目を設定します。
+ONLYOFFICEを使う場合は、さらに次の2項目を設定します。
 
 | パラメータ              | 設定値                                        |
 | ----------------------- | --------------------------------------------- |
@@ -298,7 +294,7 @@ SMTPの接続情報は後述する`.env`のパラメータへ設定します。S
 sudo apt update
 sudo apt install -y \
   build-essential ca-certificates curl git gnupg lsb-release nginx certbot \
-  python3-certbot-nginx wget pkg-config python3 python3-venv antiword catdoc \
+  python3-certbot-nginx wget pkg-config python3 python3-venv \
   imagemagick poppler-utils fonts-noto-cjk supervisor unzip
 
 sudo apt install -y postgresql-common
@@ -427,10 +423,6 @@ PY
 | `STORED_FILE_CONTENT_ENABLED`             | `true`                                           |
 | `STORED_FILE_CONTENT_QUEUE`               | `file-content`                                   |
 | `STORED_FILE_CONTENT_MARKITDOWN_PATH`     | `/var/www/jin/.venv-file-content/bin/markitdown` |
-| `STORED_FILE_CONTENT_ANTIWORD_PATH`       | `/usr/bin/antiword`                              |
-| `STORED_FILE_CONTENT_CATDOC_PATH`         | `/usr/bin/catdoc`                                |
-| `STORED_FILE_CONTENT_XLS2CSV_PATH`        | `/usr/bin/xls2csv`                               |
-| `STORED_FILE_CONTENT_CATPPT_PATH`         | `/usr/bin/catppt`                                |
 | `REDIS_CLIENT` / `REDIS_HOST`             | `phpredis` / `127.0.0.1`                         |
 | `QUEUE_CONNECTION`                        | `redis`                                          |
 | `CACHE_STORE`                             | `redis`                                          |
@@ -722,7 +714,7 @@ printf '%s\n' \
 sudo chmod 644 /etc/cron.d/jin-scheduler
 ```
 
-`jin-previews`はPDF変換を最大8件並列処理します。CPUコア数、RAM、PDFサイズを監視し、負荷が高い場合は`numprocs`を下げてください。`jin-file-content`はMarkItDownやlegacy Office toolがCPUとmemoryを使うため、初期値は1 process、memory 512 MiBです。実ファイルの処理時間とpeak memoryを確認してから少しずつ並列数を増やし、`--timeout=180`を`STORED_FILE_CONTENT_JOB_TIMEOUT`と一致させてください。本番構成はPostgreSQLとRedis Queue/Cache/Sessionを前提とします。SQLiteはローカル開発専用で、SQLiteを使う検証環境では各workerを1 processに抑えてください。
+`jin-previews`はPDF変換を最大8件並列処理します。CPUコア数、RAM、PDFサイズを監視し、負荷が高い場合は`numprocs`を下げてください。`jin-file-content`はMarkItDownがCPUとmemoryを使うため、初期値は1 process、memory 512 MiBです。実ファイルの処理時間とpeak memoryを確認してから少しずつ並列数を増やし、`--timeout=180`を`STORED_FILE_CONTENT_JOB_TIMEOUT`と一致させてください。本番構成はPostgreSQLとRedis Queue/Cache/Sessionを前提とします。SQLiteはローカル開発専用で、SQLiteを使う検証環境では各workerを1 processに抑えてください。
 
 #### OS再起動時の自動起動
 
@@ -803,17 +795,14 @@ DB、`storage/app/private`、`.env`、`/etc/onlyoffice/documentserver/local.json
 
 Everythingはファイル名に加えて、非同期抽出が完了した次の形式の本文を検索します。
 
-| 形式         | 拡張子 | extractor                                          |
-| ------------ | ------ | -------------------------------------------------- |
-| Word         | `docx` | MarkItDown                                         |
-| Excel        | `xlsx` | MarkItDown                                         |
-| PowerPoint   | `pptx` | MarkItDown                                         |
-| PDF          | `pdf`  | MarkItDown                                         |
-| 旧Word       | `doc`  | `antiword`、通常の解析失敗時だけ`catdoc`へfallback |
-| 旧Excel      | `xls`  | `xls2csv`                                          |
-| 旧PowerPoint | `ppt`  | `catppt`                                           |
+| 形式       | 拡張子 | extractor  |
+| ---------- | ------ | ---------- |
+| Word       | `docx` | MarkItDown |
+| Excel      | `xlsx` | MarkItDown |
+| PowerPoint | `pptx` | MarkItDown |
+| PDF        | `pdf`  | MarkItDown |
 
-`xlsm`、`odt`、`ods`、`odp`とその他の形式はファイル名だけを検索します。暗号化またはpassword保護されたPDF／Officeファイルもファイル名だけを検索し、passwordを受け取ったり保存したりextractorへ渡したりしません。保護、失敗、上限超過、古いgenerationのpartial outputはindexへ公開しません。
+`doc`、`xls`、`ppt`、`xlsm`、`odt`、`ods`、`odp`とその他の形式はファイル名だけを検索します。暗号化またはpassword保護されたPDF／Officeファイルもファイル名だけを検索し、passwordを受け取ったり保存したりextractorへ渡したりしません。保護、失敗、上限超過、古いgenerationのpartial outputはindexへ公開しません。
 
 既存ファイルを登録するcommand:
 
@@ -823,7 +812,7 @@ php artisan stored-files:backfill-content --retry-failed
 php artisan stored-files:backfill-content --reindex
 ```
 
-通常はoptionなしを実行します。`--retry-failed`は現行checksumで失敗した行だけを再試行し、`--reindex`はextractorや正規化処理を更新した時に全対応ファイルを再抽出します。
+通常はoptionなしを実行します。`--retry-failed`は現行checksumで失敗した行だけを再試行し、`--reindex`はextractorや正規化処理を更新した時に全対応ファイルを再抽出します。旧形式の本文抽出を使用していた環境では、更新後に`--reindex`を1回実行して既存の`doc`、`xls`、`ppt`本文indexを削除してください。
 
 ## ONLYOFFICE補足
 

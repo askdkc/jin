@@ -9,11 +9,8 @@ final class StoredFileContentTypeResolver
 {
     /** @var list<string> */
     public const SUPPORTED_EXTENSIONS = [
-        'doc',
         'docx',
-        'xls',
         'xlsx',
-        'ppt',
         'pptx',
         'pdf',
     ];
@@ -45,12 +42,7 @@ final class StoredFileContentTypeResolver
 
         return [
             'extension' => $extension,
-            'extractor' => match ($extension) {
-                'docx', 'xlsx', 'pptx' => 'markitdown',
-                'doc' => 'antiword',
-                'xls' => 'xls2csv',
-                'ppt' => 'catppt',
-            },
+            'extractor' => 'markitdown',
         ];
     }
 

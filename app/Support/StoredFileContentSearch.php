@@ -17,6 +17,7 @@ final class StoredFileContentSearch
                 ->whereColumn('stored_file_contents.stored_file_id', 'stored_files.id')
                 ->whereColumn('stored_file_contents.source_checksum', 'stored_files.checksum')
                 ->where('stored_file_contents.status', StoredFileContentStatus::Ready->value)
+                ->where('stored_file_contents.extractor', 'markitdown')
                 ->whereNotNull('stored_file_contents.content');
 
             match (DB::connection()->getDriverName()) {

@@ -74,19 +74,10 @@ final class StoredFileContentExtractor
                 return StoredFileContentExtractionResult::protected('markitdown');
             }
 
-            return match ($type['extension']) {
-                'docx', 'xlsx', 'pptx', 'pdf' => $this->extractWithMarkItDown(
-                    $sourcePath,
-                    $workDirectory,
-                ),
-                'doc' => $this->extractLegacyWord($sourcePath),
-                'xls' => $this->extractLegacy($sourcePath, 'xls2csv'),
-                'ppt' => $this->extractLegacy($sourcePath, 'catppt'),
-                default => StoredFileContentExtractionResult::failed(
-                    $type['extractor'],
-                    StoredFileContentFailure::UnsupportedFormat,
-                ),
-            };
+            return $this->extractWithMarkItDown(
+                $sourcePath,
+                $workDirectory,
+            );
         } finally {
             File::deleteDirectory($workDirectory);
         }
@@ -234,74 +225,6 @@ final class StoredFileContentExtractor
         }
 
         return $this->readyResult('markitdown', $content);
-    }
-
-    private function extractLegacyWord(string $sourcePath): StoredFileContentExtractionResult
-    {
-        $antiword = $this->runBoundedProcess([
-            (string) config('stored-file-content.antiword_path', 'antiword'),
-            $sourcePath,
-        ]);
-
-        if ($antiword === null) {
-            return StoredFileContentExtractionResult::failed(
-                'antiword',
-                StoredFileContentFailure::OutputTooLarge,
-            );
-        }
-
-        if ($antiword['result']->successful()) {
-            return $this->readyResult('antiword', $antiword['output']);
-        }
-
-        if ($this->isProtected($antiword['output'], $antiword['error_output'])) {
-            return StoredFileContentExtractionResult::protected('antiword');
-        }
-
-        return $this->legacyResult(
-            $this->runBoundedProcess([
-                (string) config('stored-file-content.catdoc_path', 'catdoc'),
-                $sourcePath,
-            ]),
-            'catdoc',
-        );
-    }
-
-    private function extractLegacy(
-        string $sourcePath,
-        string $extractor,
-    ): StoredFileContentExtractionResult {
-        $path = (string) config("stored-file-content.{$extractor}_path", $extractor);
-
-        return $this->legacyResult(
-            $this->runBoundedProcess([$path, $sourcePath]),
-            $extractor,
-        );
-    }
-
-    /**
-     * @param  array{result: ProcessResult, output: string, error_output: string}|null  $process
-     */
-    private function legacyResult(
-        ?array $process,
-        string $extractor,
-    ): StoredFileContentExtractionResult {
-        if ($process === null) {
-            return StoredFileContentExtractionResult::failed(
-                $extractor,
-                StoredFileContentFailure::OutputTooLarge,
-            );
-        }
-
-        if (! $process['result']->successful()) {
-            return $this->failedProcessResult(
-                $process['output'],
-                $process['error_output'],
-                $extractor,
-            );
-        }
-
-        return $this->readyResult($extractor, $process['output']);
     }
 
     private function failedProcessResult(

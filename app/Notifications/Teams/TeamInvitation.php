@@ -3,6 +3,7 @@
 namespace App\Notifications\Teams;
 
 use App\Models\TeamInvitation as TeamInvitationModel;
+use App\Models\User;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -43,6 +44,7 @@ class TeamInvitation extends Notification implements ShouldQueue
     {
         $team = $this->invitation->team;
         $inviter = $this->invitation->inviter;
+        $hasAccount = User::query()->where('email', $this->invitation->email)->exists();
 
         return (new MailMessage)
             ->subject(__("You've been invited to join :teamName", ['teamName' => $team->name]))
@@ -50,10 +52,12 @@ class TeamInvitation extends Notification implements ShouldQueue
                 'inviterName' => $inviter->name,
                 'teamName' => $team->name,
             ]))
-            ->line(__('Log in and visit your dashboard to accept or decline this invitation.'))
+            ->line($hasAccount
+                ? __('Log in and visit your dashboard to accept or decline this invitation.')
+                : __('Create an account to accept or decline this invitation.'))
             ->action(
-                __('Log in'),
-                route('login', ['invitation' => $this->invitation->code]),
+                $hasAccount ? __('Log in') : __('Create account'),
+                route($hasAccount ? 'login' : 'register', ['invitation' => $this->invitation->code]),
             );
     }
 

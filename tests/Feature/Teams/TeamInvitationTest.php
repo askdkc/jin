@@ -46,14 +46,15 @@ test('invitation email for existing users uses login route', function () {
     ]);
 
     $notification = new TeamInvitationNotification($invitation);
-    $mail = $notification->toMail($invitedUser);
+    $mail = $notification->toMail((object) []);
 
     expect($notification->viaQueues())->toBe(['mail' => 'notifications'])
+        ->and($mail->actionText)->toBe(__('Log in'))
         ->and($mail->actionUrl)->toBe(route('login', ['invitation' => $invitation->code]));
     $this->assertStringContainsString('dashboard', implode(' ', $mail->introLines));
 });
 
-test('invitation email for unknown users uses login route', function () {
+test('invitation email for unknown users uses registration route', function () {
     $owner = User::factory()->create();
     $team = Team::factory()->create();
 
@@ -67,8 +68,9 @@ test('invitation email for unknown users uses login route', function () {
 
     $mail = (new TeamInvitationNotification($invitation))->toMail((object) []);
 
-    expect($mail->actionUrl)->toBe(route('login', ['invitation' => $invitation->code]));
-    $this->assertStringContainsString('log in', strtolower(implode(' ', $mail->introLines)));
+    expect($mail->actionText)->toBe(__('Create account'))
+        ->and($mail->actionUrl)->toBe(route('register', ['invitation' => $invitation->code]))
+        ->and($mail->introLines)->toContain(__('Create an account to accept or decline this invitation.'));
 });
 
 test('team invitations can be created by admins', function () {

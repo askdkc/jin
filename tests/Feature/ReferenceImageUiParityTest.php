@@ -47,19 +47,13 @@ test('reference image pages keep their feature-specific semantic hierarchy', fun
                 $kanban,
             ) === 1,
         'kanban collapsed vertical rail' => preg_match(
-            '/\{#snippet collapsedStrip\(.*w-12 shrink-0 self-stretch.*columnAccent\(columnIndex\)\.bar.*\{@render columnMenu\(table, column, columnIndex\)\}.*visibleCards\(column\)\.length.*writing-mode:\s*vertical-rl.*CardTableController\.toggleColumn\.form\(.*<Maximize2 class="size-4".*\{#each columnLayout\.collapsedColumns as column.*\{@render collapsedStrip\(/s',
+            '/\{#snippet collapsedStrip\(.*w-12 shrink-0 self-stretch.*columnAccent\(columnIndex\)\.bar.*\{@render columnMenu\(table, column, columnIndex\)\}.*visibleCards\(column\)\.length.*writing-mode:\s*vertical-rl.*CardTableController\.toggleColumn\.form\(.*<Maximize2 class="size-4".*\{#each columnLayout as \{ column, state \}.*state === \'collapsed\'.*\{@render collapsedStrip\(/s',
             $kanban,
         ) === 1,
-        'kanban pins collapsed rails outside the horizontal scroller' => str_contains(
+        'kanban keeps collapsed rails in column order' => preg_match(
+            '/flex min-w-0 flex-1 items-start gap-2 overflow-x-auto.*\{#each columnLayout as \{ column, state \}.*state === \'collapsed\'.*collapsedStrip\(.*\{:else\}.*min-w-72 grow/s',
             $kanban,
-            'data-collapsed-column-rails',
-        ) && str_contains(
-            $kanban,
-            'class="flex shrink-0 items-stretch gap-2 pt-4 pb-3"',
-        ) && ! str_contains(
-            $kanban,
-            'class="ml-auto flex gap-2 self-stretch"',
-        ),
+        ) === 1,
         'kanban direct column collapse control' => preg_match(
             '/\{#snippet columnHeader\(.*CardTableController\.toggleColumn\.form\(.*aria-label=\{t\(\'Collapse column\'\)\}.*<Minimize2 class="size-4".*\{@render columnMenu\(/s',
             $kanban,

@@ -1,13 +1,12 @@
-export type CardTableColumnLayout<Column> = {
-    expandedColumns: Column[];
-    collapsedColumns: Column[];
+export type CardTableColumnLayoutItem<Column> = {
+    column: Column;
+    state: 'expanded' | 'collapsed';
 };
 
 export const cardTableColumnLayout = <Column extends { collapsed: boolean }>(
     columns: Column[],
-): CardTableColumnLayout<Column> => {
-    return {
-        expandedColumns: columns.filter((column) => !column.collapsed),
-        collapsedColumns: columns.filter((column) => column.collapsed),
-    };
-};
+): CardTableColumnLayoutItem<Column>[] =>
+    columns.map((column) => ({
+        column,
+        state: column.collapsed ? 'collapsed' : 'expanded',
+    }));

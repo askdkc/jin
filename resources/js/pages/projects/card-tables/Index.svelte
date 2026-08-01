@@ -916,88 +916,82 @@
                         <div
                             class="flex min-h-0 min-w-0 flex-1 items-stretch gap-2 border-t pl-4"
                         >
-                            {#if columnLayout.expandedColumns.length > 0}
+                            {#if columnLayout.length > 0}
                                 <div
                                     class="flex min-w-0 flex-1 items-start gap-2 overflow-x-auto overscroll-x-contain pt-4 pb-3 has-data-[state=open]:overflow-visible"
                                 >
-                                    {#each columnLayout.expandedColumns as column (column.id)}
+                                    {#each columnLayout as { column, state } (column.id)}
                                         {@const columnIndex =
                                             table.columns.indexOf(column)}
-                                        {@const visibleColumnCards =
-                                            visibleCards(column)}
-                                        <section
-                                            class={cn(
-                                                'min-w-72 grow shrink-0 basis-[calc((100%_-_1.5rem)/4)] rounded-md',
-                                                columnAccent(columnIndex).tint,
-                                            )}
-                                            aria-labelledby={`column-${column.id}`}
-                                            ondragover={(event) =>
-                                                allowDrop(event, table.id)}
-                                            ondrop={(event) =>
-                                                dropCard(
-                                                    event,
-                                                    table.id,
-                                                    column.id,
-                                                )}
-                                        >
-                                            <span
-                                                class={cn(
-                                                    'block h-1 rounded-t-md',
-                                                    columnAccent(columnIndex)
-                                                        .bar,
-                                                )}
-                                                aria-hidden="true"
-                                            ></span>
-                                            {@render columnHeader(
+                                        {#if state === 'collapsed'}
+                                            {@render collapsedStrip(
                                                 table,
                                                 column,
                                                 columnIndex,
-                                                visibleColumnCards.length,
                                             )}
-                                            <div
-                                                class="flex flex-col gap-2 px-2 pb-2"
+                                        {:else}
+                                            {@const visibleColumnCards =
+                                                visibleCards(column)}
+                                            <section
+                                                class={cn(
+                                                    'min-w-72 grow shrink-0 basis-[calc((100%_-_1.5rem)/4)] rounded-md',
+                                                    columnAccent(columnIndex)
+                                                        .tint,
+                                                )}
+                                                aria-labelledby={`column-${column.id}`}
+                                                ondragover={(event) =>
+                                                    allowDrop(event, table.id)}
+                                                ondrop={(event) =>
+                                                    dropCard(
+                                                        event,
+                                                        table.id,
+                                                        column.id,
+                                                    )}
                                             >
-                                                {#each visibleColumnCards as card (card.id)}
-                                                    {@render cardArticle(
-                                                        table,
-                                                        column,
-                                                        card,
-                                                        '',
+                                                <span
+                                                    class={cn(
+                                                        'block h-1 rounded-t-md',
+                                                        columnAccent(
+                                                            columnIndex,
+                                                        ).bar,
                                                     )}
-                                                {:else}
-                                                    {@render emptySlot(
-                                                        table,
-                                                        column,
-                                                        'min-h-10',
-                                                    )}
-                                                {/each}
-                                            </div>
-                                        </section>
+                                                    aria-hidden="true"
+                                                ></span>
+                                                {@render columnHeader(
+                                                    table,
+                                                    column,
+                                                    columnIndex,
+                                                    visibleColumnCards.length,
+                                                )}
+                                                <div
+                                                    class="flex flex-col gap-2 px-2 pb-2"
+                                                >
+                                                    {#each visibleColumnCards as card (card.id)}
+                                                        {@render cardArticle(
+                                                            table,
+                                                            column,
+                                                            card,
+                                                            '',
+                                                        )}
+                                                    {:else}
+                                                        {@render emptySlot(
+                                                            table,
+                                                            column,
+                                                            'min-h-10',
+                                                        )}
+                                                    {/each}
+                                                </div>
+                                            </section>
+                                        {/if}
                                     {/each}
                                 </div>
-                            {:else if columnLayout.collapsedColumns.length === 0}
+                            {:else}
                                 <div
                                     class="mt-4 flex min-h-10 min-w-0 flex-1 items-center justify-center rounded-md border border-dashed"
                                 >
                                     <span class="text-sm text-muted-foreground">
                                         {t('No columns yet')}
                                     </span>
-                                </div>
-                            {:else}
-                                <div class="min-w-0 flex-1"></div>
-                            {/if}
-                            {#if columnLayout.collapsedColumns.length > 0}
-                                <div
-                                    class="flex shrink-0 items-stretch gap-2 pt-4 pb-3"
-                                    data-collapsed-column-rails
-                                >
-                                    {#each columnLayout.collapsedColumns as column (column.id)}
-                                        {@render collapsedStrip(
-                                            table,
-                                            column,
-                                            table.columns.indexOf(column),
-                                        )}
-                                    {/each}
                                 </div>
                             {/if}
                             <Button

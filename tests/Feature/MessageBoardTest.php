@@ -327,11 +327,38 @@ test('message routes reject non participants and cross project bindings', functi
     $visibleProject = Project::factory()->for($team)->for($owner, 'creator')->create();
     $otherProject = Project::factory()->for($team)->for($owner, 'creator')->create();
     $visibleProject->members()->attach($member);
-    $post = MessageBoardPost::factory()->for($otherProject)->for($owner)->create();
+    $post = MessageBoardPost::factory()->for($otherProject)->for($owner)->create([
+        'title' => 'Private project message',
+        'body' => 'Private project message body',
+    ]);
+    $comment = Comment::factory()
+        ->for($otherProject)
+        ->for($owner, 'user')
+        ->for($post, 'commentable')
+        ->create(['body' => 'Private project comment']);
 
     $this->actingAs($member)
         ->get(route('projects.messages.index', [$team, $otherProject]))
         ->assertForbidden();
+
+    $this->get(route('projects.messages.show', [$team, $otherProject, $post]))
+        ->assertForbidden()
+        ->assertDontSee('Private project message')
+        ->assertDontSee('Private project comment');
+
+    $this->post(route('projects.messages.comments.store', [$team, $otherProject, $post]), [
+        'body' => 'Unauthorized comment',
+    ])->assertForbidden();
+
+    $this->patch(route('projects.messages.comments.update', [$team, $otherProject, $post, $comment]), [
+        'body' => 'Unauthorized edit',
+    ])->assertForbidden();
+
+    $this->delete(route('projects.messages.comments.destroy', [$team, $otherProject, $post, $comment]))
+        ->assertForbidden();
+
+    expect($comment->fresh()?->body)->toBe('Private project comment')
+        ->and($post->comments()->count())->toBe(1);
 
     $this->actingAs($member)
         ->patch(route('projects.messages.update', [$team, $visibleProject, $post]), [

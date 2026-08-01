@@ -928,6 +928,74 @@ test('everything view does not expose inaccessible archived or other team projec
         ->assertSessionHasErrors('project');
 });
 
+test('everything search excludes posts comments and file contents from projects the user cannot access', function () {
+    $owner = User::factory()->create();
+    $member = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $visibleProject = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $hiddenProject = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $visibleProject->members()->attach($member);
+    $search = 'project-isolation-search-term';
+
+    $visiblePost = MessageBoardPost::factory()->for($visibleProject)->for($owner, 'user')->create([
+        'title' => "Visible post {$search}",
+    ]);
+    $hiddenPost = MessageBoardPost::factory()->for($hiddenProject)->for($owner, 'user')->create([
+        'title' => "Hidden post {$search}",
+    ]);
+    $visibleComment = Comment::factory()
+        ->for($visibleProject)
+        ->for($owner, 'user')
+        ->for($visiblePost, 'commentable')
+        ->create(['body' => "Visible comment {$search}"]);
+    Comment::factory()
+        ->for($hiddenProject)
+        ->for($owner, 'user')
+        ->for($hiddenPost, 'commentable')
+        ->create(['body' => "Hidden comment {$search}"]);
+    $visibleFile = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($visibleProject)
+        ->for($owner, 'uploader')
+        ->create(['original_name' => 'visible-private-file.pdf']));
+    $hiddenFile = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($hiddenProject)
+        ->for($owner, 'uploader')
+        ->create(['original_name' => 'hidden-private-file.pdf']));
+    storedFileSearchContent($visibleFile, "Visible file contents {$search}");
+    storedFileSearchContent($hiddenFile, "Hidden file contents {$search}");
+
+    $this->actingAs($member)
+        ->get(route('everything.index', [$team, 'q' => $search]))
+        ->assertOk()
+        ->assertDontSee('Hidden post')
+        ->assertDontSee('Hidden comment')
+        ->assertDontSee('hidden-private-file.pdf')
+        ->assertDontSee('Hidden file contents')
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('results.data', 3)
+            ->where('results.total', 3)
+            ->where('results.data', function (Collection $items) use (
+                $visibleComment,
+                $visibleFile,
+                $visiblePost,
+                $visibleProject,
+            ): bool {
+                $itemsByType = $items->keyBy('type');
+
+                return $itemsByType->keys()->sort()->values()->all() === ['comment', 'file', 'message']
+                    && $itemsByType['message']['id'] === $visiblePost->id
+                    && $itemsByType['comment']['id'] === $visibleComment->id
+                    && $itemsByType['file']['id'] === $visibleFile->id
+                    && $items->every(
+                        fn (array $item): bool => $item['project']['id'] === $visibleProject->id,
+                    );
+            })
+            ->has('projects', 1)
+            ->where('projects.0.id', $visibleProject->id));
+});
+
 test('team managers can search all active projects in their team', function () {
     $owner = User::factory()->create();
     $team = Team::factory()->create();

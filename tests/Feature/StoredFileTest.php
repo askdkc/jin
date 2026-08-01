@@ -824,6 +824,8 @@ test('file routes reject non participants and cross project bindings', function 
 });
 
 test('a project member can open a file detail page with its comments while outsiders cannot', function () {
+    Storage::fake('local');
+
     $owner = User::factory()->create();
     $member = User::factory()->create();
     $outsider = User::factory()->create();
@@ -833,11 +835,19 @@ test('a project member can open a file detail page with its comments while outsi
     $team->members()->attach($outsider, ['role' => TeamRole::Member->value]);
     $project = Project::factory()->for($team)->for($owner, 'creator')->create();
     $project->members()->attach([$owner->id, $member->id]);
-    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
-        'original_name' => '仕様書.pdf',
-        'mime_type' => 'application/pdf',
-        'size' => 4096,
-    ]);
+    $file = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($project)
+        ->for($owner, 'uploader')
+        ->create([
+            'path' => "projects/{$project->id}/private/specification.pdf",
+            'original_name' => '仕様書.pdf',
+            'mime_type' => 'application/pdf',
+            'size' => 4096,
+            'preview_path' => "projects/{$project->id}/previews/specification.webp",
+            'preview_status' => 'ready',
+        ]));
+    Storage::disk('local')->put($file->path, 'private file contents');
+    Storage::disk('local')->put($file->preview_path, 'private thumbnail contents');
     $file->comments()->create([
         'project_id' => $project->id,
         'user_id' => $member->id,
@@ -861,7 +871,21 @@ test('a project member can open a file detail page with its comments while outsi
 
     $this->actingAs($outsider)
         ->get(route('projects.files.show', [$team, $project, $file]))
-        ->assertForbidden();
+        ->assertForbidden()
+        ->assertDontSee('仕様書.pdf')
+        ->assertDontSee('確認しました。');
+
+    $this->get(route('projects.files.download', [$team, $project, $file]))
+        ->assertForbidden()
+        ->assertDontSee('private file contents');
+
+    $this->get(route('projects.files.preview', [$team, $project, $file]))
+        ->assertForbidden()
+        ->assertDontSee('private file contents');
+
+    $this->get(route('projects.files.thumbnail', [$team, $project, $file]))
+        ->assertForbidden()
+        ->assertDontSee('private thumbnail contents');
 });
 
 test('project members can toggle a reaction on a file', function () {

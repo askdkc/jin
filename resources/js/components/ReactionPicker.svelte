@@ -56,8 +56,8 @@
                 i18n: ja,
                 locale: 'ja',
             });
-            picker.style.width = 'min(22rem, calc(100vw - 2rem))';
-            picker.style.height = 'min(25rem, calc(100vh - 8rem))';
+            picker.style.width = 'min(20rem, calc(100vw - 2rem))';
+            picker.style.height = 'min(20rem, calc(100vh - 8rem))';
             picker.style.setProperty('--border-radius', '0.75rem');
             picker.addEventListener('emoji-click', selectEmoji);
         }
@@ -77,7 +77,16 @@
         customOpen = false;
         customReaction = '';
     };
+    const handleKeydown = (event: KeyboardEvent): void => {
+        if (event.key !== 'Escape' || !menuOpen) {
+            return;
+        }
+
+        close();
+    };
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <div class="flex flex-wrap items-center gap-2">
     {#each reactions as reaction (reaction.reaction)}

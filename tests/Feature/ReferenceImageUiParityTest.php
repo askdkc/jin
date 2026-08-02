@@ -2,6 +2,7 @@
 
 test('reference image pages keep their feature-specific semantic hierarchy', function () {
     $message = file_get_contents(resource_path('js/pages/projects/messages/Show.svelte'));
+    $reactionPicker = file_get_contents(resource_path('js/components/ReactionPicker.svelte'));
     $todos = file_get_contents(resource_path('js/pages/projects/todos/ListShow.svelte'));
     $kanban = file_get_contents(resource_path('js/pages/projects/card-tables/Index.svelte'));
     $kanbanColumn = file_get_contents(resource_path('js/pages/projects/card-tables/ColumnShow.svelte'));
@@ -19,6 +20,24 @@ test('reference image pages keep their feature-specific semantic hierarchy', fun
             '/<div[^>]*role="separator"[^>]*>.*<h2[^>]*id="message-comments-heading"[^>]*>/s',
             $message,
         ) === 1,
+        'message reaction picker escapes card clipping' => preg_match(
+            '/<article[^>]*aria-labelledby="message-title"[^>]*class="overflow-visible\b[^\"]*"/s',
+            $message,
+        ) === 1,
+        'emoji picker uses compact viewport-safe dimensions' => str_contains(
+            $reactionPicker,
+            "picker.style.width = 'min(20rem, calc(100vw - 2rem))';",
+        ) && str_contains(
+            $reactionPicker,
+            "picker.style.height = 'min(20rem, calc(100vh - 8rem))';",
+        ),
+        'emoji picker closes with escape' => str_contains(
+            $reactionPicker,
+            "if (event.key !== 'Escape' || !menuOpen)",
+        ) && str_contains(
+            $reactionPicker,
+            '<svelte:window onkeydown={handleKeydown} />',
+        ),
         'todo derived active and completed split' => preg_match(
             '/const activeTodos = \$derived\(.*!todo\.completed.*\);.*const completedTodos = \$derived\(.*todo\.completed.*\);/s',
             $todos,

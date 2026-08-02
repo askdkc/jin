@@ -150,7 +150,7 @@
 
         <article
             aria-labelledby="message-title"
-            class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_18px_55px_rgba(15,23,42,0.08)] sm:rounded-[1.75rem] dark:border-slate-800 dark:bg-slate-900 dark:shadow-black/25"
+            class="overflow-visible rounded-2xl border border-slate-200 bg-white shadow-[0_18px_55px_rgba(15,23,42,0.08)] sm:rounded-[1.75rem] dark:border-slate-800 dark:bg-slate-900 dark:shadow-black/25"
         >
             <header class="px-5 pt-7 pb-5 sm:px-10 sm:pt-10 sm:pb-7">
                 <div class="flex items-start justify-between gap-4">

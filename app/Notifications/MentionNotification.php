@@ -15,6 +15,10 @@ class MentionNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
+    public int $tries = 3;
+
+    public int $timeout = 60;
+
     public const Message = 'mention_message';
 
     public const Todo = 'mention_todo';
@@ -55,15 +59,6 @@ class MentionNotification extends Notification implements ShouldQueue
         return $notifiable instanceof User
             ? $notifiable->notificationChannels('mention')
             : ['database', 'mail'];
-    }
-
-    /** @return array<string, string> */
-    public function viaQueues(): array
-    {
-        return [
-            'database' => 'notifications',
-            'mail' => 'notifications',
-        ];
     }
 
     /**

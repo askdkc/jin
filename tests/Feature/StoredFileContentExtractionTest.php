@@ -81,7 +81,7 @@ test('stored file creation prepares supported content and queues extraction', fu
             && $job->sourceChecksum === $supported->checksum
             && $job->sourceDisk === $supported->disk
             && $job->sourcePath === $supported->path
-            && $job->queue === 'file-content'
+            && $job->queue === null
             && $job->afterCommit === true,
     );
     Queue::assertPushed(ExtractStoredFileContent::class, 1);

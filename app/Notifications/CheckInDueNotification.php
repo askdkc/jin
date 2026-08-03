@@ -13,6 +13,10 @@ class CheckInDueNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
+    public int $tries = 3;
+
+    public int $timeout = 60;
+
     public function __construct(public CheckInPrompt $prompt)
     {
         $this->afterCommit();
@@ -24,15 +28,6 @@ class CheckInDueNotification extends Notification implements ShouldQueue
         return $notifiable instanceof User
             ? $notifiable->notificationChannels()
             : ['database', 'mail'];
-    }
-
-    /** @return array<string, string> */
-    public function viaQueues(): array
-    {
-        return [
-            'database' => 'notifications',
-            'mail' => 'notifications',
-        ];
     }
 
     /**

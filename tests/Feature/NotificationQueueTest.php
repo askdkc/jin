@@ -8,13 +8,13 @@ use App\Notifications\Teams\TeamInvitation;
 use App\Notifications\TodoActivityNotification;
 use Illuminate\Contracts\Queue\ShouldQueue;
 
-test('application notifications use the dedicated notifications queue', function (string $notificationClass) {
+test('application notifications use the default queue with a retry budget', function (string $notificationClass) {
     $notification = (new ReflectionClass($notificationClass))->newInstanceWithoutConstructor();
 
     expect($notification)->toBeInstanceOf(ShouldQueue::class)
-        ->and($notification->viaQueues())->toMatchArray([
-            'mail' => 'notifications',
-        ]);
+        ->and($notification->queue)->toBeNull()
+        ->and($notification->tries)->toBe(3)
+        ->and($notification->timeout)->toBe(60);
 })->with([
     CheckInDueNotification::class,
     MentionNotification::class,

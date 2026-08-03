@@ -15,6 +15,10 @@ class ChatMessageCreated implements ShouldBroadcast, ShouldDispatchAfterCommit, 
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
+    public int $tries = 3;
+
+    public int $timeout = 60;
+
     /**
      * Create a new event instance.
      */
@@ -63,13 +67,5 @@ class ChatMessageCreated implements ShouldBroadcast, ShouldDispatchAfterCommit, 
                 ] : null,
             ],
         ];
-    }
-
-    /**
-     * Get the queue used to broadcast the event.
-     */
-    public function broadcastQueue(): string
-    {
-        return 'broadcasts';
     }
 }

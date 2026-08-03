@@ -15,6 +15,10 @@ class DirectMessageCreated implements ShouldBroadcast, ShouldDispatchAfterCommit
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
+    public int $tries = 3;
+
+    public int $timeout = 60;
+
     /**
      * Create a new event instance.
      */
@@ -61,10 +65,5 @@ class DirectMessageCreated implements ShouldBroadcast, ShouldDispatchAfterCommit
                 ],
             ],
         ];
-    }
-
-    public function broadcastQueue(): string
-    {
-        return 'broadcasts';
     }
 }

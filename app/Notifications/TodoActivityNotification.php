@@ -15,6 +15,10 @@ class TodoActivityNotification extends Notification implements ShouldQueue
 {
     use Queueable;
 
+    public int $tries = 3;
+
+    public int $timeout = 60;
+
     public const Assigned = 'todo_assigned';
 
     public const Commented = 'todo_comment';
@@ -65,15 +69,6 @@ class TodoActivityNotification extends Notification implements ShouldQueue
                 $this->type === self::Due ? 'assignment_reminder' : 'activity',
             )
             : ['database', 'mail'];
-    }
-
-    /** @return array<string, string> */
-    public function viaQueues(): array
-    {
-        return [
-            'database' => 'notifications',
-            'mail' => 'notifications',
-        ];
     }
 
     /**

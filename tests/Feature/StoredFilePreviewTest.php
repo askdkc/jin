@@ -62,7 +62,7 @@ test('stored file creation schedules previews only for supported extensions', fu
     expect($unsupported->preview_status)->toBeNull()
         ->and($unsupported->preview_path)->toBeNull();
 
-    Queue::assertPushedOn('previews', GenerateStoredFilePreview::class);
+    Queue::assertPushed(GenerateStoredFilePreview::class, fn (GenerateStoredFilePreview $job): bool => $job->queue === null);
     Queue::assertPushed(GenerateStoredFilePreview::class, 1);
 });
 
@@ -100,7 +100,7 @@ test('legacy preview backfill claims supported rows once and leaves unsupported 
         GenerateStoredFilePreview::class,
         fn (GenerateStoredFilePreview $job): bool => $job->storedFileId === $supported->id
             && $job->sourcePath === $supported->path
-            && $job->queue === 'previews'
+            && $job->queue === null
             && $job->afterCommit === true,
     );
 

@@ -35,7 +35,6 @@ class QueueCheckInDueNotification implements ShouldBeUnique, ShouldQueue
 
     public function __construct(public int $deliveryId)
     {
-        $this->onQueue('notifications');
         $this->afterCommit = true;
     }
 

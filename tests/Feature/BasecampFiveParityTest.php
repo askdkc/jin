@@ -16,7 +16,9 @@ use App\Models\Todo;
 use App\Models\TodoList;
 use App\Models\User;
 use App\Notifications\TodoActivityNotification;
+use Illuminate\Broadcasting\BroadcastEvent;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Queue;
 use Inertia\Testing\AssertableInertia as Assert;
 
 function basecampFiveWorkspace(): array
@@ -181,10 +183,19 @@ test('ping broadcasts identify their team for persistent layouts', function () {
         'recipient_id' => $member->id,
         'body' => 'このチームだけに表示する',
     ]);
+    $event = new DirectMessageCreated($message);
 
-    expect((new DirectMessageCreated($message))->broadcastWith())
+    expect($event->broadcastWith())
         ->teamId->toBe($team->id)
         ->message->id->toBe($message->id);
+    expect($event)
+        ->tries->toBe(3)
+        ->timeout->toBe(60);
+
+    Queue::fake();
+    Event::dispatch($event);
+
+    Queue::assertPushed(BroadcastEvent::class, fn (BroadcastEvent $job): bool => $job->queue === null);
 });
 
 test('new for you lets a recipient reply to a notification without leaving the page', function () {

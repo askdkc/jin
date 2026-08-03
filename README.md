@@ -138,19 +138,15 @@ php artisan serve --host=127.0.0.1 --port=8000
 npm run dev
 ```
 
-ターミナル3（通常Queue）:
+ターミナル3（Queue）:
 
 ```bash
-php artisan queue:work --queue=broadcasts,notifications,previews,default --timeout=240
+php artisan queue:work
 ```
 
-ターミナル4（ファイル本文抽出Queue、本文検索を有効にした場合）:
+Queue Workerは既定の`default` Queueだけで、通知、Broadcast、プレビュー生成、本文抽出を含むすべてのJobを処理します。ReverbとSchedulerはQueue Workerとは別プロセスなので、必要に応じて起動します。
 
-```bash
-php artisan queue:work --queue=file-content --tries=4 --timeout=180 --memory=512 --max-time=3600
-```
-
-ターミナル5（Reverb）:
+ターミナル4（Reverb）:
 
 ```bash
 php artisan reverb:start
@@ -328,7 +324,6 @@ cd "$JIN_PATH"
 | `DB_DATABASE` / `DB_USERNAME`             | `jin` / `jin`                                    |
 | `DB_PASSWORD`                             | PostgreSQLへ設定するランダムなpassword           |
 | `STORED_FILE_CONTENT_ENABLED`             | `true`                                           |
-| `STORED_FILE_CONTENT_QUEUE`               | `file-content`                                   |
 | `STORED_FILE_CONTENT_MARKITDOWN_PATH`     | `/var/www/jin/.venv-file-content/bin/markitdown` |
 | `REDIS_CLIENT` / `REDIS_HOST`             | `phpredis` / `127.0.0.1`                         |
 | `QUEUE_CONNECTION`                        | `redis`                                          |
@@ -468,81 +463,25 @@ sudo chown "$USER":www-data .env
 sudo chmod 640 .env
 ```
 
-`stored-files:backfill-checksums`は既存Office原本のcontent versionを補完します。`stored-files:backfill-previews`がQueueへ送るのは既存PDFの先頭ページ生成だけで、Office文書はローカル変換しません。`stored-files:backfill-content`は未処理またはchecksumが変わった対応ファイルを`file-content` Queueへ送ります。失敗した現行ファイルを再試行する場合は`--retry-failed`、extractor更新後に全対応ファイルを再抽出する場合は`--reindex`を付けます。大量データではworker負荷を監視し、通常のbackfill完了後だけ必要なoptionを実行してください。
+`stored-files:backfill-checksums`は既存Office原本のcontent versionを補完します。`stored-files:backfill-previews`がQueueへ送るのは既存PDFの先頭ページ生成だけで、Office文書はローカル変換しません。`stored-files:backfill-content`は未処理またはchecksumが変わった対応ファイルを既定の`default` Queueへ送ります。失敗した現行ファイルを再試行する場合は`--retry-failed`、extractor更新後に全対応ファイルを再抽出する場合は`--reindex`を付けます。大量データではworker負荷を監視し、通常のbackfill完了後だけ必要なoptionを実行してください。
 
 QueueとReverbはSupervisorで常駐させます。systemdから各プロセスを直接起動せず、systemdはSupervisor自体の起動だけを管理します。
 
 ```bash
 sudo tee /etc/supervisor/conf.d/jin-queue.conf >/dev/null <<EOF
-[program:jin-broadcasts]
+[program:jin-queue]
 process_name=%(program_name)s_%(process_num)02d
-command=/usr/bin/php ${JIN_PATH}/artisan queue:work --queue=broadcasts --sleep=1 --tries=3 --timeout=60
+command=/usr/bin/php ${JIN_PATH}/artisan queue:work
 directory=${JIN_PATH}
 user=www-data
-numprocs=1
-autostart=true
-autorestart=true
-stopasgroup=true
-killasgroup=true
-stopwaitsecs=70
-redirect_stderr=true
-stdout_logfile=${JIN_PATH}/storage/logs/broadcast-worker-%(process_num)02d.log
-
-[program:jin-notifications]
-process_name=%(program_name)s_%(process_num)02d
-command=/usr/bin/php ${JIN_PATH}/artisan queue:work --queue=notifications --sleep=1 --tries=3 --timeout=60
-directory=${JIN_PATH}
-user=www-data
-numprocs=1
-autostart=true
-autorestart=true
-stopasgroup=true
-killasgroup=true
-stopwaitsecs=70
-redirect_stderr=true
-stdout_logfile=${JIN_PATH}/storage/logs/notification-worker-%(process_num)02d.log
-
-[program:jin-previews]
-process_name=%(program_name)s_%(process_num)02d
-command=/usr/bin/php ${JIN_PATH}/artisan queue:work --queue=previews --sleep=1 --tries=25 --timeout=240
-directory=${JIN_PATH}
-user=www-data
-numprocs=8
+numprocs=10
 autostart=true
 autorestart=true
 stopasgroup=true
 killasgroup=true
 stopwaitsecs=300
 redirect_stderr=true
-stdout_logfile=${JIN_PATH}/storage/logs/preview-worker-%(process_num)02d.log
-
-[program:jin-file-content]
-process_name=%(program_name)s_%(process_num)02d
-command=/usr/bin/php ${JIN_PATH}/artisan queue:work --queue=file-content --sleep=3 --tries=4 --timeout=180 --memory=512 --max-time=3600
-directory=${JIN_PATH}
-user=www-data
-numprocs=1
-autostart=true
-autorestart=true
-stopasgroup=true
-killasgroup=true
-stopwaitsecs=240
-redirect_stderr=true
-stdout_logfile=${JIN_PATH}/storage/logs/file-content-worker-%(process_num)02d.log
-
-[program:jin-default]
-process_name=%(program_name)s_%(process_num)02d
-command=/usr/bin/php ${JIN_PATH}/artisan queue:work --queue=default --sleep=3 --tries=3 --timeout=60
-directory=${JIN_PATH}
-user=www-data
-numprocs=1
-autostart=true
-autorestart=true
-stopasgroup=true
-killasgroup=true
-stopwaitsecs=70
-redirect_stderr=true
-stdout_logfile=${JIN_PATH}/storage/logs/default-worker-%(process_num)02d.log
+stdout_logfile=${JIN_PATH}/storage/logs/queue-worker-%(process_num)02d.log
 EOF
 
 sudo tee /etc/supervisor/conf.d/jin-reverb.conf >/dev/null <<EOF
@@ -562,7 +501,7 @@ EOF
 sudo systemctl enable --now nginx php8.4-fpm postgresql redis-server supervisor
 sudo supervisorctl reread
 sudo supervisorctl update
-sudo supervisorctl status "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-file-content:*" "jin-default:*" jin-reverb
+sudo supervisorctl status "jin-queue:*" jin-reverb
 
 printf '%s\n' \
   "* * * * * www-data cd ${JIN_PATH} && /usr/bin/php artisan schedule:run >/dev/null 2>&1" | \
@@ -570,7 +509,7 @@ printf '%s\n' \
 sudo chmod 644 /etc/cron.d/jin-scheduler
 ```
 
-`jin-previews`はPDF変換を最大8件並列処理します。CPUコア数、RAM、PDFサイズを監視し、負荷が高い場合は`numprocs`を下げてください。`jin-file-content`はMarkItDownがCPUとmemoryを使うため、初期値は1 process、memory 512 MiBです。実ファイルの処理時間とpeak memoryを確認してから少しずつ並列数を増やし、`--timeout=180`を`STORED_FILE_CONTENT_JOB_TIMEOUT`と一致させてください。本番構成はPostgreSQLとRedis Queue/Cache/Sessionを前提とします。SQLiteはローカル開発専用で、SQLiteを使う検証環境では各workerを1 processに抑えてください。
+`jin-queue`は10プロセスで既定の`default` Queueを共有し、通知、Broadcast、PDFプレビュー生成、本文抽出を含む全Jobを並列処理します。Job固有の`tries`と`timeout`は各Jobクラスに設定されており、最長Jobタイムアウト240秒（プレビュー生成）を`stopwaitsecs=300`が上回ります。CPUコア数、RAM、PDFサイズを監視し、重いJobが10プロセスを占有して通知やリアルタイム配信が待機する場合は`numprocs`を下げてください。本番構成はPostgreSQLとRedis Queue/Cache/Sessionを前提とします。SQLiteはローカル開発専用で、SQLiteを使う検証環境では各workerを1 processに抑えてください。
 
 #### OS再起動時の自動起動
 
@@ -581,7 +520,7 @@ sudo systemctl enable nginx php8.4-fpm postgresql redis-server supervisor
 
 systemctl is-enabled nginx php8.4-fpm supervisor
 systemctl is-active ds-converter ds-docservice
-sudo supervisorctl status "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-file-content:*" "jin-default:*" jin-reverb
+sudo supervisorctl status "jin-queue:*" jin-reverb
 ```
 
 期待値はNginx、PHP-FPM、Supervisorが`enabled`、ds系serviceが`active`、Supervisor配下の全プロセスが`RUNNING`です。macOS開発ではOS再起動後に`container system start`、localhost用DNS mappingの再作成、setupのログに表示されたcontainerの`container start`を実行します。
@@ -599,7 +538,7 @@ composer check-platform-reqs --no-dev
 SMTP_SMOKE_TEST_RECIPIENT=recipient@example.com php artisan tinker --execute '\Illuminate\Support\Facades\Mail::raw("Jin SMTP smoke test", function (\Illuminate\Mail\Message $message): void { $message->to((string) getenv("SMTP_SMOKE_TEST_RECIPIENT"))->subject("Jin SMTP smoke test"); });'
 
 sudo systemctl --no-pager --full status nginx php8.4-fpm supervisor ds-converter ds-docservice
-sudo supervisorctl status "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-file-content:*" "jin-default:*" jin-reverb
+sudo supervisorctl status "jin-queue:*" jin-reverb
 ```
 
 `app:production-check`はHTTPS、デバッグ、Queue、Reverb、Cookie、upload上限が安全でない場合に失敗します。ファイル本文検索を有効にした場合は、5つのextractor command、timeoutとsizeの関係、Queueの`retry_after`、PostgreSQL上のPGroonga extensionも確認しますが、利用者ファイルを解析するprobeは実行しません。SMTPを使う場合はlocalhost、port、scheme、credentialの未設定も拒否しますが、providerへの接続と受信は保証しません。smoke test mailが指定した受信箱へ届き、送信元domainのSPF、DKIM、DMARCがproviderの要件を満たすことまで確認してください。ONLYOFFICEを有効にした場合は、JinのOffice file上限がupload上限または宣言したDocumentServerの`maxDownloadBytes`を超えていても失敗します。
@@ -614,7 +553,7 @@ Officeプレビューが`Download failed`になる場合は、DocumentServerか�
 
   cd "$JIN_PATH"
   php artisan down --retry=60
-  sudo supervisorctl stop "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-file-content:*" "jin-default:*" jin-reverb
+  sudo supervisorctl stop "jin-queue:*" jin-reverb
   git pull --ff-only
   composer install --no-dev --optimize-autoloader
   python3 -m venv --upgrade-deps .venv-file-content
@@ -628,12 +567,55 @@ Officeプレビューが`Download failed`になる場合は、DocumentServerか�
   php artisan stored-files:backfill-content
   php artisan optimize
   sudo systemctl reload php8.4-fpm
-  sudo supervisorctl start "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-file-content:*" "jin-default:*" jin-reverb
+  sudo supervisorctl start "jin-queue:*" jin-reverb
   php artisan up
 )
 ```
 
 このin-place更新では、アプリとworkerを停止してからmigrationを実行します。サブシェルは途中のコマンドが失敗した時点で停止するため、原因を直して残りの手順を完了するまでworkerの再起動と`php artisan up`は実行されません。これにより、コード更新とDB更新の間に新しいデータが書き込まれる競合を防ぎます。
+
+### 旧専用キューからの移行
+
+旧構成（`jin-broadcasts`、`jin-notifications`、`jin-previews`、`jin-file-content`、`jin-default`）を使っている既存サーバーでは、`php artisan queue:work`は`default` Queueしか取得しないため、旧キュー名に保存済みのJobは処理されません。Supervisor設定の切り替え前に、次の順序で旧キューを一度だけ空にします。
+
+1. `php artisan down --retry=60`でアプリケーションをMaintenance Modeへ移行する。
+2. 旧Supervisorワーカーを停止する。
+
+   ```bash
+   sudo supervisorctl stop "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-file-content:*" "jin-default:*" jin-reverb
+   ```
+
+3. 旧キュー名を指定した一時ワーカーで保存済みJobを処理する。
+
+   ```bash
+   sudo -u www-data php artisan queue:work redis --queue=broadcasts,notifications,previews,file-content,default --stop-when-empty --force
+   ```
+
+4. アプリケーションコードを更新し、`/etc/supervisor/conf.d/jin-queue.conf`を新しい単一プログラム構成へ置き換える。`jin-queue.conf`はGit管理外のため、Git更新だけでは変更されません。`git pull`後に次のコマンドで再作成してください。
+
+   ```bash
+   sudo tee /etc/supervisor/conf.d/jin-queue.conf >/dev/null <<EOF
+   [program:jin-queue]
+   process_name=%(program_name)s_%(process_num)02d
+   command=/usr/bin/php ${JIN_PATH}/artisan queue:work
+   directory=${JIN_PATH}
+   user=www-data
+   numprocs=10
+   autostart=true
+   autorestart=true
+   stopasgroup=true
+   killasgroup=true
+   stopwaitsecs=300
+   redirect_stderr=true
+   stdout_logfile=${JIN_PATH}/storage/logs/queue-worker-%(process_num)02d.log
+   EOF
+   ```
+
+5. `sudo supervisorctl reread`と`sudo supervisorctl update`を実行して旧プログラムを除去し、`jin-queue`を登録する。
+6. `sudo supervisorctl status "jin-queue:*"`で10プロセス（`jin-queue_00`〜`jin-queue_09`）がすべて`RUNNING`であることを確認する。
+7. `php artisan up`でMaintenance Modeを解除する。
+
+旧プログラムの定義が`jin-queue.conf`に残っている場合は、`supervisorctl update`前に`rm /etc/supervisor/conf.d/jin-queue.conf`で置き換えてください。
 
 `personal_note_attachments.deleted_at`を削除するreleaseへrollbackする場合は、先にattachmentの物理削除を完了します。アプリと通常workerを停止した状態で次を実行し、tombstoneが0件になってからmigrationをrollbackしてください。
 

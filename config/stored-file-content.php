@@ -3,8 +3,6 @@
 return [
     'enabled' => (bool) env('STORED_FILE_CONTENT_ENABLED', false),
 
-    'queue' => env('STORED_FILE_CONTENT_QUEUE', 'file-content'),
-
     'markitdown_path' => env('STORED_FILE_CONTENT_MARKITDOWN_PATH', 'markitdown'),
 
     'process_timeout' => (int) env('STORED_FILE_CONTENT_PROCESS_TIMEOUT', 120),

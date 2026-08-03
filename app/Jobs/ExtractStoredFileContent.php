@@ -43,7 +43,6 @@ class ExtractStoredFileContent implements ShouldQueue
         public string $sourcePath,
     ) {
         $this->timeout = (int) config('stored-file-content.job_timeout', 180);
-        $this->onQueue((string) config('stored-file-content.queue', 'file-content'));
         $this->afterCommit = true;
     }
 

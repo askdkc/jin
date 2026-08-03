@@ -7,12 +7,14 @@ use App\Models\ChatMessage;
 use App\Models\Project;
 use App\Models\Team;
 use App\Models\User;
+use Illuminate\Broadcasting\BroadcastEvent;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Contracts\Broadcasting\ShouldRescue;
 use Illuminate\Contracts\Events\ShouldDispatchAfterCommit;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Queue;
 use Inertia\Testing\AssertableInertia as Assert;
 
 test('project participants can open chat with the latest messages', function () {
@@ -395,7 +397,7 @@ test('chat routes scope projects to the current team', function () {
         ->assertNotFound();
 });
 
-test('chat message broadcast uses a private project channel and a dedicated queue', function () {
+test('chat message broadcast uses a private project channel and the default queue', function () {
     $user = User::factory()->create();
     $team = Team::factory()->create();
     $project = Project::factory()->for($team)->for($user, 'creator')->create();
@@ -409,8 +411,14 @@ test('chat message broadcast uses a private project channel and a dedicated queu
         ->and($event->broadcastOn()[0])->toBeInstanceOf(PrivateChannel::class)
         ->and($event->broadcastOn()[0]->name)->toBe("private-projects.{$project->id}.chat")
         ->and($event->broadcastAs())->toBe('chat.message.created')
-        ->and($event->broadcastQueue())->toBe('broadcasts')
+        ->and($event->tries)->toBe(3)
+        ->and($event->timeout)->toBe(60)
         ->and($event->broadcastWith()['message']['id'])->toBe($message->id)
         ->and($event->broadcastWith()['message']['channelId'])->toBe($message->chat_channel_id)
         ->and($event->broadcastWith()['message']['parentId'])->toBeNull();
+
+    Queue::fake();
+    Event::dispatch($event);
+
+    Queue::assertPushed(BroadcastEvent::class, fn (BroadcastEvent $job): bool => $job->queue === null);
 });

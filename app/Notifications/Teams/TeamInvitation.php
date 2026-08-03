@@ -13,6 +13,10 @@ class TeamInvitation extends Notification implements ShouldQueue
 {
     use Queueable;
 
+    public int $tries = 3;
+
+    public int $timeout = 60;
+
     /**
      * Create a new notification instance.
      */
@@ -29,12 +33,6 @@ class TeamInvitation extends Notification implements ShouldQueue
     public function via(object $notifiable): array
     {
         return ['mail'];
-    }
-
-    /** @return array<string, string> */
-    public function viaQueues(): array
-    {
-        return ['mail' => 'notifications'];
     }
 
     /**

@@ -10,6 +10,7 @@ function setupTestEnvironment(): array
         if (str_starts_with($key, 'ONLYOFFICE_') || in_array($key, [
             'APP_DIR',
             'APP_DOMAIN',
+            'APP_ONLYOFFICE_INTERNAL_URL',
             'EMAIL',
             'ENV_FILE',
             'OFFICE_DOMAIN',

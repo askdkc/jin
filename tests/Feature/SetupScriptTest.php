@@ -5,6 +5,11 @@ use Symfony\Component\Process\Process;
 function runSetupBash(string $script, string ...$arguments): Process
 {
     $process = new Process(['/bin/bash', '-c', $script, 'setup-test', ...$arguments]);
+    $process->setEnv([
+        'ONLYOFFICE_PUBLIC_URL' => false,
+        'APP_ONLYOFFICE_INTERNAL_URL' => false,
+        'ONLYOFFICE_INSTANCE_ID' => false,
+    ]);
     $process->run();
 
     return $process;

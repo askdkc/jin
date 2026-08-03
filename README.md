@@ -114,70 +114,13 @@ ONLYOFFICEを使う場合は、さらに次の2項目を設定します。
 
 ### 3. ONLYOFFICE Docsを起動する
 
-Apple `container`のnamed volumeを使うため、コンテナを再作成してもDocumentServerのデータは残ります。ONLYOFFICE DocumentServerのmulti-architecture imageからApple silicon向けのarm64 variantを起動します。
+macOSのOnlyOffice provisioningは、リポジトリ直下の`setup.sh`を唯一の手順として使用します。スクリプトはアプリケーションのcanonical pathと`ONLYOFFICE_INSTANCE_ID`からコンテナ・named volumeを分離し、同じ構成の再実行では既存コンテナを再利用します。
 
 ```bash
-ONLYOFFICE_SECRET="$(sed -n 's/^ONLYOFFICE_JWT_SECRET=//p' .env)"
-ONLYOFFICE_HOST_PORT="$(sed -n 's|^ONLYOFFICE_DOCUMENT_SERVER_URL=http://127.0.0.1:||p' .env)"
-test "${#ONLYOFFICE_SECRET}" -ge 64
-test -n "$ONLYOFFICE_HOST_PORT"
-
-container volume create jin-onlyoffice-data
-container volume create jin-onlyoffice-logs
-container volume create jin-onlyoffice-lib
-container volume create jin-onlyoffice-db
-
-container run -d \
-  --name jin-onlyoffice \
-  --arch arm64 \
-  --cpus 2 \
-  --memory 4G \
-  --shm-size 2G \
-  -p "127.0.0.1:${ONLYOFFICE_HOST_PORT}:80" \
-  -e JWT_ENABLED=true \
-  -e JWT_SECRET="$ONLYOFFICE_SECRET" \
-  -e ALLOW_PRIVATE_IP_ADDRESS=true \
-  -e ALLOW_META_IP_ADDRESS=false \
-  -e PLUGINS_ENABLED=false \
-  -v jin-onlyoffice-data:/var/www/onlyoffice/Data \
-  -v jin-onlyoffice-logs:/var/log/onlyoffice \
-  -v jin-onlyoffice-lib:/var/lib/onlyoffice \
-  -v jin-onlyoffice-db:/var/lib/postgresql \
-  onlyoffice/documentserver:9.4.0.1
+./setup.sh --platform macos --app-dir "$PWD" --no-nginx
 ```
 
-`ALLOW_PRIVATE_IP_ADDRESS=true`は、DocumentServerからmacOS上の`host.container.internal`へ接続するローカル開発専用設定です。公開環境では有効にしません。
-
-初回起動には時間がかかります。healthcheckが通るまで確認します。
-
-```bash
-for attempt in {1..90}; do
-  curl -fsS "http://127.0.0.1:${ONLYOFFICE_HOST_PORT}/healthcheck" && break
-  sleep 2
-done
-
-curl -fsS "http://127.0.0.1:${ONLYOFFICE_HOST_PORT}/healthcheck"
-
-# JWTなどの既存設定を保持したまま200 MiBへ拡張する
-container exec -i jin-onlyoffice node <<'NODE'
-const fs = require('fs');
-const path = '/etc/onlyoffice/documentserver/local.json';
-const config = JSON.parse(fs.readFileSync(path, 'utf8'));
-config.FileConverter ??= {};
-config.FileConverter.converter ??= {};
-config.FileConverter.converter.maxDownloadBytes = 209715200;
-fs.writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
-NODE
-
-container stop jin-onlyoffice
-container start jin-onlyoffice
-for attempt in {1..90}; do
-  curl -fsS "http://127.0.0.1:${ONLYOFFICE_HOST_PORT}/healthcheck" && break
-  sleep 2
-done
-```
-
-コンテナを削除して作り直した場合は`local.json`も再生成されるため、同じmergeと再起動をもう一度実行してください。
+初回起動には時間がかかります。`setup.sh`はhealthcheckとeditor APIの両方を確認してから完了します。既存コンテナの設定を意図的に変更する場合だけ、named volumeをバックアップしたうえで`--recreate-container`を指定します。
 
 ### 4. 開発プロセスを起動する
 
@@ -221,9 +164,7 @@ php artisan schedule:work
 
 DocumentServerからLaravelへ到達できることを確認します。
 
-```bash
-container exec jin-onlyoffice curl -fsS http://host.container.internal:8000/up
-```
+`setup.sh`がDocumentServer内からLaravelの`/up`へ疎通確認を行います。失敗した場合は、Laravelを起動してからsetupのログに表示されたcontainer名で再確認します。
 
 ブラウザで<http://localhost:8000>を開きます。Laravelは`127.0.0.1`だけで待ち受け、DocumentServerからの接続は`host.container.internal`のlocalhost mappingを経由します。
 
@@ -340,24 +281,7 @@ composer --version
 
 Ubuntu 26.04ではUbuntu公式repositoryのversion付きPHP 8.4 packageを使います。PostgreSQL 17はPGDG、GroongaはUbuntu 26.04（`resolute`）向けのGroonga公式APT repositoryを使います。PGroongaの公式Ubuntu install手順は現時点で26.04用packageを掲載していないため、Jinが使用する4.0.6をsourceからbuildし、PostgreSQL 17へinstallします。Node.jsは[NodeSourceの22.x setup script](https://github.com/nodesource/distributions/blob/master/scripts/deb/setup_22.x)、Composerは[公式のchecksum検証手順](https://getcomposer.org/doc/faqs/how-to-install-composer-programmatically.md)に合わせています。
 
-### 2. ONLYOFFICEのAPTリポジトリを追加する
-
-Ubuntu標準リポジトリではなく、[ONLYOFFICE公式APTリポジトリ](https://helpcenter.onlyoffice.com/docs/installation/docs-community-install-ubuntu.aspx)を使います。リポジトリ名の`squeeze`は公式の指定です。
-
-```bash
-curl -fsSL https://download.onlyoffice.com/GPG-KEY-ONLYOFFICE \
-  | gpg --dearmor \
-  | sudo tee /usr/share/keyrings/onlyoffice.gpg >/dev/null
-
-echo "deb [signed-by=/usr/share/keyrings/onlyoffice.gpg] https://download.onlyoffice.com/repo/debian squeeze main" \
-  | sudo tee /etc/apt/sources.list.d/onlyoffice.list >/dev/null
-
-sudo apt update
-```
-
-DocumentServerの待受portはインストール前にdebconfで`ONLYOFFICE_HOST_PORT`へ変更します。TCP 80/443以外をfirewallまたはcloud security groupで公開しないでください。
-
-### 3. Jinを配置する
+### 2. Jinを配置する
 
 ```bash
 sudo install -d -o "$USER" -g www-data "$JIN_PATH"
@@ -375,39 +299,22 @@ php artisan key:generate
 
 既存サーバーへの更新では`git clone`と`cp .env.example .env`を実行しないでください。既存の`.env`と`storage/app/private`を保持し、リリース手順に合わせて`git pull`またはartifactを配置します。
 
-### 4. ONLYOFFICE DocsをインストールしてJinを設定する
+### 3. ONLYOFFICE Docsをプロビジョニングする
 
-[ONLYOFFICE公式手順](https://helpcenter.onlyoffice.com/docs/installation/docs-community-install-ubuntu.aspx)のdebconf設定で、待受portとJWT secretをインストール前に固定します。次の2つのcode blockは同じshellで続けて実行してください。
-
-```bash
-ONLYOFFICE_SECRET="$(openssl rand -hex 32)"
-
-printf 'onlyoffice-documentserver onlyoffice/ds-port select %s\n' \
-  "$ONLYOFFICE_HOST_PORT" | sudo debconf-set-selections
-printf '%s\n' \
-  'onlyoffice-documentserver onlyoffice/jwt-enabled boolean true' \
-  | sudo debconf-set-selections
-printf 'onlyoffice-documentserver onlyoffice/jwt-secret password %s\n' \
-  "$ONLYOFFICE_SECRET" | sudo debconf-set-selections
-
-sudo apt install -y ttf-mscorefonts-installer onlyoffice-documentserver
-```
-
-Microsoft fontsのEULAを聞かれた場合は内容を確認して応答します。APTパッケージが`/etc/onlyoffice/documentserver/local.json`へJWT設定を保存します。同じsecretをJinの`.env`へ設定します。`ONLYOFFICE_INSTANCE_ID`は共有DocumentServer内で重複しない固定値へ変更してください。
-
-DocumentServerの標準`maxDownloadBytes`は100 MiBのため、Jinの200 MiB上限と一致させます。JWTなどの既存設定を消さず、`FileConverter.converter.maxDownloadBytes`だけをmergeします。
+UbuntuのOnlyOffice APT repository、JWT、`maxDownloadBytes`、service再起動、healthcheck、editor API確認、Jinの`.env`更新、OnlyOffice用Nginxは`setup.sh`が一元管理します。手動でrepositoryや`local.json`を書き換えず、次を実行してください。
 
 ```bash
-sudo python3 - <<'PY'
-import json
-from pathlib import Path
-
-path = Path('/etc/onlyoffice/documentserver/local.json')
-config = json.loads(path.read_text())
-config.setdefault('FileConverter', {}).setdefault('converter', {})['maxDownloadBytes'] = 209715200
-path.write_text(json.dumps(config, indent=2) + '\n')
-PY
+cd "$JIN_PATH"
+./setup.sh \
+  --platform ubuntu \
+  --app-dir "$JIN_PATH" \
+  --domain "$JIN_DOMAIN" \
+  --office-domain "$OFFICE_DOMAIN" \
+  --onlyoffice-port "$ONLYOFFICE_HOST_PORT" \
+  --nginx
 ```
+
+`setup.sh`は`UPLOAD_MAX_FILE_MB`とOnlyOfficeのファイル上限も検証します。`ONLYOFFICE_JWT_SECRET`、`ONLYOFFICE_INSTANCE_ID`、その他の本番値は`.env`または環境変数で指定し、secretをコマンド履歴へ残さないでください。
 
 `.env.example`に必要なパラメータはすべて記載されています。コピーした`.env`を直接編集し、本番環境では次の値へ変更してください。`<...>`は実際のdomain、credential、ランダムなsecretへ置き換え、Gitへコミットしません。
 
@@ -470,37 +377,9 @@ Viteは`VITE_REVERB_*`をbuild時に埋め込むため、`.env`の本番Reverb�
 
 公開範囲をIPで制限する場合は`IP_RESTRICTION_ENABLED=true`へ変更し、利用者だけでなくDocumentServerから見える送信元IPも`ALLOWED_IPS`へ追加します。`TRUSTED_PROXIES=*`や`ALLOWED_IPS=*`は使いません。
 
-### 5. ONLYOFFICE Docsの起動を確認する
+OnlyOfficeのservice状態、設定値、healthcheck、editor APIは直前の`setup.sh`が確認します。パッケージ更新はstagingでOffice文書の表示を確認してから本番へ適用してください。
 
-```bash
-ONLYOFFICE_HOST_PORT="$(sed -n 's|^ONLYOFFICE_DOCUMENT_SERVER_URL=http://127.0.0.1:||p' .env)"
-test -n "$ONLYOFFICE_HOST_PORT"
-
-sudo systemctl restart ds-converter ds-docservice ds-metrics
-systemctl is-active ds-converter ds-docservice
-
-sudo python3 - <<'PY'
-import json
-from pathlib import Path
-
-config = json.loads(Path('/etc/onlyoffice/documentserver/local.json').read_text())
-configured = config.get('FileConverter', {}).get('converter', {}).get('maxDownloadBytes', 0)
-assert configured >= 209715200, f'maxDownloadBytes is too small: {configured}'
-print(f'maxDownloadBytes={configured}')
-PY
-
-for attempt in {1..90}; do
-  curl -fsS "http://127.0.0.1:${ONLYOFFICE_HOST_PORT}/healthcheck" && break
-  sleep 2
-done
-
-curl -fsS "http://127.0.0.1:${ONLYOFFICE_HOST_PORT}/healthcheck"
-dpkg-query -W onlyoffice-documentserver
-```
-
-DocumentServerはAPTの対象です。パッケージ更新はstagingでOffice文書の表示を確認してから本番へ適用してください。
-
-### 6. NginxとTLSを設定する
+### 4. NginxとTLSを設定する
 
 Jinは1ファイル200 MiB、1回のリクエスト合計500 MiB、最大20ファイルに制限します。multipart overheadを含めて受信できるよう、PHP-FPMとNginxのリクエスト上限は512 MiBに設定します。
 
@@ -563,40 +442,17 @@ server {
 }
 EOF
 
-sudo tee /etc/nginx/sites-available/jin-onlyoffice >/dev/null <<EOF
-server {
-    listen 80;
-    listen [::]:80;
-    server_name ${OFFICE_DOMAIN};
-
-    location / {
-        proxy_pass http://127.0.0.1:${ONLYOFFICE_HOST_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Host \$http_host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-        proxy_buffering off;
-    }
-}
-EOF
-
 sudo ln -sfn /etc/nginx/sites-available/jin /etc/nginx/sites-enabled/jin
-sudo ln -sfn /etc/nginx/sites-available/jin-onlyoffice /etc/nginx/sites-enabled/jin-onlyoffice
 sudo nginx -t
 sudo systemctl reload nginx
 
-sudo certbot --nginx -d "$JIN_DOMAIN" -d "$OFFICE_DOMAIN"
+sudo certbot --nginx -d "$JIN_DOMAIN"
 sudo certbot renew --dry-run
 ```
 
-証明書発行前にDNSとTCP 80の到達性が必要です。本番のBrowser → DocumentServerは必ずHTTPSにします。
+OnlyOffice用Nginxと`OFFICE_DOMAIN`の証明書は`setup.sh --nginx`が管理します。ここではJin本体のNginxだけを設定します。証明書発行前にDNSとTCP 80の到達性が必要です。本番のBrowser → DocumentServerは必ずHTTPSにします。
 
-### 7. DB更新、権限、常駐プロセスを設定する
+### 5. DB更新、権限、常駐プロセスを設定する
 
 ```bash
 cd "$JIN_PATH"
@@ -728,9 +584,9 @@ systemctl is-active ds-converter ds-docservice
 sudo supervisorctl status "jin-broadcasts:*" "jin-notifications:*" "jin-previews:*" "jin-file-content:*" "jin-default:*" jin-reverb
 ```
 
-期待値はNginx、PHP-FPM、Supervisorが`enabled`、ds系serviceが`active`、Supervisor配下の全プロセスが`RUNNING`です。macOS開発ではOS再起動後に`container system start`、localhost用DNS mappingの再作成、`container start jin-onlyoffice`を実行します。
+期待値はNginx、PHP-FPM、Supervisorが`enabled`、ds系serviceが`active`、Supervisor配下の全プロセスが`RUNNING`です。macOS開発ではOS再起動後に`container system start`、localhost用DNS mappingの再作成、setupのログに表示されたcontainerの`container start`を実行します。
 
-### 8. 公開前に疎通と安全性を確認する
+### 6. 公開前に疎通と安全性を確認する
 
 ```bash
 curl -fsS "https://${JIN_DOMAIN}/up"
@@ -856,7 +712,7 @@ Jinの`ONLYOFFICE_MAX_FILE_SIZE_BYTES`は、`UPLOAD_MAX_FILE_MB`をbytes換算�
 }
 ```
 
-`/etc/onlyoffice/documentserver/local.json`にはJWTなどの既存設定があるため、ファイル全体を置き換えずこのkeyだけをmergeしてください。macOS開発では`container stop jin-onlyoffice`と`container start jin-onlyoffice`、Ubuntu公開環境ではds系serviceの再起動で反映します。Jin側の`ONLYOFFICE_DOCUMENT_SERVER_MAX_DOWNLOAD_BYTES=209715200`はproduction check用の宣言値であり、DocumentServerを自動変更しません。DocumentServer設定を変更したら、この値も同じ値へ更新してください。
+`/etc/onlyoffice/documentserver/local.json`にはJWTなどの既存設定があるため、ファイル全体を置き換えずこのkeyだけをmergeしてください。`setup.sh`がmacOS・Ubuntuのmergeと再起動を行い、JSONはatomicに更新します。Jin側の`ONLYOFFICE_DOCUMENT_SERVER_MAX_DOWNLOAD_BYTES`はDocumentServer設定と一致するようsetupが更新します。手動変更した場合は同じ値へ更新してから`php artisan app:production-check`を実行してください。
 
 APT版の再起動とログ確認:
 
@@ -873,7 +729,7 @@ sudo journalctl -u ds-converter -u ds-docservice -n 200 --no-pager
 - `JWT validation failed`: JinとDocumentServerのsecretが一致するか確認する。secretやJWT全文をログへ出さない。
 - Mixed Content: JinがHTTPSなら`ONLYOFFICE_PUBLIC_URL`もHTTPSにする。
 - 古い内容が出る: StorageをDB外から直接上書きせず、Jinの「新しいバージョンに差し替え」を使う。更新後に`php artisan optimize:clear`を実行する。
-- Viewer初期化失敗: macOS開発では`container logs jin-onlyoffice`、Ubuntu公開環境ではds系serviceと`/var/log/onlyoffice/documentserver/`を確認し、あわせてブラウザconsoleとNginx logを確認する。画面は認証済みダウンロードへフォールバックする。
+- Viewer初期化失敗: macOS開発ではsetupのログに表示されたcontainerの`container logs`、Ubuntu公開環境ではds系serviceと`/var/log/onlyoffice/documentserver/`を確認し、あわせてブラウザconsoleとNginx logを確認する。画面は認証済みダウンロードへフォールバックする。
 
 ### 公式資料
 

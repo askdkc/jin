@@ -15,6 +15,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+MAX_SAFE_INTEGER=9007199254740991
+MAX_SAFE_FILE_SIZE_MB=8589934591
 
 # ---------------------------------------------------------------- helpers --
 log()  { printf '\033[1;34m[jin-onlyoffice]\033[0m %s\n' "$*"; }
@@ -43,39 +45,104 @@ valid_local_hostname() {
 }
 
 valid_port() {
-    [[ "$1" =~ ^[0-9]+$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 ))
+    local value
+
+    [[ "$1" =~ ^[0-9]+$ ]] || return 1
+    value="$(normalize_decimal "$1")"
+    [[ "$value" != "0" ]] || return 1
+    [[ ${#value} -lt 5 ]] && return 0
+    [[ ${#value} -eq 5 ]] || return 1
+    [[ "$value" == "65535" || "$value" < "65535" ]]
+}
+
+normalize_decimal() {
+    local value="$1"
+
+    while [[ "$value" == 0* && "$value" != "0" ]]; do
+        value="${value#0}"
+    done
+
+    printf '%s' "$value"
 }
 
 valid_positive_integer() {
-    [[ "$1" =~ ^[0-9]+$ ]] && (( 10#$1 > 0 ))
+    local value
+
+    [[ "$1" =~ ^[0-9]+$ ]] || return 1
+    value="$(normalize_decimal "$1")"
+    [[ "$value" != "0" ]] || return 1
+    [[ ${#value} -lt ${#MAX_SAFE_INTEGER} ]] && return 0
+    [[ ${#value} -eq ${#MAX_SAFE_INTEGER} ]] || return 1
+    [[ "$value" == "$MAX_SAFE_INTEGER" || "$value" < "$MAX_SAFE_INTEGER" ]]
+}
+
+valid_upload_max_megabytes() {
+    local value
+
+    valid_positive_integer "$1" || return 1
+    value="$(normalize_decimal "$1")"
+    [[ ${#value} -lt ${#MAX_SAFE_FILE_SIZE_MB} ]] && return 0
+    [[ ${#value} -eq ${#MAX_SAFE_FILE_SIZE_MB} ]] || return 1
+    [[ "$value" == "$MAX_SAFE_FILE_SIZE_MB" || "$value" < "$MAX_SAFE_FILE_SIZE_MB" ]]
+}
+
+normalize_boolean() {
+    case "$1" in
+        true|1) printf 'true' ;;
+        false|0) printf 'false' ;;
+        *) return 1 ;;
+    esac
+}
+
+valid_resource_name() {
+    [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$ ]]
+}
+
+resource_fingerprint() {
+    if command -v shasum >/dev/null 2>&1; then
+        printf '%s\037%s' "$1" "$2" | shasum -a 256 | cut -c1-12
+    elif command -v sha256sum >/dev/null 2>&1; then
+        printf '%s\037%s' "$1" "$2" | sha256sum | cut -c1-12
+    else
+        printf '%s\037%s' "$1" "$2" | cksum | cut -d ' ' -f1
+    fi
 }
 
 url_host() {
-    local url="$1" authority
+    local url="$1" authority host
 
+    [[ "$url" =~ ^https?://[^[:space:]/?#]+/?$ ]] || return 1
     authority="${url#*://}"
-    authority="${authority%%/*}"
-    [[ "$authority" != *"@"* ]] || return 1
+    authority="${authority%/}"
+    [[ "$authority" != *"@"* && -n "$authority" ]] || return 1
 
     if [[ "$authority" == *":"* ]]; then
-        authority="${authority%%:*}"
+        [[ "$authority" =~ ^([^:]+):[0-9]+$ ]] || return 1
+        host="${BASH_REMATCH[1]}"
+    else
+        host="$authority"
     fi
 
-    [[ -n "$authority" ]] || return 1
-    printf '%s' "$authority"
+    [[ -n "$host" && "$host" != *":"* ]] || return 1
+    printf '%s' "$host"
 }
 
 valid_http_url() {
     local url="$1" authority host port
 
-    [[ "$url" =~ ^https?://[^[:space:]/?#]+(/[^[:space:]?#]*)?$ ]] || return 1
+    [[ "$url" =~ ^https?://[^[:space:]/?#]+/?$ ]] || return 1
     authority="${url#*://}"
-    authority="${authority%%/*}"
+    authority="${authority%/}"
+    [[ "$authority" != *"@"* && -n "$authority" ]] || return 1
     if [[ "$authority" == *":"* ]]; then
-        port="${authority##*:}"
+        [[ "$authority" =~ ^([^:]+):([0-9]+)$ ]] || return 1
+        host="${BASH_REMATCH[1]}"
+        port="${BASH_REMATCH[2]}"
         valid_port "$port" || return 1
+    else
+        host="$authority"
     fi
-    host="$(url_host "$url")" || return 1
+    [[ "$host" != *":"* && -n "$host" ]] || return 1
     valid_local_hostname "$host"
 }
 
@@ -117,6 +184,7 @@ wait_for_health() {
 
     for (( attempt = 1; attempt <= attempts; attempt++ )); do
         if response="$(curl -fsS --max-time 5 "${base_url}/healthcheck" 2>/dev/null)"; then
+            response="$(printf '%s' "$response" | tr -d '[:space:]')"
             case "$response" in
                 [Tt][Rr][Uu][Ee]|[Oo][Kk]) return 0 ;;
             esac
@@ -125,6 +193,26 @@ wait_for_health() {
     done
 
     return 1
+}
+
+wait_for_editor_api() {
+    local base_url="${1%/}" attempts="${2:-90}" delay="${3:-2}" attempt
+
+    for (( attempt = 1; attempt <= attempts; attempt++ )); do
+        if curl -fsS --max-time 10 "${base_url}/web-apps/apps/api/documents/api.js" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep "$delay"
+    done
+
+    return 1
+}
+
+wait_for_document_server() {
+    local base_url="$1" attempts="${2:-90}" delay="${3:-2}"
+
+    wait_for_health "$base_url" "$attempts" "$delay" \
+        && wait_for_editor_api "$base_url" "$attempts" "$delay"
 }
 
 onlyoffice_package_installed() {
@@ -162,14 +250,15 @@ validate_jwt_secret() {
         || die "ONLYOFFICE JWT secret cannot contain newlines"
     [[ "$JWT_SECRET" != *[[:space:]]* ]] \
         || die "ONLYOFFICE JWT secret cannot contain whitespace"
-    [[ "$JWT_SECRET" =~ ^[A-Za-z0-9._~+/=-]+$ ]] \
-        || die "ONLYOFFICE JWT secret must use letters, numbers, or base64-safe punctuation"
+    [[ "$JWT_SECRET" =~ ^[A-Za-z0-9._~+/#=-]+$ ]] \
+        || die "ONLYOFFICE JWT secret must use letters, numbers, or safe punctuation (._~+/#=-)"
 }
 
 resolve_app_values() {
     local app_url_value office_host app_host app_port app_scheme
     local env_public_url env_document_url env_internal_url env_secret env_instance
-    local env_max_file_size env_max_download
+    local env_max_file_size env_max_download env_upload_max_file_mb upload_max_file_bytes
+    local resource_checksum
 
     [[ -d "$APP_DIR" ]] || die "Application directory does not exist: $APP_DIR"
     APP_DIR="$(CDPATH= cd -- "$APP_DIR" && pwd -P)"
@@ -194,6 +283,7 @@ resolve_app_values() {
     env_instance="$(read_env ONLYOFFICE_INSTANCE_ID)"
     env_max_file_size="$(read_env ONLYOFFICE_MAX_FILE_SIZE_BYTES)"
     env_max_download="$(read_env ONLYOFFICE_DOCUMENT_SERVER_MAX_DOWNLOAD_BYTES)"
+    env_upload_max_file_mb="${UPLOAD_MAX_FILE_MB:-$(read_env UPLOAD_MAX_FILE_MB)}"
 
     [[ -n "$TARGET_DOCUMENT_SERVER_URL" ]] || TARGET_DOCUMENT_SERVER_URL="$env_document_url"
     if [[ -z "$TARGET_INTERNAL_URL" ]]; then
@@ -297,8 +387,38 @@ resolve_app_values() {
         || die "ONLYOFFICE_MAX_FILE_SIZE_BYTES must be a positive integer"
     valid_positive_integer "$TARGET_MAX_DOWNLOAD_BYTES" \
         || die "ONLYOFFICE_DOCUMENT_SERVER_MAX_DOWNLOAD_BYTES must be a positive integer"
-    (( 10#$TARGET_MAX_DOWNLOAD_BYTES >= 10#$MAX_FILE_SIZE_BYTES )) \
+    MAX_FILE_SIZE_BYTES="$(normalize_decimal "$MAX_FILE_SIZE_BYTES")"
+    TARGET_MAX_DOWNLOAD_BYTES="$(normalize_decimal "$TARGET_MAX_DOWNLOAD_BYTES")"
+    (( TARGET_MAX_DOWNLOAD_BYTES >= MAX_FILE_SIZE_BYTES )) \
         || die "DocumentServer maxDownloadBytes cannot be smaller than the application file limit"
+
+    env_upload_max_file_mb="${env_upload_max_file_mb:-200}"
+    valid_upload_max_megabytes "$env_upload_max_file_mb" \
+        || die "UPLOAD_MAX_FILE_MB must be a positive integer no larger than ${MAX_SAFE_FILE_SIZE_MB}"
+    env_upload_max_file_mb="$(normalize_decimal "$env_upload_max_file_mb")"
+    upload_max_file_bytes="$((env_upload_max_file_mb * 1024 * 1024))"
+    (( MAX_FILE_SIZE_BYTES <= upload_max_file_bytes )) \
+        || die "ONLYOFFICE_MAX_FILE_SIZE_BYTES must not exceed UPLOAD_MAX_FILE_MB"
+
+    resource_checksum="$(resource_fingerprint "$APP_DIR" "$INSTANCE_ID")"
+    [[ "$resource_checksum" =~ ^([0-9a-f]{12}|[0-9]+)$ ]] \
+        || die "Could not derive a stable Apple Container resource id"
+    MACOS_RESOURCE_ID="jin-${resource_checksum}"
+    ONLYOFFICE_CONTAINER_NAME="${ONLYOFFICE_CONTAINER_NAME:-jin-onlyoffice-${MACOS_RESOURCE_ID}}"
+    ONLYOFFICE_DATA_VOLUME="${ONLYOFFICE_DATA_VOLUME:-jin-onlyoffice-data-${MACOS_RESOURCE_ID}}"
+    ONLYOFFICE_LOGS_VOLUME="${ONLYOFFICE_LOGS_VOLUME:-jin-onlyoffice-logs-${MACOS_RESOURCE_ID}}"
+    ONLYOFFICE_LIB_VOLUME="${ONLYOFFICE_LIB_VOLUME:-jin-onlyoffice-lib-${MACOS_RESOURCE_ID}}"
+    ONLYOFFICE_DB_VOLUME="${ONLYOFFICE_DB_VOLUME:-jin-onlyoffice-db-${MACOS_RESOURCE_ID}}"
+    valid_resource_name "$ONLYOFFICE_CONTAINER_NAME" \
+        || die "Invalid ONLYOFFICE_CONTAINER_NAME: $ONLYOFFICE_CONTAINER_NAME"
+    valid_resource_name "$ONLYOFFICE_DATA_VOLUME" \
+        || die "Invalid ONLYOFFICE_DATA_VOLUME: $ONLYOFFICE_DATA_VOLUME"
+    valid_resource_name "$ONLYOFFICE_LOGS_VOLUME" \
+        || die "Invalid ONLYOFFICE_LOGS_VOLUME: $ONLYOFFICE_LOGS_VOLUME"
+    valid_resource_name "$ONLYOFFICE_LIB_VOLUME" \
+        || die "Invalid ONLYOFFICE_LIB_VOLUME: $ONLYOFFICE_LIB_VOLUME"
+    valid_resource_name "$ONLYOFFICE_DB_VOLUME" \
+        || die "Invalid ONLYOFFICE_DB_VOLUME: $ONLYOFFICE_DB_VOLUME"
 
     valid_http_url "$TARGET_DOCUMENT_SERVER_URL" \
         || die "Invalid ONLYOFFICE_DOCUMENT_SERVER_URL: $TARGET_DOCUMENT_SERVER_URL"
@@ -326,6 +446,8 @@ resolve_app_values() {
         valid_hostname "$OFFICE_DOMAIN" || die "Nginx setup requires a public OnlyOffice domain"
         [[ "$office_host" == "$OFFICE_DOMAIN" ]] \
             || die "ONLYOFFICE_PUBLIC_URL must use the Nginx domain $OFFICE_DOMAIN"
+        [[ $NO_SSL -eq 0 || "$TARGET_PUBLIC_URL" != https://* ]] \
+            || die "--no-ssl cannot configure an HTTP-only Nginx site for an HTTPS ONLYOFFICE_PUBLIC_URL"
         if [[ $NO_SSL -eq 0 && "$TARGET_PUBLIC_URL" != https://* ]]; then
             die "ONLYOFFICE_PUBLIC_URL must use HTTPS when Let's Encrypt is enabled"
         fi
@@ -335,12 +457,21 @@ resolve_app_values() {
 configure_app_env() {
     local allow_download allow_print allow_copy
 
-    allow_download="$(read_env ONLYOFFICE_ALLOW_DOWNLOAD)"
-    allow_print="$(read_env ONLYOFFICE_ALLOW_PRINT)"
-    allow_copy="$(read_env ONLYOFFICE_ALLOW_COPY)"
+    allow_download="${ONLYOFFICE_ALLOW_DOWNLOAD:-$(read_env ONLYOFFICE_ALLOW_DOWNLOAD)}"
+    allow_print="${ONLYOFFICE_ALLOW_PRINT:-$(read_env ONLYOFFICE_ALLOW_PRINT)}"
+    allow_copy="${ONLYOFFICE_ALLOW_COPY:-$(read_env ONLYOFFICE_ALLOW_COPY)}"
     allow_download="${allow_download:-false}"
     allow_print="${allow_print:-false}"
     allow_copy="${allow_copy:-true}"
+    if ! allow_download="$(normalize_boolean "$allow_download")"; then
+        die "ONLYOFFICE_ALLOW_DOWNLOAD must be true, false, 1, or 0"
+    fi
+    if ! allow_print="$(normalize_boolean "$allow_print")"; then
+        die "ONLYOFFICE_ALLOW_PRINT must be true, false, 1, or 0"
+    fi
+    if ! allow_copy="$(normalize_boolean "$allow_copy")"; then
+        die "ONLYOFFICE_ALLOW_COPY must be true, false, 1, or 0"
+    fi
 
     set_env ONLYOFFICE_ENABLED true
     set_env ONLYOFFICE_DOCUMENT_SERVER_URL "$TARGET_DOCUMENT_SERVER_URL"
@@ -378,7 +509,19 @@ config.FileConverter.converter = config.FileConverter.converter || {};
 const current = Number(config.FileConverter.converter.maxDownloadBytes) || 0;
 const actual = Math.max(current, requested);
 config.FileConverter.converter.maxDownloadBytes = actual;
-fs.writeFileSync(path, JSON.stringify(config, null, 2) + '\\n');
+const temporaryPath = path + '.jin-tmp-' + process.pid;
+
+try {
+    const mode = fs.statSync(path).mode & 0o7777;
+    fs.writeFileSync(temporaryPath, JSON.stringify(config, null, 2) + '\\n', { mode });
+    fs.chmodSync(temporaryPath, mode);
+    fs.renameSync(temporaryPath, path);
+} catch (error) {
+    if (fs.existsSync(temporaryPath)) {
+        fs.unlinkSync(temporaryPath);
+    }
+    throw error;
+}
 process.stdout.write(String(actual));
 NODE
 )"
@@ -388,8 +531,52 @@ NODE
     DOCUMENT_SERVER_MAX_DOWNLOAD_BYTES="$configured"
 }
 
+configure_macos_jwt() {
+    printf '%s' "$JWT_SECRET" | container exec -i "$ONLYOFFICE_CONTAINER_NAME" node -e '
+const fs = require("fs");
+
+const path = "/etc/onlyoffice/documentserver/local.json";
+const value = fs.readFileSync(0, "utf8");
+const config = JSON.parse(fs.readFileSync(path, "utf8"));
+const services = config.services = config.services || {};
+const service = services.CoAuthoring = services.CoAuthoring || {};
+const secret = service.secret = service.secret || {};
+
+for (const name of ["inbox", "outbox", "session"]) {
+    secret[name] = secret[name] || {};
+    secret[name].string = value;
+}
+
+const token = service.token = service.token || {};
+const enable = token.enable = token.enable || {};
+enable.browser = true;
+enable.request = enable.request || {};
+enable.request.inbox = true;
+enable.request.outbox = true;
+
+for (const name of ["inbox", "outbox"]) {
+    token[name] = token[name] || {};
+    token[name].header = "AuthorizationJwt";
+}
+
+const temporaryPath = path + ".jin-jwt-tmp-" + process.pid;
+
+try {
+    const mode = fs.statSync(path).mode & 0o7777;
+    fs.writeFileSync(temporaryPath, JSON.stringify(config, null, 2) + "\\n", { mode });
+    fs.chmodSync(temporaryPath, mode);
+    fs.renameSync(temporaryPath, path);
+} catch (error) {
+    if (fs.existsSync(temporaryPath)) {
+        fs.unlinkSync(temporaryPath);
+    }
+    throw error;
+}
+'
+}
+
 has_macos_managed_label() {
-    grep -Eq '"com\.jin\.setup"[[:space:]]*:[[:space:]]*"onlyoffice"'
+    grep -Eq "\"com\\.jin\\.setup\"[[:space:]]*:[[:space:]]*\"onlyoffice:${MACOS_RESOURCE_ID}\""
 }
 
 is_existing_onlyoffice_container() {
@@ -397,21 +584,40 @@ is_existing_onlyoffice_container() {
         | grep -Eq '"reference"[[:space:]]*:[[:space:]]*".*onlyoffice\\?/documentserver:'
 }
 
+macos_container_uses_volume() {
+    local volume_name="$1"
+
+    container inspect "$ONLYOFFICE_CONTAINER_NAME" 2>/dev/null \
+        | grep -Eq "\"name\"[[:space:]]*:[[:space:]]*\"${volume_name}\""
+}
+
+macos_container_matches_configuration() {
+    local inspection
+
+    inspection="$(container inspect "$ONLYOFFICE_CONTAINER_NAME" 2>/dev/null)" || return 1
+    grep -Fq "\"com.jin.image\"" <<< "$inspection" \
+        && grep -Fq "$ONLYOFFICE_IMAGE" <<< "$inspection" \
+        && grep -Fq "\"com.jin.port\"" <<< "$inspection" \
+        && grep -Fq "\"$ONLYOFFICE_PORT\"" <<< "$inspection"
+}
+
 ensure_macos_volume() {
     local volume_name="$1"
 
     if container volume inspect "$volume_name" >/dev/null 2>&1; then
         if ! container volume inspect "$volume_name" | has_macos_managed_label; then
-            is_existing_onlyoffice_container \
-                && container inspect "$ONLYOFFICE_CONTAINER_NAME" \
-                    | grep -Fq "\"name\" : \"${volume_name}\"" \
+            [[ "$ALLOW_LEGACY_MACOS_RESOURCES" -eq 1 ]] \
+                && is_existing_onlyoffice_container \
+                && macos_container_uses_volume "$volume_name" \
                 || die "Refusing to use unmanaged Apple Container volume: $volume_name"
-            warn "Reusing existing unlabelled volume: $volume_name"
+            warn "Reusing legacy Apple Container volume: $volume_name"
         fi
         return 0
     fi
 
-    container volume create --label "com.jin.setup=onlyoffice" "$volume_name" >/dev/null \
+    container volume create \
+        --label "com.jin.setup=onlyoffice:${MACOS_RESOURCE_ID}" \
+        "$volume_name" >/dev/null \
         || die "Could not create Apple Container volume: $volume_name"
 }
 
@@ -433,7 +639,7 @@ configure_macos_host_dns() {
 }
 
 setup_macos() {
-    local macos_major app_port
+    local macos_major app_port volume_name reuse_container=0
     local -a container_run_args
 
     [[ "$(uname -m)" == "arm64" ]] || die "Apple Container requires an Apple silicon Mac"
@@ -463,21 +669,46 @@ setup_macos() {
         || die "Could not pull $ONLYOFFICE_IMAGE"
 
     if container inspect "$ONLYOFFICE_CONTAINER_NAME" >/dev/null 2>&1; then
-        if ! container inspect "$ONLYOFFICE_CONTAINER_NAME" | has_macos_managed_label; then
+        for volume_name in \
+            "$ONLYOFFICE_DATA_VOLUME" \
+            "$ONLYOFFICE_LOGS_VOLUME" \
+            "$ONLYOFFICE_LIB_VOLUME" \
+            "$ONLYOFFICE_DB_VOLUME"; do
+            macos_container_uses_volume "$volume_name" \
+                || die "Refusing to use $ONLYOFFICE_CONTAINER_NAME with an unexpected volume: $volume_name"
+        done
+
+        if container inspect "$ONLYOFFICE_CONTAINER_NAME" | has_macos_managed_label; then
+            if [[ "$RECREATE_CONTAINER" -eq 0 ]] && macos_container_matches_configuration; then
+                reuse_container=1
+                log "Reusing existing OnlyOffice container: $ONLYOFFICE_CONTAINER_NAME"
+            elif [[ "$RECREATE_CONTAINER" -eq 0 ]]; then
+                die "Existing Apple Container configuration differs; pass --recreate-container only after confirming the volumes are backed up"
+            fi
+        else
             is_existing_onlyoffice_container \
+                && [[ "$ALLOW_LEGACY_MACOS_RESOURCES" -eq 1 ]] \
                 || die "Refusing to replace unmanaged Apple Container: $ONLYOFFICE_CONTAINER_NAME"
-            warn "Adopting existing OnlyOffice container created without a Jin label"
+            if [[ "$RECREATE_CONTAINER" -eq 0 ]]; then
+                reuse_container=1
+                warn "Reusing explicitly selected legacy OnlyOffice container without a Jin identity label"
+            fi
         fi
-        warn "Recreating $ONLYOFFICE_CONTAINER_NAME; named volumes will be preserved"
-        container stop --time 60 "$ONLYOFFICE_CONTAINER_NAME" >/dev/null 2>&1 || true
-        container delete "$ONLYOFFICE_CONTAINER_NAME" >/dev/null \
-            || die "Could not remove $ONLYOFFICE_CONTAINER_NAME"
+
+        if [[ "$reuse_container" -eq 0 ]]; then
+            warn "Recreating $ONLYOFFICE_CONTAINER_NAME; named volumes will be preserved"
+            container stop --time 60 "$ONLYOFFICE_CONTAINER_NAME" >/dev/null 2>&1 || true
+            container delete "$ONLYOFFICE_CONTAINER_NAME" >/dev/null \
+                || die "Could not remove $ONLYOFFICE_CONTAINER_NAME"
+        fi
     fi
 
     container_run_args=(
         --detach
         --name "$ONLYOFFICE_CONTAINER_NAME"
-        --label "com.jin.setup=onlyoffice"
+        --label "com.jin.setup=onlyoffice:${MACOS_RESOURCE_ID}"
+        --label "com.jin.image=${ONLYOFFICE_IMAGE}"
+        --label "com.jin.port=${ONLYOFFICE_PORT}"
         --arch arm64
         --cpus "$CONTAINER_CPUS"
         --memory "$CONTAINER_MEMORY"
@@ -497,24 +728,29 @@ setup_macos() {
         --entrypoint /bin/bash
     )
 
-    log "Starting OnlyOffice DocumentServer on 127.0.0.1:${ONLYOFFICE_PORT}..."
-    JWT_SECRET="$JWT_SECRET" container run \
-        "${container_run_args[@]}" \
-        "$ONLYOFFICE_IMAGE" \
-        -lc 'exec /bin/bash /app/ds/run-document-server.sh' \
-        >/dev/null \
-        || die "Could not start OnlyOffice DocumentServer"
+    if [[ "$reuse_container" -eq 1 ]]; then
+        container start "$ONLYOFFICE_CONTAINER_NAME" >/dev/null 2>&1 || true
+    else
+        log "Starting OnlyOffice DocumentServer on 127.0.0.1:${ONLYOFFICE_PORT}..."
+        JWT_SECRET="$JWT_SECRET" container run \
+            "${container_run_args[@]}" \
+            "$ONLYOFFICE_IMAGE" \
+            -lc 'exec /bin/bash /app/ds/run-document-server.sh' \
+            >/dev/null \
+            || die "Could not start OnlyOffice DocumentServer"
+    fi
 
-    if ! wait_for_health "http://127.0.0.1:${ONLYOFFICE_PORT}" 90 2; then
+    if ! wait_for_document_server "http://127.0.0.1:${ONLYOFFICE_PORT}" 90 2; then
         container logs "$ONLYOFFICE_CONTAINER_NAME" || true
         die "OnlyOffice health check failed on 127.0.0.1:${ONLYOFFICE_PORT}"
     fi
 
+    configure_macos_jwt
     configure_macos_local_json
     container stop --time 60 "$ONLYOFFICE_CONTAINER_NAME" >/dev/null
     container start "$ONLYOFFICE_CONTAINER_NAME" >/dev/null
 
-    wait_for_health "http://127.0.0.1:${ONLYOFFICE_PORT}" 90 2 \
+    wait_for_document_server "http://127.0.0.1:${ONLYOFFICE_PORT}" 90 2 \
         || die "OnlyOffice did not recover after configuration"
 
     configure_app_env
@@ -529,54 +765,73 @@ setup_macos() {
     app_port="${TARGET_INTERNAL_URL##*:}"
     [[ "$app_port" =~ ^[0-9]+$ ]] || app_port="8000"
     log "OnlyOffice is ready at http://127.0.0.1:${ONLYOFFICE_PORT}"
+    log "Container: $ONLYOFFICE_CONTAINER_NAME"
     log "Start Laravel with 'php artisan serve --host=127.0.0.1 --port=${app_port}' when needed"
 }
 
 configure_ubuntu_jwt() {
     local config_file="${1:-/etc/onlyoffice/documentserver/local.json}"
 
-    sudo env JIN_ONLYOFFICE_JWT_SECRET="$JWT_SECRET" python3 - "$config_file" <<'PY'
+    printf '%s' "$JWT_SECRET" | sudo python3 -c '
 import json
 import os
+import stat
 import sys
+import tempfile
 from pathlib import Path
 
 path = Path(sys.argv[1])
-config = json.loads(path.read_text())
-services = config.setdefault('services', {})
-coauthoring = services.setdefault('CoAuthoring', {})
-secret = coauthoring.setdefault('secret', {})
-value = os.environ['JIN_ONLYOFFICE_JWT_SECRET']
+config = json.loads(path.read_text(encoding="utf-8"))
+services = config.setdefault("services", {})
+coauthoring = services.setdefault("CoAuthoring", {})
+secret = coauthoring.setdefault("secret", {})
+value = sys.stdin.read()
 
-for name in ('inbox', 'outbox', 'session'):
-    secret.setdefault(name, {})['string'] = value
+for name in ("inbox", "outbox", "session"):
+    secret.setdefault(name, {})["string"] = value
 
-token = coauthoring.setdefault('token', {})
-enable = token.setdefault('enable', {})
-enable['browser'] = True
-request = enable.setdefault('request', {})
-request['inbox'] = True
-request['outbox'] = True
+token = coauthoring.setdefault("token", {})
+enable = token.setdefault("enable", {})
+enable["browser"] = True
+request = enable.setdefault("request", {})
+request["inbox"] = True
+request["outbox"] = True
 
-for name in ('inbox', 'outbox'):
-    token.setdefault(name, {})['header'] = 'AuthorizationJwt'
+for name in ("inbox", "outbox"):
+    token.setdefault(name, {})["header"] = "AuthorizationJwt"
 
-path.write_text(json.dumps(config, indent=2, ensure_ascii=False) + '\n')
-PY
+temporary = None
+try:
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix="." + path.name + ".", text=True)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        json.dump(config, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    os.chmod(temporary, stat.S_IMODE(path.stat().st_mode))
+    os.replace(temporary, path)
+except BaseException:
+    if temporary is not None:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+    raise
+' "$config_file"
 }
 
 configure_ubuntu_max_download_bytes() {
-    local config_file="/etc/onlyoffice/documentserver/local.json" configured
+    local config_file="${1:-/etc/onlyoffice/documentserver/local.json}" configured
 
     configured="$(sudo env JIN_ONLYOFFICE_MAX_DOWNLOAD_BYTES="$TARGET_MAX_DOWNLOAD_BYTES" \
         python3 - "$config_file" <<'PY'
 import json
 import os
+import stat
 import sys
+import tempfile
 from pathlib import Path
 
 path = Path(sys.argv[1])
-config = json.loads(path.read_text())
+config = json.loads(path.read_text(encoding='utf-8'))
 converter = config.setdefault('FileConverter', {}).setdefault('converter', {})
 requested = int(os.environ['JIN_ONLYOFFICE_MAX_DOWNLOAD_BYTES'])
 
@@ -587,7 +842,21 @@ except (TypeError, ValueError):
 
 configured = max(current, requested)
 converter['maxDownloadBytes'] = configured
-path.write_text(json.dumps(config, indent=2, ensure_ascii=False) + '\n')
+temporary = None
+try:
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix='.' + path.name + '.', text=True)
+    with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
+        json.dump(config, handle, indent=2, ensure_ascii=False)
+        handle.write('\n')
+    os.chmod(temporary, stat.S_IMODE(path.stat().st_mode))
+    os.replace(temporary, path)
+except BaseException:
+    if temporary is not None:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+    raise
 print(configured)
 PY
 )"
@@ -613,13 +882,27 @@ restart_ubuntu_onlyoffice() {
 }
 
 configure_nginx() {
-    local site_name="jin-onlyoffice"
+    local site_name="jin-onlyoffice-${MACOS_RESOURCE_ID}"
+    local legacy_site_name="jin-onlyoffice"
     local available="/etc/nginx/sites-available/${site_name}"
     local enabled="/etc/nginx/sites-enabled/${site_name}"
+    local legacy_available="/etc/nginx/sites-available/${legacy_site_name}"
     local preserve_tls=0
     local -a certbot_args
 
     sudo install -d -m 0755 /etc/nginx/sites-available /etc/nginx/sites-enabled
+
+    if [[ "$site_name" != "$legacy_site_name" ]] && sudo test -e "$legacy_available"; then
+        if sudo grep -q 'Managed by jin/setup.sh' "$legacy_available" \
+            && sudo grep -Fq "server_name ${OFFICE_DOMAIN};" "$legacy_available"; then
+            site_name="$legacy_site_name"
+            available="$legacy_available"
+            enabled="/etc/nginx/sites-enabled/${site_name}"
+            warn "Reusing the legacy managed nginx site for $OFFICE_DOMAIN"
+        elif sudo grep -Fq "server_name ${OFFICE_DOMAIN};" "$legacy_available"; then
+            die "Refusing to use an unmanaged nginx configuration for $OFFICE_DOMAIN: $legacy_available"
+        fi
+    fi
 
     if sudo test -e "$available" && ! sudo grep -q 'Managed by jin/setup.sh' "$available"; then
         die "Refusing to overwrite unmanaged nginx configuration: $available"
@@ -638,6 +921,7 @@ configure_nginx() {
     if [[ $preserve_tls -eq 0 ]]; then
         sudo tee "$available" >/dev/null <<NGINX
 # Managed by jin/setup.sh. Re-running setup updates this file.
+# Resource: ${MACOS_RESOURCE_ID}
 server {
     listen 80;
     listen [::]:80;
@@ -661,7 +945,14 @@ server {
 NGINX
     fi
 
-    sudo ln -sfn "$available" "$enabled"
+    if sudo test -L "$enabled"; then
+        [[ "$(sudo readlink "$enabled")" == "$available" ]] \
+            || die "Refusing to replace an unmanaged nginx enabled entry: $enabled"
+    elif sudo test -e "$enabled"; then
+        die "Refusing to replace an unmanaged nginx enabled entry: $enabled"
+    else
+        sudo ln -s "$available" "$enabled"
+    fi
     sudo nginx -t
     sudo systemctl enable --now nginx
     sudo systemctl reload nginx
@@ -790,7 +1081,7 @@ setup_ubuntu() {
     configure_ubuntu_max_download_bytes
     restart_ubuntu_onlyoffice
 
-    if ! wait_for_health "http://127.0.0.1:${ONLYOFFICE_PORT}" 90 2; then
+    if ! wait_for_document_server "http://127.0.0.1:${ONLYOFFICE_PORT}" 90 2; then
         sudo journalctl -u ds-converter -u ds-docservice --no-pager -n 80 || true
         die "OnlyOffice health check failed on 127.0.0.1:${ONLYOFFICE_PORT}"
     fi
@@ -826,7 +1117,8 @@ Options:
   --email <address>            Let's Encrypt registration / expiry mail
   --onlyoffice-port <port>     DocumentServer host port (default: 8081)
   --onlyoffice-image <image>   macOS container image (default: onlyoffice/documentserver:9.4.0.1)
-  --container-name <name>      macOS container name (default: jin-onlyoffice)
+  --container-name <name>      macOS container name (default: app-specific)
+  --recreate-container         Explicitly replace an existing macOS container
   --jwt-secret <secret>        JWT secret; prefer ONLYOFFICE_JWT_SECRET to avoid shell history
   --instance-id <id>           ONLYOFFICE instance id (default: jin-production/local)
   --app-internal-url <url>     DocumentServer-to-Jin URL
@@ -868,11 +1160,11 @@ TARGET_MAX_DOWNLOAD_BYTES="${ONLYOFFICE_DOCUMENT_SERVER_MAX_DOWNLOAD_BYTES:-}"
 ONLYOFFICE_PORT_FROM_ENV="${ONLYOFFICE_PORT:-${ONLYOFFICE_HOST_PORT:-}}"
 ONLYOFFICE_PORT="${ONLYOFFICE_PORT_FROM_ENV:-8081}"
 ONLYOFFICE_IMAGE="${ONLYOFFICE_IMAGE:-onlyoffice/documentserver:9.4.0.1}"
-ONLYOFFICE_CONTAINER_NAME="${ONLYOFFICE_CONTAINER_NAME:-jin-onlyoffice}"
-ONLYOFFICE_DATA_VOLUME="${ONLYOFFICE_DATA_VOLUME:-jin-onlyoffice-data}"
-ONLYOFFICE_LOGS_VOLUME="${ONLYOFFICE_LOGS_VOLUME:-jin-onlyoffice-logs}"
-ONLYOFFICE_LIB_VOLUME="${ONLYOFFICE_LIB_VOLUME:-jin-onlyoffice-lib}"
-ONLYOFFICE_DB_VOLUME="${ONLYOFFICE_DB_VOLUME:-jin-onlyoffice-db}"
+ONLYOFFICE_CONTAINER_NAME="${ONLYOFFICE_CONTAINER_NAME:-}"
+ONLYOFFICE_DATA_VOLUME="${ONLYOFFICE_DATA_VOLUME:-}"
+ONLYOFFICE_LOGS_VOLUME="${ONLYOFFICE_LOGS_VOLUME:-}"
+ONLYOFFICE_LIB_VOLUME="${ONLYOFFICE_LIB_VOLUME:-}"
+ONLYOFFICE_DB_VOLUME="${ONLYOFFICE_DB_VOLUME:-}"
 CONTAINER_CPUS="${ONLYOFFICE_CONTAINER_CPUS:-2}"
 CONTAINER_MEMORY="${ONLYOFFICE_CONTAINER_MEMORY:-4G}"
 CONTAINER_SHM_SIZE="${ONLYOFFICE_CONTAINER_SHM_SIZE:-2G}"
@@ -883,6 +1175,10 @@ NO_SSL=0
 PORT_EXPLICIT=0
 DOCUMENT_SERVER_URL_EXPLICIT=0
 PUBLIC_URL_EXPLICIT=0
+CONTAINER_NAME_EXPLICIT=0
+VOLUME_NAMES_EXPLICIT=0
+ALLOW_LEGACY_MACOS_RESOURCES=0
+RECREATE_CONTAINER=0
 
 if [[ -n "$ONLYOFFICE_PORT_FROM_ENV" ]]; then
     PORT_EXPLICIT=1
@@ -892,6 +1188,20 @@ if [[ -n "${ONLYOFFICE_DOCUMENT_SERVER_URL:-}" ]]; then
 fi
 if [[ -n "${ONLYOFFICE_PUBLIC_URL:-}" ]]; then
     PUBLIC_URL_EXPLICIT=1
+fi
+if [[ -n "${ONLYOFFICE_CONTAINER_NAME:-}" ]]; then
+    CONTAINER_NAME_EXPLICIT=1
+fi
+if [[ -n "${ONLYOFFICE_DATA_VOLUME:-}" || -n "${ONLYOFFICE_LOGS_VOLUME:-}" \
+    || -n "${ONLYOFFICE_LIB_VOLUME:-}" || -n "${ONLYOFFICE_DB_VOLUME:-}" ]]; then
+    VOLUME_NAMES_EXPLICIT=1
+fi
+if [[ -n "${ONLYOFFICE_RECREATE_CONTAINER:-}" ]]; then
+    case "$ONLYOFFICE_RECREATE_CONTAINER" in
+        true|1) RECREATE_CONTAINER=1 ;;
+        false|0) RECREATE_CONTAINER=0 ;;
+        *) die "ONLYOFFICE_RECREATE_CONTAINER must be true, false, 1, or 0" ;;
+    esac
 fi
 if [[ "${ONLYOFFICE_CONFIGURE_NGINX:-}" == "true" || "${ONLYOFFICE_CONFIGURE_NGINX:-}" == "1" ]]; then
     CONFIGURE_NGINX=1
@@ -914,7 +1224,7 @@ while [[ $# -gt 0 ]]; do
                 --email) EMAIL="$2" ;;
                 --onlyoffice-port) ONLYOFFICE_PORT="$2"; PORT_EXPLICIT=1 ;;
                 --onlyoffice-image) ONLYOFFICE_IMAGE="$2" ;;
-                --container-name) ONLYOFFICE_CONTAINER_NAME="$2" ;;
+                --container-name) ONLYOFFICE_CONTAINER_NAME="$2"; CONTAINER_NAME_EXPLICIT=1 ;;
                 --jwt-secret) JWT_SECRET="$2" ;;
                 --instance-id) INSTANCE_ID="$2" ;;
                 --app-internal-url) TARGET_INTERNAL_URL="$2" ;;
@@ -929,10 +1239,15 @@ while [[ $# -gt 0 ]]; do
         --nginx) CONFIGURE_NGINX=1; shift ;;
         --no-nginx) CONFIGURE_NGINX=0; shift ;;
         --no-ssl) NO_SSL=1; shift ;;
+        --recreate-container) RECREATE_CONTAINER=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "Unknown option: $1 (see --help)" ;;
     esac
 done
+
+if [[ "$CONTAINER_NAME_EXPLICIT" -eq 1 || "$VOLUME_NAMES_EXPLICIT" -eq 1 ]]; then
+    ALLOW_LEGACY_MACOS_RESOURCES=1
+fi
 
 case "$PLATFORM" in
     auto)

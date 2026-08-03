@@ -289,14 +289,18 @@ class ProjectController extends Controller
         $latestChatMessage = $recentChatMessages->last();
         $cardTablePreview = $project->cardTables()
             ->select(['id', 'project_id', 'name'])
-            ->with(['cardColumns' => fn (Relation $query) => $query
-                ->select(['id', 'card_table_id', 'name', 'position', 'is_triage', 'is_not_now', 'is_done'])
-                ->where('is_triage', false)
-                ->where('is_not_now', false)
-                ->where('is_done', false)
-                ->withCount('cards')
-                ->orderBy('position')
-                ->limit(5)])
+            ->with(['cardColumns' => function (Relation $relation): void {
+                /** @var Builder<CardColumn> $query */
+                $query = $relation->getQuery();
+
+                $query
+                    ->select(['id', 'card_table_id', 'name', 'position', 'is_triage', 'is_not_now', 'is_done'])
+                    ->nonSystem()
+                    ->withCount('cards')
+                    ->orderBy('position');
+
+                $relation->limit(5);
+            }])
             ->orderBy('position')
             ->first();
         $materialFolders = $project->materialFolders()

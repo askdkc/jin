@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Database\Factories\CardColumnFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -40,6 +41,23 @@ class CardColumn extends Model
         'is_not_now' => false,
         'is_done' => false,
     ];
+
+    /**
+     * @param  Builder<CardColumn>  $query
+     * @return Builder<CardColumn>
+     */
+    public function scopeNonSystem(Builder $query): Builder
+    {
+        return $query
+            ->where('is_triage', false)
+            ->where('is_not_now', false)
+            ->where('is_done', false);
+    }
+
+    public function isSystem(): bool
+    {
+        return $this->is_triage || $this->is_not_now || $this->is_done;
+    }
 
     /** @return BelongsTo<CardTable, $this> */
     public function cardTable(): BelongsTo

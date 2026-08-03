@@ -61,9 +61,7 @@ class CardTableController extends Controller
                     'notNow' => $this->columnData($notNow, $userId, false),
                     'done' => $this->columnData($done, $userId, false),
                     'columns' => $cardTable->cardColumns
-                        ->where('is_triage', false)
-                        ->where('is_not_now', false)
-                        ->where('is_done', false)
+                        ->reject(fn (CardColumn $cardColumn): bool => $cardColumn->isSystem())
                         ->map(fn (CardColumn $cardColumn): array => $this->columnData(
                             $cardColumn,
                             $userId,
@@ -217,9 +215,7 @@ class CardTableController extends Controller
         DB::transaction(function () use ($request, $cardTable): void {
             $cardTable = CardTable::query()->lockForUpdate()->findOrFail($cardTable->id);
             $lastPosition = $cardTable->cardColumns()
-                ->where('is_triage', false)
-                ->where('is_not_now', false)
-                ->where('is_done', false)
+                ->nonSystem()
                 ->max('position');
 
             $cardTable->cardColumns()->create([
@@ -250,14 +246,12 @@ class CardTableController extends Controller
         CardTable $cardTable,
         CardColumn $cardColumn,
     ): RedirectResponse {
-        abort_if($this->isSystemColumn($cardColumn), 404);
+        abort_if($cardColumn->isSystem(), 404);
 
         DB::transaction(function () use ($request, $cardTable, $cardColumn): void {
             $cardTable = CardTable::query()->lockForUpdate()->findOrFail($cardTable->id);
             $columnIds = $cardTable->cardColumns()
-                ->where('is_triage', false)
-                ->where('is_not_now', false)
-                ->where('is_done', false)
+                ->nonSystem()
                 ->orderBy('position')
                 ->orderBy('id')
                 ->lockForUpdate()
@@ -279,7 +273,7 @@ class CardTableController extends Controller
         CardColumn $cardColumn,
     ): RedirectResponse {
         Gate::authorize('view', $cardTable);
-        abort_if($this->isSystemColumn($cardColumn), 404);
+        abort_if($cardColumn->isSystem(), 404);
 
         $cardColumn->update(['is_collapsed' => ! $cardColumn->is_collapsed]);
 
@@ -293,7 +287,7 @@ class CardTableController extends Controller
         CardColumn $cardColumn,
     ): RedirectResponse {
         Gate::authorize('delete', $cardTable);
-        abort_if($this->isSystemColumn($cardColumn), 404);
+        abort_if($cardColumn->isSystem(), 404);
 
         DB::transaction(function () use ($cardColumn, $cardTable): void {
             $cardTable = CardTable::query()->lockForUpdate()->findOrFail($cardTable->id);
@@ -306,9 +300,7 @@ class CardTableController extends Controller
             $cardColumn->delete();
             $this->normalizeColumnPositions(
                 $cardTable->cardColumns()
-                    ->where('is_triage', false)
-                    ->where('is_not_now', false)
-                    ->where('is_done', false)
+                    ->nonSystem()
                     ->orderBy('position')
                     ->orderBy('id')
                     ->pluck('id'),
@@ -316,11 +308,6 @@ class CardTableController extends Controller
         }, attempts: 5);
 
         return to_route('projects.card-tables.index', [$currentTeam, $project]);
-    }
-
-    private function isSystemColumn(CardColumn $cardColumn): bool
-    {
-        return $cardColumn->is_triage || $cardColumn->is_not_now || $cardColumn->is_done;
     }
 
     public function storeCard(

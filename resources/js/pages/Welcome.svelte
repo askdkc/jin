@@ -160,7 +160,7 @@
                     >
                     <span
                         class="mt-1 block text-[10px] font-semibold tracking-[0.22em] text-amber-200/70"
-                        >TEAM WORKSPACE</span
+                        >{t('TEAM WORKSPACE')}</span
                     >
                 </span>
             </a>
@@ -303,7 +303,7 @@
                             ></span>
                             <span
                                 class="ml-2 text-[10px] font-semibold tracking-[0.16em] text-slate-500"
-                                >JIN / DASHBOARD</span
+                                >{t('JIN / DASHBOARD')}</span
                             >
                         </div>
                         <img
@@ -335,7 +335,7 @@
                     <p
                         class="text-xs font-bold tracking-[0.22em] text-[#d7b45d]"
                     >
-                        ONE PLACE, ONE TEAM
+                        {t('ONE PLACE, ONE TEAM')}
                     </p>
                     <h2
                         id="features-heading"
@@ -395,7 +395,7 @@
                         <p
                             class="text-xs font-bold tracking-[0.22em] text-[#d7b45d]"
                         >
-                            SIMPLE WORKFLOW
+                            {t('SIMPLE WORKFLOW')}
                         </p>
                         <h2
                             id="workflow-heading"
@@ -484,7 +484,7 @@
                     <p
                         class="text-xs font-bold tracking-[0.22em] text-[#d7b45d]"
                     >
-                        ACTUAL SCREENS
+                        {t('ACTUAL SCREENS')}
                     </p>
                     <h2
                         id="screens-heading"
@@ -589,7 +589,7 @@
                             <p
                                 class="text-xs font-bold tracking-[0.2em] text-[#d7b45d]"
                             >
-                                ACCESS CONTROL
+                                {t('ACCESS CONTROL')}
                             </p>
                             <h2
                                 id="access-heading"

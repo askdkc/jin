@@ -4,7 +4,7 @@
     export const layout = {
         breadcrumbs: [
             {
-                title: 'Notification settings',
+                translationKey: 'Notification settings',
                 href: edit(),
             },
         ],

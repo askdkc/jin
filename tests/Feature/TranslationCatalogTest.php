@@ -2,6 +2,8 @@
 
 use Illuminate\Support\Facades\File;
 
+const JIN_EXPECTED_TRANSLATION_KEY_COUNT = 1192;
+
 const JIN_TRANSLATION_CATALOG_LOCALES = [
     'fr',
     'de',
@@ -33,8 +35,11 @@ const JIN_REPRESENTATIVE_TRANSLATIONS = [
 test('additional JSON catalogs match the Japanese keys and placeholders', function () {
     $japanese = jinReadTranslationCatalog('ja');
 
+    $this->assertCount(JIN_EXPECTED_TRANSLATION_KEY_COUNT, $japanese);
+
     foreach ($japanese as $key => $translation) {
         $this->assertIsString($translation, "Non-string Japanese translation: {$key}");
+        $this->assertNotSame('', trim($translation), "Empty Japanese translation: {$key}");
         $this->assertSame(
             jinTranslationPlaceholders($key),
             jinTranslationPlaceholders($translation),
@@ -57,7 +62,7 @@ test('additional JSON catalogs match the Japanese keys and placeholders', functi
 
         foreach ($catalog as $key => $translation) {
             $this->assertIsString($translation, "Non-string translation for {$locale}: {$key}");
-            $this->assertNotSame('', $translation, "Empty translation for {$locale}: {$key}");
+            $this->assertNotSame('', trim($translation), "Empty translation for {$locale}: {$key}");
         }
 
         foreach ($japanese as $key => $translation) {
@@ -76,6 +81,23 @@ test('additional JSON catalogs match the Japanese keys and placeholders', functi
     }
 });
 
+test('JSON catalogs do not contain duplicate source keys', function () {
+    foreach (['ja', ...JIN_TRANSLATION_CATALOG_LOCALES] as $locale) {
+        $source = File::get(lang_path($locale.'.json'));
+        preg_match_all('/^\\s*("(?:\\\\.|[^"\\\\])*")\\s*:/m', $source, $matches);
+        $keys = array_map(
+            fn (string $encoded): string => json_decode($encoded, true, 512, JSON_THROW_ON_ERROR),
+            $matches[1] ?? [],
+        );
+        $duplicates = array_keys(array_filter(
+            array_count_values($keys),
+            fn (int $count): bool => $count > 1,
+        ));
+
+        $this->assertSame([], $duplicates, "Duplicate JSON keys for {$locale}.");
+    }
+});
+
 test('translation keys are complete phrases without whitespace-dependent fragments', function () {
     foreach (JIN_SUPPORTED_TRANSLATION_LOCALES as $locale) {
         if ($locale === 'en') {
@@ -83,7 +105,7 @@ test('translation keys are complete phrases without whitespace-dependent fragmen
         }
 
         foreach (array_keys(jinReadTranslationCatalog($locale)) as $key) {
-            $this->assertSame(ltrim($key), $key, "Leading whitespace translation key for {$locale}: {$key}");
+            $this->assertSame(trim($key), $key, "Whitespace-dependent translation key for {$locale}: {$key}");
         }
     }
 });
@@ -116,6 +138,7 @@ test('framework language files cover the complete Laravel 13 catalogs', function
 
             foreach ($baseline as $path => $message) {
                 $this->assertArrayHasKey($path, $catalog, "Missing {$group}.{$path} for {$locale}.");
+                $this->assertNotSame('', trim($catalog[$path]), "Empty {$group}.{$path} for {$locale}.");
                 $this->assertSame(
                     [],
                     array_values(array_diff(
@@ -149,6 +172,15 @@ test('representative framework messages resolve to translated strings for every 
     app()->setLocale((string) config('app.locale', 'en'));
 });
 
+test('Simplified Chinese accepted and declined rules describe their actual conditions', function () {
+    $validation = require lang_path('zh_CN/validation.php');
+
+    expect($validation['required_if_accepted'])
+        ->toBe('当 :other 为接受状态时，:attribute 不能为空。')
+        ->and($validation['required_if_declined'])
+        ->toBe('当 :other 为拒绝状态时，:attribute 不能为空。');
+});
+
 test('literal frontend translation keys exist in the Japanese catalog', function () {
     $japanese = jinReadTranslationCatalog('ja');
 
@@ -180,6 +212,47 @@ test('literal frontend translation keys exist in the Japanese catalog', function
                 );
             }
         }
+    }
+});
+
+test('dynamic frontend option labels exist in the Japanese catalog', function () {
+    $japanese = jinReadTranslationCatalog('ja');
+
+    foreach (File::allFiles(resource_path('js')) as $file) {
+        if (! in_array($file->getExtension(), ['svelte', 'ts', 'js'], true)) {
+            continue;
+        }
+
+        $source = (string) file_get_contents($file->getPathname());
+        preg_match_all(
+            "/\\b(?:label|title|translationKey|confirmMessage)\\s*:\\s*'((?:\\\\.|[^'\\\\])*)'/s",
+            $source,
+            $matches,
+        );
+
+        foreach ($matches[1] ?? [] as $match) {
+            $key = stripcslashes($match);
+
+            if ($key === '') {
+                continue;
+            }
+
+            $this->assertArrayHasKey(
+                $key,
+                $japanese,
+                "Missing dynamic option translation key [{$key}] in {$file->getRelativePathname()}.",
+            );
+        }
+    }
+});
+
+test('dynamic activity translation keys exist in the Japanese catalog', function () {
+    $japanese = jinReadTranslationCatalog('ja');
+    $source = File::get(resource_path('js/lib/activity.ts'));
+    preg_match_all("/^\\s*'[^']+':\\s*'([^']+)'/m", $source, $matches);
+
+    foreach ($matches[1] ?? [] as $key) {
+        $this->assertArrayHasKey($key, $japanese, "Missing dynamic activity translation key [{$key}].");
     }
 });
 

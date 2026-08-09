@@ -5,7 +5,7 @@
     export const layout = (props: { currentTeam: Team }) => ({
         breadcrumbs: [
             {
-                title: 'Projects',
+                translationKey: 'Projects',
                 href: index(props.currentTeam.slug),
             },
         ],

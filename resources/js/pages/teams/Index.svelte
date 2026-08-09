@@ -4,7 +4,7 @@
     export const layout = {
         breadcrumbs: [
             {
-                title: 'Teams',
+                translationKey: 'Teams',
                 href: index(),
             },
         ],

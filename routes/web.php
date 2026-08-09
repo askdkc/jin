@@ -51,11 +51,14 @@ Route::get('language/{locale}', function (Request $request, string $locale) {
     $request->session()->put('locale', $locale);
 
     $previousUrl = $request->headers->get('referer');
-    $sameOrigin = is_string($previousUrl)
+    $hasSafeSyntax = is_string($previousUrl)
+        && $previousUrl !== ''
+        && ! str_contains($previousUrl, '\\');
+    $sameOrigin = $hasSafeSyntax
         && str_starts_with($previousUrl, '/')
         && ! str_starts_with($previousUrl, '//');
 
-    if (is_string($previousUrl) && $previousUrl !== '' && ! $sameOrigin) {
+    if ($hasSafeSyntax && ! $sameOrigin) {
         try {
             $parts = parse_url($previousUrl);
         } catch (ValueError) {

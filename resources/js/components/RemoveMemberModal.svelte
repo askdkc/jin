@@ -45,8 +45,9 @@
         <div class="space-y-3">
             <DialogTitle>{t('Remove team member')}</DialogTitle>
             <DialogDescription>
-                Are you sure you want to remove <strong>{member?.name}</strong> from
-                this team?
+                {t('Are you sure you want to remove :member from this team?', {
+                    member: member?.name ?? '',
+                })}
             </DialogDescription>
         </div>
 

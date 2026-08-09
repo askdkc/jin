@@ -1,4 +1,5 @@
 import { page } from '@inertiajs/svelte';
+import { interpolateTranslation } from '@/lib/translation';
 
 export function currentLocale(): string | undefined {
     const locale = page.props.locale;
@@ -23,11 +24,7 @@ export function t(
         string
     >;
 
-    let translated = translations[key] ?? key;
+    const translated = translations[key] ?? key;
 
-    for (const [name, value] of Object.entries(replacements)) {
-        translated = translated.replaceAll(`:${name}`, value);
-    }
-
-    return translated;
+    return interpolateTranslation(translated, replacements);
 }

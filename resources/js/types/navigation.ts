@@ -5,10 +5,19 @@ type NavIcon =
     | Component<{ class?: string }>
     | (new (...args: any[]) => SvelteComponent<{ class?: string }>);
 
-export type BreadcrumbItem = {
-    title: string;
+type BreadcrumbBase = {
     href: NonNullable<LinkComponentBaseProps['href']>;
 };
+
+export type BreadcrumbItem =
+    | (BreadcrumbBase & {
+          translationKey: string;
+          title?: never;
+      })
+    | (BreadcrumbBase & {
+          title: string;
+          translationKey?: never;
+      });
 
 export type NavItem = {
     title: string;

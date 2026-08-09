@@ -5,7 +5,7 @@
     export const layout = (props: { currentTeam: Team }) => ({
         breadcrumbs: [
             {
-                title: 'Activity',
+                translationKey: 'Activity',
                 href: ActivityController(props.currentTeam.slug),
             },
         ],

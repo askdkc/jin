@@ -95,12 +95,12 @@ class Team extends Model
     }
 
     /** @return array<string, string> */
-    public static function localizedDefaultMenuNames(): array
+    public static function localizedDefaultMenuNames(?string $locale = null): array
     {
         $localizedDefaults = [];
 
         foreach (self::DEFAULT_MENU_TRANSLATION_KEYS as $menu => $translationKey) {
-            $localizedDefaults[$menu] = (string) __($translationKey);
+            $localizedDefaults[$menu] = (string) __($translationKey, [], $locale);
         }
 
         return $localizedDefaults;
@@ -112,9 +112,11 @@ class Team extends Model
         $localizedDefaults = self::localizedDefaultMenuNames();
         $overrides = array_intersect_key($this->menu_names ?? [], $localizedDefaults);
 
-        foreach (self::DEFAULT_MENU_NAMES as $menu => $legacyDefault) {
-            if (($overrides[$menu] ?? null) === $legacyDefault) {
-                unset($overrides[$menu]);
+        if (array_diff_key(self::DEFAULT_MENU_NAMES, $overrides) === []) {
+            foreach (self::DEFAULT_MENU_NAMES as $menu => $legacyDefault) {
+                if (($overrides[$menu] ?? null) === $legacyDefault) {
+                    unset($overrides[$menu]);
+                }
             }
         }
 

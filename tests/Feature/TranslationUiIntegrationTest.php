@@ -31,6 +31,41 @@ test('the language switcher is mounted on guest and authenticated surfaces', fun
     }
 });
 
+test('team confirmation dialogs translate complete placeholder-aware phrases', function () {
+    $phrases = [
+        'components/LeaveTeamModal.svelte' => 'Are you sure you want to leave :team?',
+        'components/RemoveMemberModal.svelte' => 'Are you sure you want to remove :member from this team?',
+        'components/CancelInvitationModal.svelte' => 'Are you sure you want to cancel the invitation for :email?',
+        'components/DeleteTeamModal.svelte' => [
+            'This action cannot be undone. This will permanently delete the team ":team".',
+            'Type ":team" to confirm',
+        ],
+    ];
+
+    foreach ($phrases as $relativePath => $expected) {
+        $source = File::get(resource_path('js/'.$relativePath));
+
+        foreach ((array) $expected as $phrase) {
+            $this->assertStringContainsString("'{$phrase}'", $source);
+        }
+    }
+});
+
+test('the landing page routes decorative labels through the runtime translator', function () {
+    $welcome = File::get(resource_path('js/pages/Welcome.svelte'));
+
+    foreach ([
+        'TEAM WORKSPACE',
+        'JIN / DASHBOARD',
+        'ONE PLACE, ONE TEAM',
+        'SIMPLE WORKFLOW',
+        'ACTUAL SCREENS',
+        'ACCESS CONTROL',
+    ] as $label) {
+        $this->assertStringContainsString("t('{$label}')", $welcome);
+    }
+});
+
 test('shared Inertia types expose locale metadata and translations', function () {
     $types = (string) file_get_contents(resource_path('js/types/global.d.ts'));
 
@@ -54,6 +89,26 @@ test('the landing page routes fixed copy through the runtime translator', functi
         $withoutBrand,
         'Welcome.svelte still contains fixed Japanese copy outside the JIN brand.',
     );
+});
+
+test('invitation and navigation copy uses complete translations', function () {
+    $header = File::get(resource_path('js/components/AppHeader.svelte'));
+    $pending = File::get(resource_path('js/components/PendingInvitationsModal.svelte'));
+    $alert = File::get(resource_path('js/components/TeamInvitationAlert.svelte'));
+
+    expect($header)->toContain("t('Home')");
+    expect($pending)->toContain("t(':inviter invited you to join this team.'");
+    expect($alert)
+        ->toContain("'Log in to join the \":team\" team.'")
+        ->toContain("'Register to join the \":team\" team.'");
+});
+
+test('breadcrumb accessibility label follows the selected locale', function () {
+    $source = File::get(resource_path('js/components/ui/breadcrumb/Breadcrumb.svelte'));
+
+    expect($source)
+        ->toContain("t('Breadcrumb')")
+        ->not->toContain('aria-label="breadcrumb"');
 });
 
 test('frontend locale-sensitive formatting does not hard-code Japanese', function () {
@@ -89,7 +144,10 @@ test('emoji picker localization follows the selected locale', function () {
         ->not->toContain('emoji-picker-element-data/ja/cldr-native/data.json?url')
         ->not->toContain("locale: 'ja'")
         ->toContain('loadEmojiPickerLocalization')
-        ->toContain('currentLocale()');
+        ->toContain('currentLocale()')
+        ->toContain('destroyed ||')
+        ->toContain('loadId !== pickerLoadId')
+        ->toContain('destroyed = true');
 });
 
 test('persistent workspace navigation derives locale-sensitive values reactively', function () {
@@ -98,6 +156,50 @@ test('persistent workspace navigation derives locale-sensitive values reactively
     expect($source)
         ->toContain('const eventFormatter = $derived(')
         ->toContain('const dockItems = $derived([');
+});
+
+test('breadcrumbs distinguish translation keys from literal model values', function () {
+    $component = File::get(resource_path('js/components/Breadcrumbs.svelte'));
+    $types = File::get(resource_path('js/types/navigation.ts'));
+
+    expect($component)
+        ->toContain("typeof item.translationKey === 'string'")
+        ->toContain('? t(item.translationKey)')
+        ->and($types)->toContain('translationKey: string;');
+
+    foreach (File::allFiles(resource_path('js/pages')) as $file) {
+        if ($file->getExtension() !== 'svelte') {
+            continue;
+        }
+
+        $source = $file->getContents();
+        if (! preg_match('/<script module[^>]*>(.*?)<\/script>/s', $source, $module)
+            || ! str_contains($module[1], 'breadcrumbs')) {
+            continue;
+        }
+
+        expect($module[1], $file->getRelativePathname())
+            ->not->toMatch('/\btitle:\s*[\'\"]/');
+    }
+});
+
+test('stored file previews reject obsolete asynchronous continuations', function () {
+    $source = File::get(resource_path('js/components/StoredFilePreviewDialog.svelte'));
+
+    expect($source)
+        ->toContain('let previewLoadId = 0;')
+        ->toContain('previewLoadId += 1;')
+        ->toContain('const loadId = previewLoadId;')
+        ->toContain('const isCurrentLoad = (): boolean =>')
+        ->toContain('if (!isCurrentLoad())');
+});
+
+test('team menu forms submit the locale that produced their defaults', function () {
+    $source = File::get(resource_path('js/pages/teams/Edit.svelte'));
+
+    expect($source)
+        ->toContain('name="menu_names_locale"')
+        ->toContain("value={page.props.locale ?? 'en'}");
 });
 
 test('stored project defaults use translation catalogs instead of fixed Japanese', function () {

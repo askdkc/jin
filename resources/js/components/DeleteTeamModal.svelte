@@ -51,16 +51,19 @@
                     <div class="space-y-3">
                         <DialogTitle>{t('Are you sure?')}</DialogTitle>
                         <DialogDescription>
-                            This action cannot be undone. This will permanently
-                            delete the team
-                            <strong>"{team.name}"</strong>.
+                            {t(
+                                'This action cannot be undone. This will permanently delete the team ":team".',
+                                { team: team.name },
+                            )}
                         </DialogDescription>
                     </div>
 
                     <div class="space-y-4 py-4">
                         <div class="grid gap-2">
                             <Label for="confirmation-name">
-                                Type <strong>"{team.name}"</strong> to confirm
+                                {t('Type ":team" to confirm', {
+                                    team: team.name,
+                                })}
                             </Label>
                             <Input
                                 id="confirmation-name"

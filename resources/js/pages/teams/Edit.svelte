@@ -5,7 +5,7 @@
     export const layout = (props: { team: Team }) => ({
         breadcrumbs: [
             {
-                title: 'Teams',
+                translationKey: 'Teams',
                 href: index(),
             },
             {
@@ -17,7 +17,7 @@
 </script>
 
 <script lang="ts">
-    import { Form, Link, router } from '@inertiajs/svelte';
+    import { Form, Link, page, router } from '@inertiajs/svelte';
     import ChevronDown from 'lucide-svelte/icons/chevron-down';
     import Mail from 'lucide-svelte/icons/mail';
     import UserPlus from 'lucide-svelte/icons/user-plus';
@@ -201,6 +201,11 @@
 
             <Form {...update.form(team.slug)} class="space-y-6">
                 {#snippet children({ errors, processing })}
+                    <input
+                        type="hidden"
+                        name="menu_names_locale"
+                        value={page.props.locale ?? 'en'}
+                    />
                     <div class="grid gap-2">
                         <Label for="name">{t('Team name')}</Label>
                         <Input

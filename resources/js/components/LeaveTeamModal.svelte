@@ -43,7 +43,9 @@
         <div class="space-y-3">
             <DialogTitle>{t('Leave team')}</DialogTitle>
             <DialogDescription>
-                Are you sure you want to leave <strong>{team?.name}</strong>?
+                {t('Are you sure you want to leave :team?', {
+                    team: team?.name ?? '',
+                })}
             </DialogDescription>
         </div>
 

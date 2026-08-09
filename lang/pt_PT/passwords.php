@@ -1,9 +1,9 @@
 <?php
 
 return [
-    'reset' => 'A palavra-passe foi redefinida!',
-    'sent' => 'O lembrete para a palavra-passe foi enviado!',
-    'throttled' => 'Por favor aguarde, antes de tentar novamente.',
-    'token' => 'Este código de recuperação da palavra-passe é inválido.',
-    'user' => 'Não existe nenhum utilizador com o e-mail indicado.',
+    'reset' => 'A sua palavra-passe foi reposta.',
+    'sent' => 'Enviámos por e-mail a ligação para repor a sua palavra-passe.',
+    'throttled' => 'Aguarde antes de tentar novamente.',
+    'token' => 'Este token de reposição da palavra-passe é inválido.',
+    'user' => 'Não encontrámos um utilizador com esse endereço de e-mail.',
 ];

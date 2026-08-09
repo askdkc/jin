@@ -5,7 +5,7 @@
     export const layout = (props: { currentTeam: Team }) => ({
         breadcrumbs: [
             {
-                title: 'Notifications',
+                translationKey: 'Notifications',
                 href: NotificationController.index(props.currentTeam.slug),
             },
         ],

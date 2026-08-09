@@ -1175,5 +1175,20 @@
     "You left the team \":name\"": "你已退出团队“:name”",
     "You've been invited to join :teamName": "你已受邀加入 :teamName",
     "Project-wide conversation": "项目全局对话",
-    "Unsorted to-dos": "未分类待办"
+    "Unsorted to-dos": "未分类待办",
+    "added an external link": "添加了外部链接",
+    "Select a role": "选择角色",
+    "TEAM WORKSPACE": "团队工作区",
+    "JIN / DASHBOARD": "JIN / 仪表板",
+    "ONE PLACE, ONE TEAM": "一个空间，一个团队",
+    "SIMPLE WORKFLOW": "简单工作流",
+    "ACTUAL SCREENS": "实际界面",
+    "ACCESS CONTROL": "访问控制",
+    "Are you sure you want to leave :team?": "确定要离开“:team”团队吗？",
+    "Are you sure you want to remove :member from this team?": "确定要从团队中移除 :member 吗？",
+    "This action cannot be undone. This will permanently delete the team \":team\".": "此操作无法撤销。“:team”团队将被永久删除。",
+    "Type \":team\" to confirm": "输入“:team”以确认",
+    "Home": "首页",
+    "Log in to join the \":team\" team.": "登录以加入“:team”团队。",
+    "Register to join the \":team\" team.": "注册以加入“:team”团队。"
 }

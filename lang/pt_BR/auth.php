@@ -1,7 +1,7 @@
 <?php
 
 return [
-    'failed' => 'As credenciais indicadas não coincidem com as registradas no sistema.',
-    'password' => 'A senha está errada.',
-    'throttle' => 'O número limite de tentativas de login foi atingido. Por favor, tente novamente dentro de :seconds segundos.',
+    'failed' => 'Essas credenciais não correspondem aos nossos registros.',
+    'password' => 'A senha informada está incorreta.',
+    'throttle' => 'Muitas tentativas de login. Tente novamente em :seconds segundos.',
 ];

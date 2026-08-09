@@ -79,6 +79,7 @@
     let previewHost = $state<HTMLDivElement>();
     let previewRequest: AbortController | null = null;
     let previewViewer: FileViewerElement | null = null;
+    let previewLoadId = 0;
     let nativePreviewUrl = $state<string | null>(null);
     let nativePreviewKind = $state<'image' | 'video' | null>(null);
     let loadedFileId: number | null = null;
@@ -87,6 +88,7 @@
     );
 
     const cleanupPreview = (): void => {
+        previewLoadId += 1;
         previewRequest?.abort();
         previewRequest = null;
         previewViewer?.destroy();
@@ -120,8 +122,19 @@
 
         const request = new AbortController();
         previewRequest = request;
+        const loadId = previewLoadId;
+        const isCurrentLoad = (): boolean =>
+            loadId === previewLoadId &&
+            previewRequest === request &&
+            !request.signal.aborted &&
+            open &&
+            file?.id === previewFile.id;
 
         await tick();
+
+        if (!isCurrentLoad()) {
+            return;
+        }
 
         try {
             const response = await fetch(
@@ -142,6 +155,11 @@
             }
 
             const blob = await response.blob();
+
+            if (!isCurrentLoad()) {
+                return;
+            }
+
             const extension = previewFile.name
                 .split('.')
                 .pop()
@@ -161,7 +179,7 @@
                 return;
             }
 
-            if (request.signal.aborted || !previewHost) {
+            if (!isCurrentLoad() || !previewHost) {
                 return;
             }
 
@@ -169,6 +187,10 @@
                 import('@file-viewer/web'),
                 import('@file-viewer/preset-office'),
             ]);
+
+            if (!isCurrentLoad() || !previewHost) {
+                return;
+            }
 
             web.defineFileViewerElement();
 
@@ -218,9 +240,10 @@
             // eslint-disable-next-line svelte/no-dom-manipulating
             previewHost.replaceChildren(viewer);
         } catch (error) {
-            if (!(
-                error instanceof DOMException && error.name === 'AbortError'
-            )) {
+            if (
+                isCurrentLoad() &&
+                !(error instanceof DOMException && error.name === 'AbortError')
+            ) {
                 previewError = t('Could not load this file preview.');
             }
         } finally {

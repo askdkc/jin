@@ -152,6 +152,7 @@ test('saving translated defaults does not turn them into custom menu names', fun
             ->patch(route('teams.update', $team), [
                 'name' => $team->name,
                 'menu_names' => $frenchDefaults,
+                'menu_names_locale' => 'fr',
             ])
             ->assertRedirect(route('teams.edit', $team));
 
@@ -160,6 +161,67 @@ test('saving translated defaults does not turn them into custom menu names', fun
         expect($team->fresh()->menuNames())
             ->projectHome->toBe('本陣')
             ->todos->toBe('任務');
+    } finally {
+        app()->setLocale($originalLocale);
+    }
+});
+
+test('stale translated defaults from another locale do not become custom menu names', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create(['name' => 'JIN']);
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $originalLocale = app()->getLocale();
+
+    try {
+        app()->setLocale('fr');
+        $frenchDefaults = $team->menuNames();
+        app()->setLocale('de');
+
+        $this->withSession(['locale' => 'de'])
+            ->actingAs($owner)
+            ->patch(route('teams.update', $team), [
+                'name' => $team->name,
+                'menu_names' => $frenchDefaults,
+                'menu_names_locale' => 'fr',
+            ])
+            ->assertRedirect(route('teams.edit', $team));
+
+        app()->setLocale('ja');
+        $team = $team->fresh();
+
+        expect($team->menu_names)->toBeNull()
+            ->and($team->menuNames())
+            ->projectHome->toBe('本陣')
+            ->todos->toBe('任務');
+    } finally {
+        app()->setLocale($originalLocale);
+    }
+});
+
+test('literal custom menu names are preserved even when they equal another locale default', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create(['name' => 'JIN']);
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $originalLocale = app()->getLocale();
+
+    try {
+        app()->setLocale('fr');
+        $menuNames = $team->menuNames();
+        $menuNames['todos'] = '任務';
+
+        $this->withSession(['locale' => 'fr'])
+            ->actingAs($owner)
+            ->patch(route('teams.update', $team), [
+                'name' => $team->name,
+                'menu_names' => $menuNames,
+                'menu_names_locale' => 'fr',
+            ])
+            ->assertRedirect(route('teams.edit', $team));
+
+        $team = $team->fresh();
+
+        expect($team->menu_names)->toBe(['todos' => '任務'])
+            ->and($team->menuNames())->todos->toBe('任務');
     } finally {
         app()->setLocale($originalLocale);
     }

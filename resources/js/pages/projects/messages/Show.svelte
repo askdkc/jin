@@ -14,7 +14,7 @@
                 href: show([props.currentTeam.slug, props.project.id]),
             },
             {
-                title: 'Message board',
+                translationKey: 'Message board',
                 href: MessageBoardController.index([
                     props.currentTeam.slug,
                     props.project.id,

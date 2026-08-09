@@ -25,6 +25,8 @@
     let pickerHost = $state<HTMLDivElement>();
     let picker = $state<Picker>();
     let pickerLocale = $state<string>();
+    let pickerLoadId = 0;
+    let destroyed = false;
     let emojiSubmitButton = $state<HTMLButtonElement>();
 
     const selectEmoji = async (event: EmojiClickEvent): Promise<void> => {
@@ -50,6 +52,7 @@
 
     const toggleFullPicker = async (): Promise<void> => {
         moreOpen = !moreOpen;
+        const loadId = ++pickerLoadId;
 
         if (!moreOpen) {
             return;
@@ -69,7 +72,12 @@
                 loadEmojiPickerLocalization(requestedLocale),
             ]);
 
-            if (!moreOpen || requestedLocale !== (currentLocale() ?? 'en')) {
+            if (
+                destroyed ||
+                loadId !== pickerLoadId ||
+                !moreOpen ||
+                requestedLocale !== (currentLocale() ?? 'en')
+            ) {
                 return;
             }
 
@@ -103,9 +111,14 @@
         picker?.classList.toggle('dark', resolvedAppearance() === 'dark');
     });
 
-    onDestroy(destroyPicker);
+    onDestroy(() => {
+        destroyed = true;
+        pickerLoadId += 1;
+        destroyPicker();
+    });
 
     const close = (): void => {
+        pickerLoadId += 1;
         menuOpen = false;
         moreOpen = false;
         customOpen = false;

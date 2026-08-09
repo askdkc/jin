@@ -35,11 +35,11 @@
     let inviteRole = $state<RoleOption['value']>('member');
     let formKey = $state(0);
 
+    const selectedRoleLabel = $derived(
+        availableRoles.find((role) => role.value === inviteRole)?.label,
+    );
     const inviteRoleLabel = $derived(
-        t(
-            availableRoles.find((role) => role.value === inviteRole)?.label ??
-                'Select a role',
-        ),
+        selectedRoleLabel ? t(selectedRoleLabel) : t('Select a role'),
     );
 
     function handleOpenChange(value: boolean) {

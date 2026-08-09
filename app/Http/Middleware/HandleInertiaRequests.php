@@ -56,15 +56,29 @@ class HandleInertiaRequests extends Middleware
         $locale = app()->getLocale();
         $localeNames = config('app.supported_locales', []);
         $localeNames = is_array($localeNames) ? $localeNames : [];
+        $translationOnceKey = "translations.{$locale}";
+        $translationCatalog = Inertia::once(fn (): array => $this->loadCatalog($locale))
+            ->as($translationOnceKey)
+            ->until(now()->addDay());
+        $cachedOnceKeys = array_map(
+            trim(...),
+            explode(',', (string) $request->header('X-Inertia-Except-Once-Props', '')),
+        );
+
+        foreach ($cachedOnceKeys as $cachedOnceKey) {
+            if (str_starts_with($cachedOnceKey, 'translations.') && $cachedOnceKey !== $translationOnceKey) {
+                $translationCatalog->fresh();
+
+                break;
+            }
+        }
 
         return [
             ...parent::share($request),
             'locale' => $locale,
             'locales' => array_keys($localeNames),
             'localeNames' => $localeNames,
-            'translations' => Inertia::once(fn (): array => $this->loadCatalog($locale))
-                ->as("translations.{$locale}")
-                ->until(now()->addDay()),
+            'translations' => $translationCatalog,
             'name' => config('app.name'),
             'auth' => [
                 'user' => $user,

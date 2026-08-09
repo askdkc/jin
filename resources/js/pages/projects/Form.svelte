@@ -8,11 +8,11 @@
     }) => ({
         breadcrumbs: [
             {
-                title: 'Projects',
+                translationKey: 'Projects',
                 href: index(props.currentTeam.slug),
             },
             {
-                title: props.project ? 'Edit project' : 'New project',
+                translationKey: props.project ? 'Edit project' : 'New project',
                 href: props.project
                     ? edit([props.currentTeam.slug, props.project.id])
                     : '#',

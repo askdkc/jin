@@ -14,14 +14,14 @@
                 href: show([props.currentTeam.slug, props.project.id]),
             },
             {
-                title: 'Materials',
+                translationKey: 'Materials',
                 href: ProjectMaterialController.index([
                     props.currentTeam.slug,
                     props.project.id,
                 ]),
             },
             {
-                title: 'Documents',
+                translationKey: 'Documents',
                 href: ProjectDocumentController.index([
                     props.currentTeam.slug,
                     props.project.id,

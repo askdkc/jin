@@ -1175,5 +1175,20 @@
     "You left the team \":name\"": "팀 \":name\"에서 나갔습니다.",
     "You've been invited to join :teamName": ":teamName 팀에 초대되었습니다.",
     "Project-wide conversation": "프로젝트 전체 대화",
-    "Unsorted to-dos": "분류되지 않은 할 일"
+    "Unsorted to-dos": "분류되지 않은 할 일",
+    "added an external link": "외부 링크를 추가했습니다",
+    "Select a role": "역할 선택",
+    "TEAM WORKSPACE": "팀 워크스페이스",
+    "JIN / DASHBOARD": "JIN / 대시보드",
+    "ONE PLACE, ONE TEAM": "하나의 공간, 하나의 팀",
+    "SIMPLE WORKFLOW": "간단한 워크플로",
+    "ACTUAL SCREENS": "실제 화면",
+    "ACCESS CONTROL": "접근 제어",
+    "Are you sure you want to leave :team?": ":team 팀에서 나가시겠습니까?",
+    "Are you sure you want to remove :member from this team?": ":member 님을 이 팀에서 제거하시겠습니까?",
+    "This action cannot be undone. This will permanently delete the team \":team\".": "이 작업은 되돌릴 수 없습니다. “:team” 팀이 영구적으로 삭제됩니다.",
+    "Type \":team\" to confirm": "확인하려면 팀 이름 “:team”을 입력하세요.",
+    "Home": "홈",
+    "Log in to join the \":team\" team.": "“:team” 팀에 참여하려면 로그인하세요.",
+    "Register to join the \":team\" team.": "“:team” 팀에 참여하려면 회원가입하세요."
 }

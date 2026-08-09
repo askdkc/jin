@@ -15,7 +15,7 @@
                 href: showProject([props.currentTeam.slug, props.project.id]),
             },
             {
-                title: 'Materials',
+                translationKey: 'Materials',
                 href: ProjectMaterialController.index([
                     props.currentTeam.slug,
                     props.project.id,

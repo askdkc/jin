@@ -1,6 +1,7 @@
 <script lang="ts">
     import Info from 'lucide-svelte/icons/info';
     import { Alert, AlertDescription } from '@/components/ui/alert';
+    import { t } from '@/lib/i18n';
     import type { TeamInvitationContext } from '@/types';
 
     let {
@@ -10,6 +11,16 @@
         invitation: TeamInvitationContext;
         action: 'Log in' | 'Register';
     } = $props();
+
+    const invitationMessage = $derived(
+        action === 'Log in'
+            ? t('Log in to join the ":team" team.', {
+                  team: invitation.teamName,
+              })
+            : t('Register to join the ":team" team.', {
+                  team: invitation.teamName,
+              }),
+    );
 </script>
 
 <div data-test="team-invitation-alert">
@@ -18,7 +29,7 @@
     >
         <Info class="size-4" />
         <AlertDescription class="text-blue-900 dark:text-blue-100">
-            {action} to join the "{invitation.teamName}" team.
+            {invitationMessage}
         </AlertDescription>
     </Alert>
 </div>

@@ -81,8 +81,9 @@
                         <div class="space-y-1">
                             <p class="font-medium">{invitation.team.name}</p>
                             <p class="text-sm text-muted-foreground">
-                                {invitation.inviterName} invited you to join this
-                                team.
+                                {t(':inviter invited you to join this team.', {
+                                    inviter: invitation.inviterName,
+                                })}
                             </p>
                         </div>
 

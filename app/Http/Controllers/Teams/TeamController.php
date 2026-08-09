@@ -115,9 +115,10 @@ class TeamController extends Controller
         $attributes = $request->safe()->only(['name', 'menu_names']);
 
         if (isset($attributes['menu_names']) && is_array($attributes['menu_names'])) {
+            $defaultsLocale = (string) $request->validated('menu_names_locale', app()->getLocale());
             $overrides = array_diff_assoc(
                 $attributes['menu_names'],
-                Team::localizedDefaultMenuNames(),
+                Team::localizedDefaultMenuNames($defaultsLocale),
             );
             $attributes['menu_names'] = $overrides === [] ? null : $overrides;
         }

@@ -16,6 +16,11 @@
     }: {
         breadcrumbs: BreadcrumbItemType[];
     } = $props();
+
+    const breadcrumbLabel = (item: BreadcrumbItemType): string =>
+        typeof item.translationKey === 'string'
+            ? t(item.translationKey)
+            : (item.title ?? '');
 </script>
 
 <Breadcrumb>
@@ -23,12 +28,12 @@
         {#each breadcrumbs as item, index (item.href)}
             <BreadcrumbItem>
                 {#if index === breadcrumbs.length - 1}
-                    <BreadcrumbPage>{t(item.title)}</BreadcrumbPage>
+                    <BreadcrumbPage>{breadcrumbLabel(item)}</BreadcrumbPage>
                 {:else}
                     <BreadcrumbLink asChild>
                         {#snippet children(props)}
                             <Link href={item.href} class={props.class}>
-                                {t(item.title)}
+                                {breadcrumbLabel(item)}
                             </Link>
                         {/snippet}
                     </BreadcrumbLink>

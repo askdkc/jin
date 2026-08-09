@@ -557,6 +557,27 @@ BASH, base_path('setup.sh'), $configFile);
     }
 });
 
+it('documents the supported one-shot Ubuntu deployment contract', function () {
+    $readme = (string) file_get_contents(base_path('README.md'));
+
+    expect($readme)
+        ->toContain('Ubuntu Server 24.04 / 26.04')
+        ->toContain('PostgreSQL 16')
+        ->toContain('PostgreSQL 18')
+        ->toContain('Node.js 24')
+        ->toContain('/onlyoffice')
+        ->toContain('./setup.sh')
+        ->not->toContain('PostgreSQL 17', 'setup_22.x', 'OFFICE_DOMAIN', '--office-domain');
+});
+
+it('keeps the ONLYOFFICE CI readiness counter defined', function () {
+    $testsWorkflow = (string) file_get_contents(base_path('.github/workflows/tests.yml'));
+
+    expect($testsWorkflow)
+        ->toContain('for attempt in {1..30}; do')
+        ->not->toContain('for _ in {1..30}; do');
+});
+
 it('requires PHP 8.5 across Composer CI and deployment documentation', function () {
     $composer = json_decode((string) file_get_contents(base_path('composer.json')), true, flags: JSON_THROW_ON_ERROR);
     $testsWorkflow = (string) file_get_contents(base_path('.github/workflows/tests.yml'));

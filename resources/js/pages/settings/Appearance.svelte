@@ -4,7 +4,7 @@
     export const layout = {
         breadcrumbs: [
             {
-                title: 'Appearance settings',
+                translationKey: 'Appearance settings',
                 href: editAppearance(),
             },
         ],

@@ -1175,5 +1175,20 @@
     "You left the team \":name\"": "Saiu da equipa \":name\"",
     "You've been invited to join :teamName": "Foi convidado/a a juntar-se a :teamName",
     "Project-wide conversation": "Conversa de todo o projeto",
-    "Unsorted to-dos": "Tarefas não classificadas"
+    "Unsorted to-dos": "Tarefas não classificadas",
+    "added an external link": "adicionou uma ligação externa",
+    "Select a role": "Selecionar uma função",
+    "TEAM WORKSPACE": "ESPAÇO DA EQUIPA",
+    "JIN / DASHBOARD": "JIN / PAINEL",
+    "ONE PLACE, ONE TEAM": "UM LUGAR, UMA EQUIPA",
+    "SIMPLE WORKFLOW": "FLUXO DE TRABALHO SIMPLES",
+    "ACTUAL SCREENS": "ECRÃS REAIS",
+    "ACCESS CONTROL": "CONTROLO DE ACESSO",
+    "Are you sure you want to leave :team?": "Tem a certeza de que pretende sair da equipa «:team»?",
+    "Are you sure you want to remove :member from this team?": "Tem a certeza de que pretende remover :member desta equipa?",
+    "This action cannot be undone. This will permanently delete the team \":team\".": "Esta ação não pode ser anulada. A equipa «:team» será eliminada permanentemente.",
+    "Type \":team\" to confirm": "Introduza «:team» para confirmar.",
+    "Home": "Início",
+    "Log in to join the \":team\" team.": "Inicie sessão para aderir à equipa «:team».",
+    "Register to join the \":team\" team.": "Registe-se para aderir à equipa «:team»."
 }

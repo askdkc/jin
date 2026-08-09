@@ -18,6 +18,31 @@ test('language switching never redirects to a cross origin referrer', function (
         ->assertSessionHas('locale', 'fr');
 });
 
+test('language switching returns to a same-origin absolute referrer', function () {
+    $referer = url('/dashboard?filter=mine#recent');
+
+    $this->withHeader('Referer', $referer)
+        ->get(route('language.switch', 'de'))
+        ->assertRedirect($referer)
+        ->assertSessionHas('locale', 'de');
+});
+
+test('language switching returns to a safe relative referrer', function () {
+    $this->withHeader('Referer', '/dashboard?filter=mine#recent')
+        ->get(route('language.switch', 'es'))
+        ->assertRedirect('/dashboard?filter=mine#recent')
+        ->assertSessionHas('locale', 'es');
+});
+
+test('language switching rejects ambiguous network-path referrers', function (string $referer) {
+    $this->withHeader('Referer', $referer)
+        ->get(route('language.switch', 'fr'))
+        ->assertRedirect(route('home'));
+})->with([
+    'scheme relative' => '//attacker.example/phish',
+    'backslash relative' => '/\\attacker.example/phish',
+]);
+
 test('an unsupported locale is rejected without changing the session', function () {
     $this->withSession(['locale' => 'ja'])
         ->get(route('language.switch', 'not-supported'))
@@ -73,7 +98,30 @@ test('the home Inertia response shares locale names and the selected catalog', f
         );
 });
 
-test('the locale-scoped once prop omits only the catalog already loaded by the client', function () {
+test('translation catalogs are not reused across locale changes by once headers', function () {
+    $headers = [
+        'X-Inertia' => 'true',
+        'X-Inertia-Version' => (string) app(HandleInertiaRequests::class)->version(request()),
+        'X-Inertia-Except-Once-Props' => 'translations.fr,translations.de',
+    ];
+
+    $this->withSession(['locale' => 'fr'])
+        ->withHeaders($headers)
+        ->get(route('home'))
+        ->assertOk()
+        ->assertHeader('X-Inertia', 'true')
+        ->assertJsonPath('props.locale', 'fr')
+        ->assertJsonPath('props.translations.Log in', 'Se connecter');
+
+    $this->withSession(['locale' => 'de'])
+        ->withHeaders($headers)
+        ->get(route('home'))
+        ->assertOk()
+        ->assertJsonPath('props.locale', 'de')
+        ->assertJsonPath('props.translations.Log in', 'Anmelden');
+});
+
+test('same-locale navigation still reuses an Inertia once translation catalog', function () {
     $headers = [
         'X-Inertia' => 'true',
         'X-Inertia-Version' => (string) app(HandleInertiaRequests::class)->version(request()),
@@ -87,13 +135,6 @@ test('the locale-scoped once prop omits only the catalog already loaded by the c
         ->assertHeader('X-Inertia', 'true')
         ->assertJsonPath('props.locale', 'fr')
         ->assertJsonMissingPath('props.translations');
-
-    $this->withSession(['locale' => 'de'])
-        ->withHeaders($headers)
-        ->get(route('home'))
-        ->assertOk()
-        ->assertJsonPath('props.locale', 'de')
-        ->assertJsonPath('props.translations.Log in', 'Anmelden');
 });
 
 test('the root html lang maps underscore locales to hyphenated language tags', function () {

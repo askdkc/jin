@@ -6,6 +6,7 @@ use App\Models\Team;
 use App\Rules\TeamName;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class SaveTeamRequest extends FormRequest
 {
@@ -19,6 +20,7 @@ class SaveTeamRequest extends FormRequest
         $rules = [
             'name' => ['required', 'string', 'max:255', new TeamName],
             'menu_names' => ['sometimes', 'array:'.implode(',', array_keys(Team::DEFAULT_MENU_NAMES))],
+            'menu_names_locale' => ['sometimes', 'string', Rule::in(array_keys((array) config('app.supported_locales', [])))],
         ];
 
         foreach (array_keys(Team::DEFAULT_MENU_NAMES) as $key) {

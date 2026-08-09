@@ -1175,5 +1175,20 @@
     "You left the team \":name\"": "您已離開「:name」團隊",
     "You've been invited to join :teamName": "您已受邀加入 :teamName",
     "Project-wide conversation": "專案全域對話",
-    "Unsorted to-dos": "未分類待辦事項"
+    "Unsorted to-dos": "未分類待辦事項",
+    "added an external link": "新增了外部連結",
+    "Select a role": "選擇角色",
+    "TEAM WORKSPACE": "團隊工作區",
+    "JIN / DASHBOARD": "JIN / 儀表板",
+    "ONE PLACE, ONE TEAM": "一個空間，一個團隊",
+    "SIMPLE WORKFLOW": "簡單工作流程",
+    "ACTUAL SCREENS": "實際畫面",
+    "ACCESS CONTROL": "存取控制",
+    "Are you sure you want to leave :team?": "確定要離開「:team」團隊嗎？",
+    "Are you sure you want to remove :member from this team?": "確定要從團隊中移除 :member 嗎？",
+    "This action cannot be undone. This will permanently delete the team \":team\".": "此操作無法復原。「:team」團隊將被永久刪除。",
+    "Type \":team\" to confirm": "輸入「:team」以確認",
+    "Home": "首頁",
+    "Log in to join the \":team\" team.": "登入以加入「:team」團隊。",
+    "Register to join the \":team\" team.": "註冊以加入「:team」團隊。"
 }

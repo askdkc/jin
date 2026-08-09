@@ -45,9 +45,12 @@
         <div class="space-y-3">
             <DialogTitle>{t('Cancel invitation')}</DialogTitle>
             <DialogDescription class="mb-3">
-                Are you sure you want to cancel the invitation for <strong
-                    >{invitation?.email}</strong
-                >?
+                {t(
+                    'Are you sure you want to cancel the invitation for :email?',
+                    {
+                        email: invitation?.email ?? '',
+                    },
+                )}
             </DialogDescription>
         </div>
 

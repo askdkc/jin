@@ -1,7 +1,7 @@
 <?php
 
 return [
-    'failed' => 'Diese Kombination aus Zugangsdaten wurde nicht in unserer Datenbank gefunden.',
-    'password' => 'Das Passwort ist falsch.',
-    'throttle' => 'Zu viele Loginversuche. Versuchen Sie es bitte in :seconds Sekunden nochmal.',
+    'failed' => 'Diese Anmeldedaten stimmen mit keinem Benutzerkonto überein.',
+    'password' => 'Das angegebene Passwort ist falsch.',
+    'throttle' => 'Zu viele Anmeldeversuche. Bitte versuchen Sie es in :seconds Sekunden erneut.',
 ];

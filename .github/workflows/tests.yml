@@ -229,7 +229,7 @@ jobs:
 
       - name: Wait for ONLYOFFICE
         run: |
-          for attempt in {1..120}; do
+          for _ in {1..120}; do
             if curl -fsS --connect-timeout 2 --max-time 3 \
               http://127.0.0.1:8081/healthcheck 2>/dev/null |
               tr -d '[:space:]' |
@@ -259,7 +259,7 @@ jobs:
           app_pid=$!
           trap 'kill "$app_pid" 2>/dev/null || true' EXIT
 
-          for attempt in {1..30}; do
+          for _ in {1..30}; do
             if curl -fsS --connect-timeout 2 --max-time 3 \
               http://127.0.0.1:8000/up >/dev/null; then
               break

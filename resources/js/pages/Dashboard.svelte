@@ -41,7 +41,7 @@
     import { Badge } from '@/components/ui/badge';
     import { Button } from '@/components/ui/button';
     import { activityAction, activityHref } from '@/lib/activity';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import { getInitials } from '@/lib/initials';
     import { create, show } from '@/routes/projects';
     import type {
@@ -138,12 +138,12 @@
 
         return groups.filter((group) => group.projects.length > 0);
     });
-    const dateFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const dateFormatter = new Intl.DateTimeFormat(currentLocale(), {
         timeZone: 'Asia/Tokyo',
         month: 'numeric',
         day: 'numeric',
     });
-    const activityDateFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const activityDateFormatter = new Intl.DateTimeFormat(currentLocale(), {
         timeZone: 'Asia/Tokyo',
         month: 'short',
         day: 'numeric',

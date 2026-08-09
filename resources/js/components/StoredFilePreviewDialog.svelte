@@ -52,7 +52,8 @@
         DialogDescription,
         DialogTitle,
     } from '@/components/ui/dialog';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
+    import { fileViewerLocale } from '@/lib/locale-integrations';
     import type { ProjectTool, Team } from '@/types';
 
     type PreviewFile = {
@@ -179,7 +180,7 @@
             viewer.options = {
                 preset: preset.default,
                 rendererMode: 'replace',
-                locale: 'ja-JP',
+                locale: fileViewerLocale(currentLocale()),
                 theme: 'system',
                 styleIsolation: 'shadow',
                 pdf: {

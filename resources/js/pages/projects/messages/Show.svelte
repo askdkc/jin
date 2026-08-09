@@ -78,7 +78,7 @@
     import RichTextEditor from '@/components/RichTextEditor.svelte';
     import { Avatar, AvatarFallback } from '@/components/ui/avatar';
     import { Button } from '@/components/ui/button';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import { getInitials } from '@/lib/initials';
     import type { MessageBoardPost, TodoMember } from '@/types';
 
@@ -99,7 +99,7 @@
     );
     const formatDate = (value: string | null): string =>
         value
-            ? new Intl.DateTimeFormat('ja-JP', {
+            ? new Intl.DateTimeFormat(currentLocale(), {
                   dateStyle: 'medium',
                   timeStyle: 'short',
               }).format(new Date(value))

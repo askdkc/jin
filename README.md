@@ -26,7 +26,7 @@ Basecampの情報設計を参考にしていますが、名称、画面、配色
 
 | 領域           | 使用技術                                              |
 | -------------- | ----------------------------------------------------- |
-| Backend        | PHP 8.4, 8.5 / Laravel 13                             |
+| Backend        | PHP 8.5 / Laravel 13                                  |
 | Frontend       | Inertia.js 3 / Svelte 5 / TypeScript                  |
 | UI             | Tailwind CSS 4                                        |
 | Rich text      | Trix 2 / Symfony HTML Sanitizer 8                     |
@@ -39,7 +39,7 @@ Basecampの情報設計を参考にしていますが、名称、画面、配色
 
 ## 動作環境
 
-- PHP 8.4.1以上とComposer 2
+- PHP 8.5以上とComposer 2
 - Node.js 22.12以上とnpm
 - PHPのSQLite拡張（ローカル開発と通常テストで使用）
 - Python 3.10以上とMarkItDown（ファイル本文検索を有効にする場合）
@@ -59,7 +59,7 @@ Basecampの情報設計を参考にしていますが、名称、画面、配色
 xcode-select --install
 brew install php composer node@22 python imagemagick poppler
 
-export PATH="$(brew --prefix php@8.4)/bin:$(brew --prefix node@22)/bin:$PATH"
+export PATH="$(brew --prefix php)/bin:$(brew --prefix node@22)/bin:$PATH"
 php --version
 composer --version
 node --version
@@ -225,7 +225,7 @@ export ONLYOFFICE_HOST_PORT=8081
 
 SMTPの接続情報は後述する`.env`のパラメータへ設定します。STARTTLSを使う587番portは通常`MAIL_SCHEME=smtp`、implicit TLSを使う465番portは`MAIL_SCHEME=smtps`です。providerの指定を優先してください。localhost SMTPはこの手順では使用しません。
 
-### 1. OSパッケージ、PostgreSQL 17、PGroonga、PHP 8.4、Node.js 22、Composerを入れる
+### 1. OSパッケージ、PostgreSQL 17、PGroonga、PHP 8.5、Node.js 22、Composerを入れる
 
 ```bash
 sudo apt update
@@ -245,8 +245,8 @@ sudo apt update
 
 sudo apt install -y \
   postgresql-17 postgresql-server-dev-17 redis-server libgroonga-dev libmsgpack-dev \
-  php8.4-cli php8.4-fpm php8.4-pgsql php8.4-redis php8.4-mbstring php8.4-xml \
-  php8.4-curl php8.4-zip php8.4-intl php8.4-bcmath php8.4-gd
+  php8.5-cli php8.5-fpm php8.5-pgsql php8.5-redis php8.5-mbstring php8.5-xml \
+  php8.5-curl php8.5-zip php8.5-intl php8.5-bcmath php8.5-gd
 
 PGROONGA_VERSION=4.0.6
 wget "https://packages.groonga.org/source/pgroonga/pgroonga-${PGROONGA_VERSION}.tar.gz"
@@ -275,7 +275,7 @@ node --version
 composer --version
 ```
 
-Ubuntu 26.04ではUbuntu公式repositoryのversion付きPHP 8.4 packageを使います。PostgreSQL 17はPGDG、GroongaはUbuntu 26.04（`resolute`）向けのGroonga公式APT repositoryを使います。PGroongaの公式Ubuntu install手順は現時点で26.04用packageを掲載していないため、Jinが使用する4.0.6をsourceからbuildし、PostgreSQL 17へinstallします。Node.jsは[NodeSourceの22.x setup script](https://github.com/nodesource/distributions/blob/master/scripts/deb/setup_22.x)、Composerは[公式のchecksum検証手順](https://getcomposer.org/doc/faqs/how-to-install-composer-programmatically.md)に合わせています。
+Ubuntu 26.04ではUbuntu公式repositoryのversion付きPHP 8.5 packageを使います。PostgreSQL 17はPGDG、GroongaはUbuntu 26.04（`resolute`）向けのGroonga公式APT repositoryを使います。PGroongaの公式Ubuntu install手順は現時点で26.04用packageを掲載していないため、Jinが使用する4.0.6をsourceからbuildし、PostgreSQL 17へinstallします。Node.jsは[NodeSourceの22.x setup script](https://github.com/nodesource/distributions/blob/master/scripts/deb/setup_22.x)、Composerは[公式のchecksum検証手順](https://getcomposer.org/doc/faqs/how-to-install-composer-programmatically.md)に合わせています。
 
 ### 2. Jinを配置する
 
@@ -379,7 +379,7 @@ OnlyOfficeのservice状態、設定値、healthcheck、editor APIは直前の`se
 Jinは1ファイル200 MiB、1回のリクエスト合計500 MiB、最大20ファイルに制限します。multipart overheadを含めて受信できるよう、PHP-FPMとNginxのリクエスト上限は512 MiBに設定します。
 
 ```bash
-sudo tee /etc/php/8.4/fpm/conf.d/99-jin-uploads.ini >/dev/null <<'EOF'
+sudo tee /etc/php/8.5/fpm/conf.d/99-jin-uploads.ini >/dev/null <<'EOF'
 upload_max_filesize=200M
 post_max_size=512M
 max_file_uploads=20
@@ -387,7 +387,7 @@ max_input_time=3600
 max_execution_time=3600
 EOF
 
-sudo systemctl reload php8.4-fpm
+sudo systemctl reload php8.5-fpm
 ```
 
 Jin本体とDocumentServerを別originで公開します。
@@ -412,7 +412,7 @@ server {
 
     location ~ \.php$ {
         include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/run/php/php8.4-fpm.sock;
+        fastcgi_pass unix:/run/php/php8.5-fpm.sock;
         fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
         fastcgi_read_timeout 3600s;
     }
@@ -498,7 +498,7 @@ redirect_stderr=true
 stdout_logfile=${JIN_PATH}/storage/logs/reverb.log
 EOF
 
-sudo systemctl enable --now nginx php8.4-fpm postgresql redis-server supervisor
+sudo systemctl enable --now nginx php8.5-fpm postgresql redis-server supervisor
 sudo supervisorctl reread
 sudo supervisorctl update
 sudo supervisorctl status "jin-queue:*" jin-reverb
@@ -516,9 +516,9 @@ sudo chmod 644 /etc/cron.d/jin-scheduler
 systemdでNginx、PHP-FPM、Supervisorを有効化します。SupervisorがQueueとReverbを起動し、ONLYOFFICEのAPTパッケージがds系serviceを管理します。独自のsystemd unitは作りません。
 
 ```bash
-sudo systemctl enable nginx php8.4-fpm postgresql redis-server supervisor
+sudo systemctl enable nginx php8.5-fpm postgresql redis-server supervisor
 
-systemctl is-enabled nginx php8.4-fpm supervisor
+systemctl is-enabled nginx php8.5-fpm supervisor
 systemctl is-active ds-converter ds-docservice
 sudo supervisorctl status "jin-queue:*" jin-reverb
 ```
@@ -537,7 +537,7 @@ composer check-platform-reqs --no-dev
 
 SMTP_SMOKE_TEST_RECIPIENT=recipient@example.com php artisan tinker --execute '\Illuminate\Support\Facades\Mail::raw("Jin SMTP smoke test", function (\Illuminate\Mail\Message $message): void { $message->to((string) getenv("SMTP_SMOKE_TEST_RECIPIENT"))->subject("Jin SMTP smoke test"); });'
 
-sudo systemctl --no-pager --full status nginx php8.4-fpm supervisor ds-converter ds-docservice
+sudo systemctl --no-pager --full status nginx php8.5-fpm supervisor ds-converter ds-docservice
 sudo supervisorctl status "jin-queue:*" jin-reverb
 ```
 
@@ -566,7 +566,7 @@ Officeプレビューが`Download failed`になる場合は、DocumentServerか�
   php artisan stored-files:backfill-checksums
   php artisan stored-files:backfill-content
   php artisan optimize
-  sudo systemctl reload php8.4-fpm
+  sudo systemctl reload php8.5-fpm
   sudo supervisorctl start "jin-queue:*" jin-reverb
   php artisan up
 )

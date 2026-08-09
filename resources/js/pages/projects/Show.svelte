@@ -45,7 +45,7 @@
     import ProjectFileThumbnail from '@/components/ProjectFileThumbnail.svelte';
     import { Button } from '@/components/ui/button';
     import { activityAction, activityHref } from '@/lib/activity';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import { archive, edit } from '@/routes/projects';
     import type { ProjectHome, ProjectPermissions } from '@/types';
 
@@ -61,23 +61,30 @@
         permissions: ProjectPermissions;
     } = $props();
 
-    const dateFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const dateFormatter = new Intl.DateTimeFormat(currentLocale(), {
         timeZone: 'Asia/Tokyo',
         month: 'numeric',
         day: 'numeric',
     });
-    const dateTimeFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const dateTimeFormatter = new Intl.DateTimeFormat(currentLocale(), {
         timeZone: 'Asia/Tokyo',
         month: 'numeric',
         day: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
     });
-    const monthFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const monthFormatter = new Intl.DateTimeFormat(currentLocale(), {
         timeZone: 'Asia/Tokyo',
         year: 'numeric',
         month: 'long',
     });
+    const weekdayFormatter = new Intl.DateTimeFormat(currentLocale(), {
+        timeZone: 'Asia/Tokyo',
+        weekday: 'short',
+    });
+    const calendarWeekdays = Array.from({ length: 7 }, (_, index) =>
+        weekdayFormatter.format(new Date(Date.UTC(2024, 0, 7 + index))),
+    );
     let calendarAnchor = $derived(
         new Date(
             home.schedule.upcoming[0]?.startsAt ??
@@ -149,7 +156,7 @@
     };
 
     const memberInitial = (name: string): string =>
-        name.trim().slice(0, 1).toLocaleUpperCase('ja-JP') || '?';
+        name.trim().slice(0, 1).toLocaleUpperCase(currentLocale()) || '?';
 
     const archiveProject = (): boolean =>
         window.confirm(t('Are you sure you want to archive this project?'));
@@ -634,7 +641,10 @@
                                             class="mt-2 h-2 w-full accent-cyan-600"
                                             value={home.todos.completed}
                                             max={Math.max(home.todos.total, 1)}
-                                            aria-label={`${currentTeam.menuNames.todos}の進捗`}
+                                            aria-label={t(':name progress', {
+                                                name: currentTeam.menuNames
+                                                    .todos,
+                                            })}
                                         ></progress>
                                     </div>
                                 </div>
@@ -772,7 +782,7 @@
                             <div
                                 class="grid grid-cols-7 border-l border-t text-center text-xs font-bold text-muted-foreground"
                             >
-                                {#each ['日', '月', '火', '水', '木', '金', '土'] as weekday (weekday)}
+                                {#each calendarWeekdays as weekday (weekday)}
                                     <div class="border-b border-r py-1.5">
                                         {weekday}
                                     </div>

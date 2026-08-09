@@ -52,8 +52,8 @@ test('invitation email for existing users uses login route', function () {
         ->and($notification->tries)->toBe(3)
         ->and($notification->timeout)->toBe(60)
         ->and($mail->actionText)->toBe(__('Log in'))
-        ->and($mail->actionUrl)->toBe(route('login', ['invitation' => $invitation->code]));
-    $this->assertStringContainsString('dashboard', implode(' ', $mail->introLines));
+        ->and($mail->actionUrl)->toBe(route('login', ['invitation' => $invitation->code]))
+        ->and($mail->introLines)->toContain(__('Log in and visit your dashboard to accept or decline this invitation.'));
 });
 
 test('invitation email for unknown users uses registration route', function () {

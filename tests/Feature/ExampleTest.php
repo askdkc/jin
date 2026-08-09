@@ -68,16 +68,23 @@ test('the introduction uses the JIN brand copy and icon', function () {
     $appLogo = file_get_contents(resource_path('js/components/AppLogo.svelte'));
     $appHeader = file_get_contents(resource_path('js/components/AppHeader.svelte'));
     $favicon = file_get_contents(public_path('favicon.svg'));
+    $japanese = json_decode(
+        (string) file_get_contents(lang_path('ja.json')),
+        true,
+        512,
+        JSON_THROW_ON_ERROR,
+    );
 
     expect($welcome)
         ->toContain('>陣（JIN）</span')
-        ->toContain('チームの仕事を、<br />ひとつの陣に')
-        ->not->toContain('チームの仕事を、<br />ひとつの陣に。')
-        ->toContain('必要な情報が、ひとつに集まる<br')
-        ->not->toContain('必要な情報が、ひとつに集まる。<br')
-        ->not->toContain('/>迷わず判断し、すぐ動ける。')
-        ->toContain('覚える順番は、<br />たった三つ')
-        ->not->toContain('覚える順番は、<br />たった三つ。')
+        ->toContain('Bring your team\'s work')
+        ->toContain('into one JIN workspace')
+        ->and($japanese["Bring your team's work"])->toBe('チームの仕事を、')
+        ->and($japanese['into one JIN workspace'])->toBe('ひとつの陣に')
+        ->and($japanese['All the information you need, together'])->toBe('必要な情報が、ひとつに集まる')
+        ->and($japanese['Decide clearly and move quickly'])->toBe('迷わず判断し、すぐ動ける')
+        ->and($japanese['Three simple steps'])->toBe('覚える順番は、')
+        ->and($japanese['That is all it takes'])->toBe('たった三つ')
         ->and($appLogo)
         ->toContain('陣（JIN）')
         ->and($appHeader)

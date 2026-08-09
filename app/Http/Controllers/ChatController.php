@@ -218,7 +218,7 @@ class ChatController extends Controller
             ['name' => 'general'],
             [
                 'created_by' => $project->created_by,
-                'description' => 'プロジェクト全体の会話',
+                'description' => __('Project-wide conversation'),
             ],
         );
 

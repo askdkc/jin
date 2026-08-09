@@ -28,7 +28,7 @@
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
     import { copyTextToClipboard } from '@/lib/clipboard';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import { show as showProject } from '@/routes/projects';
     import type {
         CalendarSubscription,
@@ -91,32 +91,38 @@
         { value: 'half-year', label: 'Half year' },
         { value: 'year', label: 'Year' },
     ];
-    const weekdays = ['日', '月', '火', '水', '木', '金', '土'];
+    const weekdayFormatter = new Intl.DateTimeFormat(currentLocale(), {
+        weekday: 'short',
+        timeZone: 'Asia/Tokyo',
+    });
+    const weekdays = Array.from({ length: 7 }, (_, index) =>
+        weekdayFormatter.format(new Date(Date.UTC(2024, 0, 7 + index))),
+    );
     const eventColorClasses = [
         'border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900 dark:bg-blue-950/50 dark:text-blue-200',
         'border-violet-200 bg-violet-50 text-violet-800 dark:border-violet-900 dark:bg-violet-950/50 dark:text-violet-200',
         'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200',
         'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/50 dark:text-amber-200',
     ];
-    const monthFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const monthFormatter = new Intl.DateTimeFormat(currentLocale(), {
         year: 'numeric',
         month: 'long',
         timeZone: 'Asia/Tokyo',
     });
-    const longDateFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const longDateFormatter = new Intl.DateTimeFormat(currentLocale(), {
         year: 'numeric',
         month: 'long',
         day: 'numeric',
         weekday: 'short',
         timeZone: 'Asia/Tokyo',
     });
-    const shortDateFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const shortDateFormatter = new Intl.DateTimeFormat(currentLocale(), {
         month: 'numeric',
         day: 'numeric',
         weekday: 'short',
         timeZone: 'Asia/Tokyo',
     });
-    const timeFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const timeFormatter = new Intl.DateTimeFormat(currentLocale(), {
         hour: '2-digit',
         minute: '2-digit',
         timeZone: 'Asia/Tokyo',
@@ -273,7 +279,7 @@
     let ganttGridStepDays = $derived(ganttDayCount > 180 ? 7 : 1);
     const ganttTickOffset = (value: string): number =>
         ((dayNumber(value) - dayNumber(rangeStart)) / ganttDayCount) * 100;
-    const ganttMonthFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const ganttMonthFormatter = new Intl.DateTimeFormat(currentLocale(), {
         year: 'numeric',
         month: 'short',
         timeZone: 'Asia/Tokyo',

@@ -52,7 +52,7 @@ class CreateTodoTool extends Tool
             if ($list === null) {
                 $lastPosition = $project->todoLists()->max('position');
                 $list = $project->todoLists()->create([
-                    'title' => '未分類の任務',
+                    'title' => __('Unsorted to-dos'),
                     'is_loose' => true,
                     'position' => $lastPosition === null ? 0 : ((int) $lastPosition) + 1,
                 ]);

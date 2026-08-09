@@ -1,27 +1,68 @@
 #!/usr/bin/env bash
 #
-# jin - one-shot provisioning for ONLYOFFICE DocumentServer
+# jin - one-shot macOS development and Ubuntu Server deployment
 #
-# Ubuntu installs the official ONLYOFFICE package. Apple silicon macOS uses
-# Apple's container runtime and named volumes. The script is safe to rerun:
-# the application .env and the DocumentServer JWT configuration are updated
-# in place, while existing data volumes are preserved.
+# Ubuntu installs the Jin runtime, PostgreSQL/PGroonga, Redis, MarkItDown,
+# ONLYOFFICE, Nginx, and Supervisor. Apple silicon macOS keeps its existing
+# Apple Container flow. Both paths are safe to rerun: existing .env files,
+# secrets, private storage, database data, and named volumes are preserved.
 #
 # Examples:
-#   ./setup.sh
-#   ./setup.sh --domain jin.example.com --office-domain office.example.com
-#   ./setup.sh --no-nginx --onlyoffice-port 8081
+#   ./setup.sh --platform ubuntu --domain jin.example.com
+#   ./setup.sh --platform ubuntu --domain jin.example.com --no-ssl
+#   ./setup.sh --platform macos --app-dir "$PWD" --no-nginx
 #
 set -euo pipefail
+
+# Keep sudo call sites usable for direct root execution, while retaining the
+# regular sudo path for deployment users with delegated privileges.
+if [[ "$(id -u)" -eq 0 ]]; then
+    sudo() {
+        local target
+
+        if [[ "${1:-}" == "-v" ]]; then
+            return 0
+        fi
+
+        if [[ "${1:-}" == "-u" ]]; then
+            [[ $# -ge 3 ]] || return 2
+            target="$2"
+            shift 2
+            [[ "${1:-}" == "--" ]] && shift
+            command runuser -u "$target" -- "$@"
+            return
+        fi
+
+        if [[ "${1:-}" == "-E" ]]; then
+            shift
+        fi
+        if [[ "${1:-}" == *=* ]]; then
+            command env "$@"
+        else
+            command "$@"
+        fi
+    }
+fi
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 MAX_SAFE_INTEGER=9007199254740991
 MAX_SAFE_FILE_SIZE_MB=8589934591
+SUDO_KEEPALIVE_PID=""
+APP_PROCESSES_STOPPED=0
+APP_MAINTENANCE=0
+JIN_NGINX_CHANGED=0
+JIN_NGINX_BACKUP_DIR=""
+JIN_NGINX_BACKUP_READY=0
+JIN_NGINX_WAS_ACTIVE=0
+JIN_NGINX_USE_SUDO=0
+JIN_NGINX_SITE_PATH=/etc/nginx/sites-available/jin
+JIN_NGINX_ENABLED_PATH=/etc/nginx/sites-enabled/jin
+JIN_NGINX_DEFAULT_PATH=/etc/nginx/sites-enabled/default
 
 # ---------------------------------------------------------------- helpers --
-log()  { printf '\033[1;34m[jin-onlyoffice]\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m[jin-onlyoffice:warn]\033[0m %s\n' "$*"; }
-die()  { printf '\033[1;31m[jin-onlyoffice:error]\033[0m %s\n' "$*" >&2; exit 1; }
+log()  { printf '\033[1;34m[jin]\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m[jin:warn]\033[0m %s\n' "$*"; }
+die()  { printf '\033[1;31m[jin:error]\033[0m %s\n' "$*" >&2; exit 1; }
 
 valid_hostname() {
     [[ "$1" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]]
@@ -52,7 +93,7 @@ valid_port() {
     [[ "$value" != "0" ]] || return 1
     [[ ${#value} -lt 5 ]] && return 0
     [[ ${#value} -eq 5 ]] || return 1
-    [[ "$value" == "65535" || "$value" < "65535" ]]
+    (( value <= 65535 ))
 }
 
 normalize_decimal() {
@@ -73,7 +114,7 @@ valid_positive_integer() {
     [[ "$value" != "0" ]] || return 1
     [[ ${#value} -lt ${#MAX_SAFE_INTEGER} ]] && return 0
     [[ ${#value} -eq ${#MAX_SAFE_INTEGER} ]] || return 1
-    [[ "$value" == "$MAX_SAFE_INTEGER" || "$value" < "$MAX_SAFE_INTEGER" ]]
+    (( value <= MAX_SAFE_INTEGER ))
 }
 
 valid_upload_max_megabytes() {
@@ -83,7 +124,7 @@ valid_upload_max_megabytes() {
     value="$(normalize_decimal "$1")"
     [[ ${#value} -lt ${#MAX_SAFE_FILE_SIZE_MB} ]] && return 0
     [[ ${#value} -eq ${#MAX_SAFE_FILE_SIZE_MB} ]] || return 1
-    [[ "$value" == "$MAX_SAFE_FILE_SIZE_MB" || "$value" < "$MAX_SAFE_FILE_SIZE_MB" ]]
+    (( value <= MAX_SAFE_FILE_SIZE_MB ))
 }
 
 normalize_boolean() {
@@ -92,6 +133,112 @@ normalize_boolean() {
         false|0) printf 'false' ;;
         *) return 1 ;;
     esac
+}
+
+is_placeholder_value() {
+    case "$1" in
+        ''|local|local-*|example|example-*|null|none|password|secret|changeme|change-me|replace-me|your-*|jin-local)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+generate_production_identifier() {
+    printf 'jin-%s' "$(openssl rand -hex 16)"
+}
+
+set_ubuntu_package_matrix() {
+    case "${VERSION_ID:-}" in
+        24.04)
+            PG_MAJOR=16
+            PGROONGA_PACKAGE="postgresql-16-pgroonga"
+            ;;
+        26.04)
+            PG_MAJOR=18
+            PGROONGA_PACKAGE="postgresql-18-pgdg-pgroonga"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+canonicalize_ubuntu_app_dir() {
+    local canonical
+
+    canonical="$(realpath -m -- "$APP_DIR" 2>/dev/null)" || return 1
+    case "$canonical" in
+        /var/www/*|/home/*/*) ;;
+        *) return 1 ;;
+    esac
+    [[ "$canonical" != /var/www ]] || return 1
+    APP_DIR="$canonical"
+}
+
+validate_ubuntu_env_file() {
+    local canonical
+
+    [[ -n "${ENV_FILE:-}" ]] || ENV_FILE="$APP_DIR/.env"
+    canonical="$(realpath -m -- "$ENV_FILE" 2>/dev/null)" || return 1
+    [[ "$canonical" == "$APP_DIR/.env" ]] || return 1
+    ENV_FILE="$canonical"
+}
+
+resolve_upload_max_files() {
+    local value="${UPLOAD_MAX_FILES:-$(read_env UPLOAD_MAX_FILES "$ENV_FILE")}"
+
+    value="${value:-20}"
+    valid_positive_integer "$value" || return 1
+    UPLOAD_MAX_FILES="$(normalize_decimal "$value")"
+}
+
+resolve_ubuntu_jwt_secret() {
+    local existing="${JWT_SECRET:-}"
+
+    if [[ -z "$existing" ]]; then
+        existing="$(read_env ONLYOFFICE_JWT_SECRET "$ENV_FILE")"
+    fi
+    is_placeholder_value "$existing" && existing=""
+    JWT_SECRET="$existing"
+    if [[ -z "$JWT_SECRET" && -f /etc/onlyoffice/documentserver/local.json ]]; then
+        JWT_SECRET="$(read_package_jwt_secret)"
+    fi
+    JWT_SECRET="${JWT_SECRET:-$(openssl rand -hex 32)}"
+}
+
+resolve_ubuntu_instance_id() {
+    local existing="${INSTANCE_ID:-}"
+
+    if [[ -z "$existing" ]]; then
+        existing="$(read_env ONLYOFFICE_INSTANCE_ID "$ENV_FILE")"
+    fi
+    is_placeholder_value "$existing" && existing=""
+    INSTANCE_ID="${existing:-$(generate_production_identifier)}"
+}
+
+resolve_imagemagick_path() {
+    local binary candidate
+
+    for binary in magick convert; do
+        candidate="$(command -v "$binary" 2>/dev/null || true)"
+        if [[ "$candidate" == /* && -x "$candidate" ]]; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+node_major_at_least_24() {
+    local major
+
+    command -v node >/dev/null 2>&1 || return 1
+    major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)"
+    [[ "$major" =~ ^[0-9]+$ ]] && (( major >= 24 ))
 }
 
 valid_resource_name() {
@@ -982,299 +1129,1371 @@ NGINX
     sudo systemctl reload nginx
 }
 
+
+valid_postgresql_identifier() {
+    [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*$ && "${#1}" -le 63 ]]
+}
+
+apt_get_with_lock_wait() {
+    sudo env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 "$@"
+}
+
+apt_package_available() {
+    apt-cache show "$1" >/dev/null 2>&1
+}
+
+run_as_deploy() {
+    if [[ "$(id -u)" -eq 0 || "$(id -un)" != "$DEPLOY_USER" ]]; then
+        sudo -u "$DEPLOY_USER" -- "$@"
+    else
+        "$@"
+    fi
+}
+
+endpoint_returns_ok() {
+    local response
+
+    response="$(curl -fsS --max-time 5 "${1%/}/up" 2>/dev/null)" || return 1
+    [[ "$response" == "ok" || "$response" == "OK" ]]
+}
+
+wait_for_supervisor() {
+    local attempt
+
+    for attempt in {1..30}; do
+        if sudo supervisorctl status >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+
+    sudo systemctl --no-pager --full status supervisor >&2 || true
+    sudo journalctl --no-pager -u supervisor -n 80 >&2 || true
+    return 1
+}
+
+configure_rabbitmq() {
+    local config=/etc/rabbitmq/rabbitmq.conf env_file=/etc/rabbitmq/rabbitmq-env.conf
+
+    sudo install -d -m 0755 /etc/rabbitmq
+    if sudo test -f "$config"; then
+        sudo sed -E -i.bak \
+            -e '/^# Managed by jin\/setup\.sh$/d' \
+            -e '/^[[:space:]]*listeners\.tcp\./d' \
+            -e '/^[[:space:]]*distribution\.listener\.interface[[:space:]]*=/d' \
+            "$config"
+        sudo rm -f "$config.bak"
+    else
+        sudo touch "$config"
+    fi
+    printf '\n# Managed by jin/setup.sh\nlisteners.tcp.1 = 127.0.0.1:5672\ndistribution.listener.interface = 127.0.0.1\n' \
+        | sudo tee -a "$config" >/dev/null
+
+    if sudo test -f "$env_file"; then
+        sudo sed -E -i.bak \
+            -e '/^# Managed by jin\/setup\.sh$/d' \
+            -e '/^[[:space:]]*ERL_EPMD_ADDRESS=/d' \
+            "$env_file"
+        sudo rm -f "$env_file.bak"
+    else
+        sudo touch "$env_file"
+    fi
+    printf '\n# Managed by jin/setup.sh\nERL_EPMD_ADDRESS=127.0.0.1\n' \
+        | sudo tee -a "$env_file" >/dev/null
+
+    sudo systemctl enable --now rabbitmq-server
+    sudo systemctl restart rabbitmq-server
+    sudo systemctl is-active --quiet rabbitmq-server \
+        || die "RabbitMQ is not active"
+}
+
+verify_rabbitmq_loopback() {
+    local port
+
+    for port in 5672 25672 4369; do
+        sudo ss -H -ltn | awk -v port=":${port}" '
+            $4 ~ (port "$" ) {
+                found = 1
+                if ($4 !~ /^127\\.0\\.0\\.1:/ && $4 !~ /^\\[::1\\]:/) {
+                    public = 1
+                }
+            }
+            END { exit !(found && !public) }
+        ' || die "RabbitMQ listener ${port} is not loopback-only"
+    done
+}
+
+grant_web_traverse() {
+    local path="$APP_DIR"
+
+    while [[ "$path" != "/" ]]; do
+        sudo setfacl -m u:www-data:--x "$path"
+        path="$(dirname "$path")"
+    done
+}
+
+install_nodesource_repository() {
+    local keyring=/usr/share/keyrings/nodesource.gpg
+    local fingerprints
+
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+        | gpg --dearmor | sudo tee "$keyring" >/dev/null
+    fingerprints="$(gpg --no-default-keyring --keyring "$keyring" --with-colons --fingerprint 2>/dev/null \
+        | awk -F: '$1 == "fpr" { print $10 }')"
+    grep -qx '6F71F525282841EEDAF851B42F59B5F99B1BE0B4' <<< "$fingerprints" \
+        || die "NodeSource signing key fingerprint check failed"
+    printf 'deb [signed-by=%s] https://deb.nodesource.com/node_24.x nodistro main\n' "$keyring" \
+        | sudo tee /etc/apt/sources.list.d/nodesource.list >/dev/null
+    apt_get_with_lock_wait update
+}
+
+install_pgroonga_repository() {
+    local source_package="/tmp/groonga-apt-source-${VERSION_CODENAME}.deb"
+    local source_url="https://packages.groonga.org/ubuntu/groonga-apt-source-latest-${VERSION_CODENAME}.deb"
+
+    log "Installing the Groonga APT source for PostgreSQL ${PG_MAJOR}..."
+    rm -f "$source_package"
+    wget -q -O "$source_package" "$source_url" \
+        || die "Could not download the Groonga APT source package for Ubuntu ${VERSION_CODENAME}"
+    apt_get_with_lock_wait install -y -V "$source_package" \
+        || die "Could not install the Groonga APT source package"
+    rm -f "$source_package"
+
+    if [[ "$VERSION_ID" == "26.04" ]]; then
+        apt_get_with_lock_wait install -y postgresql-common
+        sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y \
+            || die "Could not configure the PostgreSQL Global Development Group repository"
+    fi
+
+    apt_get_with_lock_wait update
+}
+
+validate_ubuntu_database_packages() {
+    local package
+
+    for package in \
+        "postgresql-${PG_MAJOR}" \
+        "postgresql-client-${PG_MAJOR}" \
+        "$PGROONGA_PACKAGE"; do
+        apt_package_available "$package" \
+            || die "Required official Ubuntu package is unavailable: ${package} (Ubuntu ${VERSION_ID}); refusing a source build"
+    done
+}
+
+ensure_jin_repository() {
+    sudo install -d -m 0755 "$APP_DIR"
+    sudo chown -R "$DEPLOY_USER":"$DEPLOY_USER" "$APP_DIR"
+
+    if [[ -d "$APP_DIR/.git" ]]; then
+        log "Updating Jin with fast-forward-only Git"
+        run_as_deploy git -C "$APP_DIR" pull --ff-only
+        return 0
+    fi
+
+    if [[ -n "$(find "$APP_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
+        die "Refusing to clone into a non-empty directory without a Git repository: $APP_DIR"
+    fi
+
+    log "Cloning Jin from $REPO_URL"
+    if ! run_as_deploy git clone "$REPO_URL" "$APP_DIR"; then
+        if [[ "$REPO_URL" == git@github.com:* ]]; then
+            local https_repo="https://github.com/${REPO_URL#git@github.com:}"
+            warn "SSH clone failed; retrying over HTTPS"
+            run_as_deploy git clone "$https_repo" "$APP_DIR"
+        else
+            die "Could not clone Jin repository: $REPO_URL"
+        fi
+    fi
+}
+
+prepare_jin_update() {
+    if [[ -f "$APP_DIR/artisan" ]]; then
+        if run_as_deploy php "$APP_DIR/artisan" down --render=errors::503 >/dev/null 2>&1; then
+            APP_MAINTENANCE=1
+        fi
+    fi
+
+    if sudo systemctl is-active --quiet supervisor 2>/dev/null; then
+        sudo supervisorctl reread >/dev/null 2>&1 || true
+        sudo supervisorctl update >/dev/null 2>&1 || true
+        sudo supervisorctl stop 'jin-queue:*' jin-reverb jin-scheduler >/dev/null 2>&1 || true
+        APP_PROCESSES_STOPPED=1
+    fi
+}
+
+jin_nginx_privileged() {
+    if [[ "$JIN_NGINX_USE_SUDO" -eq 1 ]]; then
+        sudo "$@"
+    else
+        "$@"
+    fi
+}
+
+snapshot_jin_nginx_entry() {
+    local label="$1"
+    local path="$2"
+    local backup_dir="$3"
+
+    if [[ -L "$path" ]]; then
+        printf 'symlink\n' > "$backup_dir/${label}.type"
+        jin_nginx_privileged cp -d -- "$path" "$backup_dir/${label}.state"
+    elif [[ -f "$path" ]]; then
+        printf 'file\n' > "$backup_dir/${label}.type"
+        jin_nginx_privileged cp -d -- "$path" "$backup_dir/${label}.state"
+    elif [[ ! -e "$path" ]]; then
+        printf 'absent\n' > "$backup_dir/${label}.type"
+    else
+        warn "Refusing to snapshot unsupported Nginx path type: $path"
+        return 1
+    fi
+}
+
+snapshot_jin_nginx_state() {
+    local backup_dir="${1:-}"
+    local site="${2:-$JIN_NGINX_SITE_PATH}"
+    local enabled="${3:-$JIN_NGINX_ENABLED_PATH}"
+    local default_link="${4:-$JIN_NGINX_DEFAULT_PATH}"
+    local created=0
+
+    if [[ -z "$backup_dir" ]]; then
+        backup_dir="$(mktemp -d "${TMPDIR:-/tmp}/jin-nginx-backup.XXXXXX")" || return 1
+        created=1
+    else
+        [[ "$backup_dir" == /* ]] || return 1
+        [[ ! -e "$backup_dir" && ! -L "$backup_dir" ]] || return 1
+        (umask 077 && mkdir -m 0700 -- "$backup_dir") || return 1
+    fi
+
+    if [[ "$created" -eq 0 ]]; then
+        chmod 0700 -- "$backup_dir" || return 1
+    fi
+    [[ -d "$backup_dir" && ! -L "$backup_dir" ]] || return 1
+    printf 'jin-nginx-backup-v1\n' > "$backup_dir/.jin-nginx-backup"
+
+    if ! snapshot_jin_nginx_entry site "$site" "$backup_dir" \
+        || ! snapshot_jin_nginx_entry enabled "$enabled" "$backup_dir" \
+        || ! snapshot_jin_nginx_entry default "$default_link" "$backup_dir"; then
+        rm -f -- \
+            "$backup_dir/.jin-nginx-backup" \
+            "$backup_dir/site.type" "$backup_dir/site.state" \
+            "$backup_dir/enabled.type" "$backup_dir/enabled.state" \
+            "$backup_dir/default.type" "$backup_dir/default.state"
+        rmdir -- "$backup_dir" 2>/dev/null || true
+        return 1
+    fi
+
+    JIN_NGINX_BACKUP_DIR="$backup_dir"
+    JIN_NGINX_BACKUP_READY=1
+}
+
+remove_jin_nginx_path() {
+    local path="$1"
+
+    if [[ -L "$path" || -f "$path" ]]; then
+        jin_nginx_privileged rm -f -- "$path"
+    elif [[ ! -e "$path" ]]; then
+        return 0
+    else
+        warn "Refusing to replace unsupported Nginx path type during rollback: $path"
+        return 1
+    fi
+}
+
+restore_jin_nginx_state() {
+    local backup_dir="${1:-$JIN_NGINX_BACKUP_DIR}"
+    local site="${2:-$JIN_NGINX_SITE_PATH}"
+    local enabled="${3:-$JIN_NGINX_ENABLED_PATH}"
+    local default_link="${4:-$JIN_NGINX_DEFAULT_PATH}"
+    local label path parent state
+
+    [[ -d "$backup_dir" && ! -L "$backup_dir" ]] || return 1
+    [[ "$(<"$backup_dir/.jin-nginx-backup")" == jin-nginx-backup-v1 ]] || return 1
+
+    for label in site enabled default; do
+        case "$label" in
+            site) path="$site" ;;
+            enabled) path="$enabled" ;;
+            default) path="$default_link" ;;
+        esac
+        parent="$(dirname -- "$path")"
+        [[ -d "$parent" && ! -L "$parent" ]] || return 1
+        remove_jin_nginx_path "$path" || return 1
+        state="$(<"$backup_dir/${label}.type")"
+        case "$state" in
+            file|symlink)
+                jin_nginx_privileged cp -d -- "$backup_dir/${label}.state" "$path" || return 1
+                ;;
+            absent)
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    done
+}
+
+discard_jin_nginx_backup() {
+    local backup_dir="${1:-$JIN_NGINX_BACKUP_DIR}"
+
+    [[ -n "$backup_dir" ]] || return 0
+    [[ -d "$backup_dir" && ! -L "$backup_dir" ]] || return 1
+    [[ "$(<"$backup_dir/.jin-nginx-backup")" == jin-nginx-backup-v1 ]] || return 1
+    rm -f -- \
+        "$backup_dir/.jin-nginx-backup" \
+        "$backup_dir/site.type" "$backup_dir/site.state" \
+        "$backup_dir/enabled.type" "$backup_dir/enabled.state" \
+        "$backup_dir/default.type" "$backup_dir/default.state"
+    rmdir -- "$backup_dir" || return 1
+    JIN_NGINX_BACKUP_DIR=""
+    JIN_NGINX_BACKUP_READY=0
+}
+
+cleanup_jin_deployment() {
+    local status=$?
+
+    set +e
+    if [[ "$status" -ne 0 && "$JIN_NGINX_BACKUP_READY" -eq 1 ]]; then
+        if restore_jin_nginx_state; then
+            if sudo nginx -t >/dev/null 2>&1; then
+                if [[ "$JIN_NGINX_WAS_ACTIVE" -eq 1 ]]; then
+                    sudo systemctl reload nginx >/dev/null 2>&1 \
+                        || warn "Could not reload Nginx after restoring its Jin state"
+                fi
+            else
+                warn "Restored Jin Nginx state failed nginx -t"
+            fi
+        else
+            warn "Could not restore the Jin-owned Nginx state"
+        fi
+        discard_jin_nginx_backup \
+            || warn "Could not remove the temporary Jin Nginx backup: $JIN_NGINX_BACKUP_DIR"
+    fi
+    if [[ "$status" -ne 0 && "$APP_PROCESSES_STOPPED" -eq 1 ]]; then
+        sudo supervisorctl reread >/dev/null 2>&1 || true
+        sudo supervisorctl update >/dev/null 2>&1 || true
+        sudo supervisorctl start 'jin-queue:*' jin-reverb jin-scheduler >/dev/null 2>&1 || true
+    fi
+    if [[ "$APP_MAINTENANCE" -eq 1 && -f "${APP_DIR:-}/artisan" ]]; then
+        run_as_deploy php "$APP_DIR/artisan" up >/dev/null 2>&1 || true
+    fi
+    [[ -z "$SUDO_KEEPALIVE_PID" ]] || kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+    trap - EXIT
+    return "$status"
+}
+
+resolve_ubuntu_deployment_values() {
+    local existing_document_url existing_internal_url upload_max_file_bytes
+
+    valid_port "$ONLYOFFICE_PORT" || die "Invalid ONLYOFFICE_PORT: $ONLYOFFICE_PORT"
+    valid_port "$APP_INTERNAL_PORT" || die "Invalid APP_INTERNAL_PORT: $APP_INTERNAL_PORT"
+    valid_hostname "$APP_DOMAIN" || {
+        [[ "$NO_SSL" -eq 1 ]] && valid_local_hostname "$APP_DOMAIN" \
+            || die "Invalid application domain: $APP_DOMAIN"
+    }
+
+    existing_document_url="$(read_env ONLYOFFICE_DOCUMENT_SERVER_URL "$ENV_FILE")"
+    if [[ "$PORT_EXPLICIT" -eq 0 && "$existing_document_url" =~ ^http://127\.0\.0\.1:([0-9]+)$ ]]; then
+        ONLYOFFICE_PORT="${BASH_REMATCH[1]}"
+        valid_port "$ONLYOFFICE_PORT" || die "Invalid existing ONLYOFFICE_DOCUMENT_SERVER_URL port"
+    fi
+
+    existing_internal_url="$(read_env APP_ONLYOFFICE_INTERNAL_URL "$ENV_FILE")"
+    if [[ "$INTERNAL_PORT_EXPLICIT" -eq 0 && "$existing_internal_url" =~ ^http://127\.0\.0\.1:([0-9]+)$ ]]; then
+        APP_INTERNAL_PORT="${BASH_REMATCH[1]}"
+        valid_port "$APP_INTERNAL_PORT" || die "Invalid existing APP_ONLYOFFICE_INTERNAL_URL port"
+    fi
+
+    PUBLIC_SCHEME=https
+    PUBLIC_PORT=443
+    if [[ "$NO_SSL" -eq 1 ]]; then
+        PUBLIC_SCHEME=http
+        PUBLIC_PORT=80
+    fi
+
+    TARGET_DOCUMENT_SERVER_URL="http://127.0.0.1:${ONLYOFFICE_PORT}"
+    TARGET_PUBLIC_URL="${PUBLIC_SCHEME}://${APP_DOMAIN}${ONLYOFFICE_PUBLIC_PATH}"
+    TARGET_INTERNAL_URL="http://127.0.0.1:${APP_INTERNAL_PORT}"
+
+    UPLOAD_MAX_FILE_MB="${UPLOAD_MAX_FILE_MB:-$(read_env UPLOAD_MAX_FILE_MB "$ENV_FILE")}"
+    UPLOAD_MAX_REQUEST_MB="${UPLOAD_MAX_REQUEST_MB:-$(read_env UPLOAD_MAX_REQUEST_MB "$ENV_FILE")}"
+    UPLOAD_MAX_FILE_MB="${UPLOAD_MAX_FILE_MB:-200}"
+    UPLOAD_MAX_REQUEST_MB="${UPLOAD_MAX_REQUEST_MB:-500}"
+    valid_upload_max_megabytes "$UPLOAD_MAX_FILE_MB" \
+        || die "UPLOAD_MAX_FILE_MB must be a positive integer no larger than ${MAX_SAFE_FILE_SIZE_MB}"
+    valid_upload_max_megabytes "$UPLOAD_MAX_REQUEST_MB" \
+        || die "UPLOAD_MAX_REQUEST_MB must be a positive integer no larger than ${MAX_SAFE_FILE_SIZE_MB}"
+    upload_max_file_bytes="$(( $(normalize_decimal "$UPLOAD_MAX_FILE_MB") * 1024 * 1024 ))"
+
+    MAX_FILE_SIZE_BYTES="${MAX_FILE_SIZE_BYTES:-$(read_env ONLYOFFICE_MAX_FILE_SIZE_BYTES "$ENV_FILE")}"
+    MAX_FILE_SIZE_BYTES="${MAX_FILE_SIZE_BYTES:-$upload_max_file_bytes}"
+    TARGET_MAX_DOWNLOAD_BYTES="${TARGET_MAX_DOWNLOAD_BYTES:-$(read_env ONLYOFFICE_DOCUMENT_SERVER_MAX_DOWNLOAD_BYTES "$ENV_FILE")}"
+    TARGET_MAX_DOWNLOAD_BYTES="${TARGET_MAX_DOWNLOAD_BYTES:-$MAX_FILE_SIZE_BYTES}"
+    valid_positive_integer "$MAX_FILE_SIZE_BYTES" \
+        || die "ONLYOFFICE_MAX_FILE_SIZE_BYTES must be a positive integer"
+    valid_positive_integer "$TARGET_MAX_DOWNLOAD_BYTES" \
+        || die "ONLYOFFICE_DOCUMENT_SERVER_MAX_DOWNLOAD_BYTES must be a positive integer"
+    MAX_FILE_SIZE_BYTES="$(normalize_decimal "$MAX_FILE_SIZE_BYTES")"
+    TARGET_MAX_DOWNLOAD_BYTES="$(normalize_decimal "$TARGET_MAX_DOWNLOAD_BYTES")"
+    if (( MAX_FILE_SIZE_BYTES > upload_max_file_bytes )); then
+        die "ONLYOFFICE_MAX_FILE_SIZE_BYTES must not exceed UPLOAD_MAX_FILE_MB"
+    fi
+    if (( TARGET_MAX_DOWNLOAD_BYTES < MAX_FILE_SIZE_BYTES )); then
+        TARGET_MAX_DOWNLOAD_BYTES="$MAX_FILE_SIZE_BYTES"
+    fi
+    resolve_upload_max_files \
+        || die "UPLOAD_MAX_FILES must be a positive integer"
+}
+
+configure_ubuntu_postgresql() {
+    local cluster_line
+    local db_password_from_env
+
+    sudo systemctl enable --now postgresql
+    mapfile -t PG_CLUSTERS < <(pg_lsclusters --no-header)
+    if [[ "${#PG_CLUSTERS[@]}" -eq 0 ]]; then
+        sudo pg_createcluster "$PG_MAJOR" main --start
+        mapfile -t PG_CLUSTERS < <(pg_lsclusters --no-header)
+    fi
+    [[ "${#PG_CLUSTERS[@]}" -eq 1 ]] \
+        || die "Expected exactly one PostgreSQL cluster; found ${#PG_CLUSTERS[@]}"
+    cluster_line="${PG_CLUSTERS[0]}"
+    read -r PG_VERSION PG_CLUSTER PG_PORT PG_STATUS PG_OWNER PG_DATA PG_LOG <<< "$cluster_line"
+    [[ "$PG_VERSION" == "$PG_MAJOR" ]] \
+        || die "Expected PostgreSQL ${PG_MAJOR}; found cluster ${PG_VERSION}"
+    PG_SERVICE="postgresql@${PG_VERSION}-${PG_CLUSTER}"
+    [[ "$PG_STATUS" == online ]] || sudo systemctl start "$PG_SERVICE"
+    sudo -u postgres pg_isready -p "$PG_PORT" -q \
+        || die "PostgreSQL is not ready on port $PG_PORT"
+
+    dpkg-query -W -f='${db:Status-Status}' "$PGROONGA_PACKAGE" 2>/dev/null | grep -qx installed \
+        || die "PGroonga package is not installed: $PGROONGA_PACKAGE"
+
+    db_password_from_env="$(read_env DB_PASSWORD "$ENV_FILE")"
+    is_placeholder_value "$db_password_from_env" && db_password_from_env=""
+    DB_PASSWORD="${DB_PASSWORD:-$db_password_from_env}"
+    DB_CREDENTIAL_FILE="/etc/jin/database-password"
+    if [[ -z "$DB_PASSWORD" ]] && sudo test -r "$DB_CREDENTIAL_FILE"; then
+        DB_PASSWORD="$(sudo sh -c "tr -d '\\r\\n' < '$DB_CREDENTIAL_FILE'")"
+        is_placeholder_value "$DB_PASSWORD" && DB_PASSWORD=""
+    fi
+    if [[ -z "$DB_PASSWORD" && -t 0 ]]; then
+        read -r -s -p "PostgreSQL password (leave blank to generate): " DB_PASSWORD
+        printf '\n'
+    fi
+    DB_PASSWORD="${DB_PASSWORD:-$(openssl rand -hex 32)}"
+    [[ "$DB_PASSWORD" != *$'\n'* && "$DB_PASSWORD" != *$'\r'* ]] \
+        || die "PostgreSQL password cannot contain newlines"
+    sudo install -d -m 0700 /etc/jin
+    printf '%s\n' "$DB_PASSWORD" | sudo tee "$DB_CREDENTIAL_FILE" >/dev/null
+    sudo chown root:root "$DB_CREDENTIAL_FILE"
+    sudo chmod 0600 "$DB_CREDENTIAL_FILE"
+
+    sudo -u postgres env JIN_DB_PASSWORD="$DB_PASSWORD" psql -p "$PG_PORT" \
+        --set=ON_ERROR_STOP=1 --set=db_name="$DB_NAME" --set=db_user="$DB_USER" postgres <<'SQL'
+\getenv db_password JIN_DB_PASSWORD
+SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'db_user', :'db_password')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'db_user') \gexec
+SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS', :'db_user', :'db_password') \gexec
+SELECT format('CREATE DATABASE %I OWNER %I ENCODING %L TEMPLATE template0', :'db_name', :'db_user', 'UTF8')
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'db_name') \gexec
+SELECT format('ALTER DATABASE %I OWNER TO %I', :'db_name', :'db_user') \gexec
+SQL
+    sudo -u postgres psql -p "$PG_PORT" -d "$DB_NAME" \
+        --set=ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS pgroonga;'
+    PGROONGA_EXTENSION_VERSION="$(sudo -u postgres psql -p "$PG_PORT" -d "$DB_NAME" -Atqc \
+        "SELECT extversion FROM pg_extension WHERE extname = 'pgroonga'")"
+    [[ -n "$PGROONGA_EXTENSION_VERSION" ]] \
+        || die "PGroonga extension could not be created in $DB_NAME"
+}
+
+install_composer() {
+    local expected_checksum actual_checksum installer=/tmp/jin-composer-setup.php
+
+    if command -v composer >/dev/null 2>&1; then
+        return 0
+    fi
+
+    log "Installing Composer with checksum verification"
+    expected_checksum="$(curl -fsSL https://composer.github.io/installer.sig)"
+    curl -fsSL https://getcomposer.org/installer -o "$installer"
+    actual_checksum="$(php -r "echo hash_file('sha384', '$installer');")"
+    [[ "$expected_checksum" == "$actual_checksum" ]] \
+        || die "Composer installer checksum mismatch"
+    sudo php "$installer" --install-dir=/usr/local/bin --filename=composer
+    rm -f "$installer"
+}
+
+configure_php_uploads() {
+    local ini_file=/etc/php/8.5/fpm/conf.d/99-jin-uploads.ini
+    local post_max_size
+
+    post_max_size="$(( $(normalize_decimal "$UPLOAD_MAX_REQUEST_MB") + 12 ))"
+    sudo tee "$ini_file" >/dev/null <<PHPINI
+upload_max_filesize=${UPLOAD_MAX_FILE_MB}M
+post_max_size=${post_max_size}M
+max_file_uploads=${UPLOAD_MAX_FILES}
+max_input_time=3600
+max_execution_time=3600
+PHPINI
+    sudo systemctl restart php8.5-fpm
+}
+
+configure_jin_environment() {
+    local app_key reverb_key reverb_secret reverb_id imagemagick_path poppler_path
+    local session_secure
+
+    set_env APP_NAME Jin "$ENV_FILE"
+    set_env APP_ENV production "$ENV_FILE"
+    set_env APP_DEBUG false "$ENV_FILE"
+    set_env APP_URL "${PUBLIC_SCHEME}://${APP_DOMAIN}" "$ENV_FILE"
+    set_env LOG_LEVEL warning "$ENV_FILE"
+    set_env DB_CONNECTION pgsql "$ENV_FILE"
+    set_env DB_URL '' "$ENV_FILE"
+    set_env DB_HOST 127.0.0.1 "$ENV_FILE"
+    set_env DB_PORT "$PG_PORT" "$ENV_FILE"
+    set_env DB_DATABASE "$DB_NAME" "$ENV_FILE"
+    set_env DB_USERNAME "$DB_USER" "$ENV_FILE"
+    set_env DB_PASSWORD "$(dotenv_quote "$DB_PASSWORD")" "$ENV_FILE"
+    set_env BROADCAST_CONNECTION reverb "$ENV_FILE"
+    set_env QUEUE_CONNECTION redis "$ENV_FILE"
+    set_env REDIS_QUEUE default "$ENV_FILE"
+    set_env REDIS_QUEUE_RETRY_AFTER 300 "$ENV_FILE"
+    set_env CACHE_STORE redis "$ENV_FILE"
+    set_env SESSION_DRIVER redis "$ENV_FILE"
+    session_secure=false
+    [[ "$NO_SSL" -eq 0 ]] && session_secure=true
+    set_env SESSION_SECURE_COOKIE "$session_secure" "$ENV_FILE"
+    set_env STORED_FILE_CONTENT_ENABLED true "$ENV_FILE"
+    set_env STORED_FILE_CONTENT_MARKITDOWN_PATH "$APP_DIR/.venv-file-content/bin/markitdown" "$ENV_FILE"
+    imagemagick_path="${IMAGEMAGICK_BINARY:-}"
+    if [[ -z "$imagemagick_path" ]]; then
+        imagemagick_path="$(resolve_imagemagick_path)" \
+            || die "ImageMagick is required; neither magick nor convert is executable"
+    fi
+    poppler_path="$(command -v pdftoppm)"
+    set_env IMAGEMAGICK_PATH "$imagemagick_path" "$ENV_FILE"
+    set_env POPPLER_PATH "$poppler_path" "$ENV_FILE"
+    set_env UPLOAD_MAX_FILES "$UPLOAD_MAX_FILES" "$ENV_FILE"
+
+    reverb_id="$(read_env REVERB_APP_ID "$ENV_FILE")"
+    reverb_key="$(read_env REVERB_APP_KEY "$ENV_FILE")"
+    reverb_secret="$(read_env REVERB_APP_SECRET "$ENV_FILE")"
+    is_placeholder_value "$reverb_id" && reverb_id="$(generate_production_identifier)"
+    is_placeholder_value "$reverb_key" && reverb_key="$(openssl rand -hex 16)"
+    is_placeholder_value "$reverb_secret" && reverb_secret="$(openssl rand -hex 24)"
+    set_env REVERB_APP_ID "$reverb_id" "$ENV_FILE"
+    set_env REVERB_APP_KEY "$reverb_key" "$ENV_FILE"
+    set_env REVERB_APP_SECRET "$reverb_secret" "$ENV_FILE"
+    set_env REVERB_HOST "$APP_DOMAIN" "$ENV_FILE"
+    set_env REVERB_PORT "$PUBLIC_PORT" "$ENV_FILE"
+    set_env REVERB_SCHEME "$PUBLIC_SCHEME" "$ENV_FILE"
+    set_env REVERB_SERVER_HOST 127.0.0.1 "$ENV_FILE"
+    set_env REVERB_SERVER_PORT "$REVERB_SERVER_PORT" "$ENV_FILE"
+    set_env REVERB_ALLOWED_ORIGINS "$APP_DOMAIN" "$ENV_FILE"
+    set_env VITE_REVERB_APP_KEY "$(dotenv_quote "$reverb_key")" "$ENV_FILE"
+    set_env VITE_REVERB_HOST "$(dotenv_quote "$APP_DOMAIN")" "$ENV_FILE"
+    set_env VITE_REVERB_PORT "$(dotenv_quote "$PUBLIC_PORT")" "$ENV_FILE"
+    set_env VITE_REVERB_SCHEME "$(dotenv_quote "$PUBLIC_SCHEME")" "$ENV_FILE"
+
+    set_env ONLYOFFICE_ENABLED true "$ENV_FILE"
+    set_env ONLYOFFICE_DOCUMENT_SERVER_URL "$TARGET_DOCUMENT_SERVER_URL" "$ENV_FILE"
+    set_env ONLYOFFICE_PUBLIC_URL "$TARGET_PUBLIC_URL" "$ENV_FILE"
+    set_env APP_ONLYOFFICE_INTERNAL_URL "$TARGET_INTERNAL_URL" "$ENV_FILE"
+    set_env ONLYOFFICE_JWT_SECRET "$(dotenv_quote "$JWT_SECRET")" "$ENV_FILE"
+    set_env ONLYOFFICE_INSTANCE_ID "$INSTANCE_ID" "$ENV_FILE"
+    set_env ONLYOFFICE_MAX_FILE_SIZE_BYTES "$MAX_FILE_SIZE_BYTES" "$ENV_FILE"
+    set_env ONLYOFFICE_DOCUMENT_SERVER_MAX_DOWNLOAD_BYTES "$DOCUMENT_SERVER_MAX_DOWNLOAD_BYTES" "$ENV_FILE"
+
+    app_key="$(read_env APP_KEY "$ENV_FILE")"
+    if [[ -z "$app_key" ]]; then
+        run_as_deploy php "$APP_DIR/artisan" key:generate --force
+    fi
+}
+
+configure_jin_nginx() {
+    local site="$JIN_NGINX_SITE_PATH"
+    local enabled="$JIN_NGINX_ENABLED_PATH"
+    local acme_webroot=/var/www/letsencrypt
+    local default_link="$JIN_NGINX_DEFAULT_PATH"
+    local request_limit
+
+    snapshot_jin_nginx_state "" "$site" "$enabled" "$default_link" \
+        || die "Could not snapshot the app-owned Nginx state"
+    JIN_NGINX_CHANGED=1
+    if sudo systemctl is-active --quiet nginx 2>/dev/null; then
+        JIN_NGINX_WAS_ACTIVE=1
+    else
+        JIN_NGINX_WAS_ACTIVE=0
+    fi
+
+    request_limit="$(( $(normalize_decimal "$UPLOAD_MAX_REQUEST_MB") + 12 ))"
+    if sudo test -L "$site"; then
+        die "Refusing to overwrite an unmanaged Nginx symlink: $site"
+    elif sudo test -e "$site" && ! sudo test -f "$site"; then
+        die "Refusing to overwrite an unmanaged Nginx path: $site"
+    elif sudo test -f "$site" && ! sudo grep -q 'Managed by jin/setup.sh' "$site"; then
+        die "Refusing to overwrite unmanaged nginx configuration: $site"
+    fi
+    if sudo test -e "$enabled" && ! sudo test -L "$enabled"; then
+        die "Refusing to overwrite unmanaged nginx enabled entry: $enabled"
+    fi
+    if sudo test -L "$default_link" && [[ "$(sudo readlink "$default_link")" == "/etc/nginx/sites-available/default" ]]; then
+        sudo rm -f "$default_link"
+    elif sudo test -e "$default_link"; then
+        die "Refusing to disable unmanaged nginx enabled entry: $default_link"
+    fi
+
+    sudo install -d -m 0755 /etc/nginx/sites-available /etc/nginx/sites-enabled
+    sudo install -d -o root -g root -m 0755 "$acme_webroot/.well-known/acme-challenge"
+    sudo tee "$site" >/dev/null <<NGINX
+# Managed by jin/setup.sh. Re-running setup updates this file.
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+    location / { return 444; }
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${APP_DOMAIN};
+    root ${APP_DIR}/public;
+    index index.php;
+    client_max_body_size ${request_limit}M;
+    client_body_timeout 3600s;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root ${acme_webroot};
+        default_type text/plain;
+        try_files \$uri =404;
+    }
+
+    location = ${ONLYOFFICE_PUBLIC_PATH} {
+        return 301 ${ONLYOFFICE_PUBLIC_PATH}/;
+    }
+
+    location ^~ ${ONLYOFFICE_PUBLIC_PATH}/ {
+        client_max_body_size ${request_limit}M;
+        proxy_pass http://127.0.0.1:${ONLYOFFICE_PORT}/;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Host \$host${ONLYOFFICE_PUBLIC_PATH};
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_buffering off;
+    }
+
+    location ~ ^/(app|apps)/ {
+        proxy_pass http://127.0.0.1:${REVERB_SERVER_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 120s;
+    }
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location ~* \.(?:css|js|jpg|jpeg|png|gif|svg|ico|webp|woff2?|ttf|eot|mp4|webm)$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        try_files \$uri =404;
+    }
+
+    location ~ ^/index\\.php(/|\$) {
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
+        fastcgi_param DOCUMENT_ROOT \$realpath_root;
+        fastcgi_pass unix:${PHP_FPM_SOCK};
+        fastcgi_read_timeout 3600s;
+        internal;
+    }
+
+    location ~ /\\.(?!well-known).* { deny all; }
+}
+
+# ONLYOFFICE retrieves signed originals through this loopback-only listener.
+server {
+    listen 127.0.0.1:${APP_INTERNAL_PORT};
+    server_name localhost;
+    root ${APP_DIR}/public;
+    index index.php;
+    client_max_body_size ${request_limit}M;
+
+    location / { try_files \$uri \$uri/ /index.php?\$query_string; }
+    location ~ ^/index\\.php(/|\$) {
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
+        fastcgi_param DOCUMENT_ROOT \$realpath_root;
+        fastcgi_pass unix:${PHP_FPM_SOCK};
+        fastcgi_read_timeout 3600s;
+    }
+    location ~ /\\. { deny all; }
+}
+NGINX
+    sudo ln -sfn "$site" "$enabled"
+    sudo nginx -t
+    sudo systemctl enable --now nginx
+}
+
+configure_jin_supervisor() {
+    sudo tee /etc/supervisor/conf.d/jin-queue.conf >/dev/null <<SUPERVISOR
+[program:jin-queue]
+process_name=%(program_name)s_%(process_num)02d
+directory=${APP_DIR}
+command=${PHP_BINARY} artisan queue:work redis --sleep=3 --tries=5 --max-time=3600
+numprocs=10
+user=www-data
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+stopwaitsecs=300
+redirect_stderr=true
+stdout_logfile=/var/log/jin-queue_%(process_num)02d.log
+SUPERVISOR
+
+    sudo tee /etc/supervisor/conf.d/jin-reverb.conf >/dev/null <<SUPERVISOR
+[program:jin-reverb]
+directory=${APP_DIR}
+command=${PHP_BINARY} artisan reverb:start --host=127.0.0.1 --port=${REVERB_SERVER_PORT}
+user=www-data
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+stopwaitsecs=30
+redirect_stderr=true
+stdout_logfile=/var/log/jin-reverb.log
+SUPERVISOR
+
+    sudo tee /etc/supervisor/conf.d/jin-scheduler.conf >/dev/null <<SUPERVISOR
+[program:jin-scheduler]
+directory=${APP_DIR}
+command=${PHP_BINARY} artisan schedule:work
+user=www-data
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+stopwaitsecs=60
+redirect_stderr=true
+stdout_logfile=/var/log/jin-scheduler.log
+SUPERVISOR
+
+    sudo systemctl enable --now supervisor
+    wait_for_supervisor || die "Supervisor did not expose its control socket"
+    sudo supervisorctl reread
+    sudo supervisorctl update
+    sudo supervisorctl restart 'jin-queue:*' jin-reverb jin-scheduler
+}
+
+restrict_ubuntu_onlyoffice_listener() {
+    local -a listener_configs local_configs
+    local config index
+
+    mapfile -t listener_configs < <(
+        sudo grep -RIl --include='*.conf' -E \
+            "^[[:space:]]*listen[[:space:]]+((0\\.0\\.0\\.0:)?${ONLYOFFICE_PORT}|\\[::(1)?\\]:${ONLYOFFICE_PORT})([[:space:]].*)?;" \
+            /etc/nginx 2>/dev/null || true
+    )
+    for index in "${!listener_configs[@]}"; do
+        config="${listener_configs[$index]}"
+        sudo sed -E -i.bak \
+            -e "s|^([[:space:]]*)listen[[:space:]]+(0\\.0\\.0\\.0:)?${ONLYOFFICE_PORT}([[:space:]].*)?;[[:space:]]*$|\\1listen 127.0.0.1:${ONLYOFFICE_PORT}\\3;|" \
+            -e "/^[[:space:]]*listen[[:space:]]+\\[::(1)?\\]:${ONLYOFFICE_PORT}([[:space:]].*)?;[[:space:]]*$/d" \
+            "$config"
+        sudo rm -f "$config.bak"
+    done
+    mapfile -t local_configs < <(
+        sudo grep -RIl --include='*.conf' -E \
+            "^[[:space:]]*listen[[:space:]]+127\\.0\\.0\\.1:${ONLYOFFICE_PORT}([[:space:]].*)?;" \
+            /etc/nginx 2>/dev/null || true
+    )
+    [[ "${#local_configs[@]}" -gt 0 ]] \
+        || die "Could not configure ONLYOFFICE on IPv4 loopback port $ONLYOFFICE_PORT"
+}
+
+configure_ubuntu_onlyoffice_deployment() {
+    local local_json=/etc/onlyoffice/documentserver/local.json
+    local keyring=/usr/share/keyrings/onlyoffice.gpg
+    local key_fingerprints
+
+    curl -fsSL https://download.onlyoffice.com/GPG-KEY-ONLYOFFICE \
+        | sudo gpg --batch --yes --dearmor -o "$keyring"
+    key_fingerprints="$(gpg --no-default-keyring --keyring "$keyring" --with-colons --fingerprint 2>/dev/null \
+        | awk -F: '$1 == "fpr" { print $10 }')"
+    grep -qx 'E09CA29F6E178040EF22B4098320CA65CB2DE8E5' <<< "$key_fingerprints" \
+        || die "ONLYOFFICE signing key fingerprint check failed"
+    printf 'deb [signed-by=%s] https://download.onlyoffice.com/repo/debian squeeze main\n' "$keyring" \
+        | sudo tee /etc/apt/sources.list.d/onlyoffice.list >/dev/null
+    apt_get_with_lock_wait update
+
+    if ! onlyoffice_package_installed; then
+        printf 'onlyoffice-documentserver onlyoffice/ds-port select %s\n' "$ONLYOFFICE_PORT" \
+            | sudo debconf-set-selections
+        printf 'onlyoffice-documentserver onlyoffice/jwt-enabled boolean true\n' \
+            | sudo debconf-set-selections
+        printf 'onlyoffice-documentserver onlyoffice/jwt-secret password %s\n' "$JWT_SECRET" \
+            | sudo debconf-set-selections
+        apt_get_with_lock_wait install -y onlyoffice-documentserver
+    fi
+
+    [[ -f "$local_json" ]] || die "Could not find $local_json after ONLYOFFICE installation"
+    TARGET_MAX_DOWNLOAD_BYTES="$TARGET_MAX_DOWNLOAD_BYTES" \
+        configure_ubuntu_jwt "$local_json"
+    configure_ubuntu_max_download_bytes "$local_json"
+    restrict_ubuntu_onlyoffice_listener
+    sudo nginx -t
+    restart_ubuntu_onlyoffice
+    wait_for_document_server "http://127.0.0.1:${ONLYOFFICE_PORT}" 90 2 \
+        || die "ONLYOFFICE readiness failed on 127.0.0.1:${ONLYOFFICE_PORT}"
+}
+
+configure_jin_tls() {
+    local acme_webroot=/var/www/letsencrypt
+    local token body_file response code
+    local -a certbot_args
+
+    if [[ "$NO_SSL" -eq 1 ]]; then
+        warn "Skipping Let's Encrypt; HTTP-only deployment requested"
+        return 0
+    fi
+
+    sudo install -d -m 0755 "$acme_webroot/.well-known/acme-challenge"
+    if sudo test -f "/etc/letsencrypt/live/$APP_DOMAIN/fullchain.pem" \
+        && sudo test -f "/etc/letsencrypt/live/$APP_DOMAIN/privkey.pem"; then
+        sudo certbot install --cert-name "$APP_DOMAIN" --nginx --redirect --non-interactive \
+            || die "Certbot could not install the existing certificate for $APP_DOMAIN"
+    else
+        token="jin-$(openssl rand -hex 12)"
+        body_file="$(mktemp "${TMPDIR:-/tmp}/jin-acme-response.XXXXXX")"
+        printf '%s\n' "$token" | sudo tee "$acme_webroot/.well-known/acme-challenge/$token" >/dev/null
+        sudo chown root:root "$acme_webroot/.well-known/acme-challenge/$token"
+        sudo chmod 0644 "$acme_webroot/.well-known/acme-challenge/$token"
+        response="$(curl --noproxy '*' --silent --show-error --connect-timeout 5 --max-time 10 \
+            --header "Host: $APP_DOMAIN" --output "$body_file" --write-out '%{http_code}' \
+            "http://127.0.0.1/.well-known/acme-challenge/$token" || true)"
+        code="$response"
+        response="$(head -c 512 "$body_file")"
+        sudo rm -f "$acme_webroot/.well-known/acme-challenge/$token"
+        rm -f "$body_file"
+        [[ "$code" == 200 && "$response" == "$token" ]] \
+            || die "Nginx ACME webroot preflight failed for $APP_DOMAIN"
+
+        certbot_args=(run --authenticator webroot --installer nginx --webroot-path "$acme_webroot" \
+            -d "$APP_DOMAIN" --redirect --non-interactive --agree-tos)
+        if [[ -n "$EMAIL" ]]; then
+            certbot_args+=(--email "$EMAIL")
+        else
+            certbot_args+=(--register-unsafely-without-email)
+        fi
+        sudo certbot "${certbot_args[@]}" \
+            || die "Certbot failed; verify DNS and TCP port 80 for $APP_DOMAIN"
+    fi
+    sudo systemctl reload nginx
+    sudo systemctl enable --now certbot.timer
+}
+
+verify_jin_deployment() {
+    local queue_status queue_running office_health
+    local markitdown_path
+
+    sudo nginx -t
+    sudo systemctl is-active --quiet nginx
+    sudo systemctl is-active --quiet php8.5-fpm
+    sudo systemctl is-active --quiet postgresql
+    sudo systemctl is-active --quiet redis-server
+    sudo systemctl is-active --quiet rabbitmq-server
+    sudo systemctl is-active --quiet supervisor
+    sudo -u postgres pg_isready -p "$PG_PORT" -q
+    [[ "$(redis-cli --raw ping)" == PONG ]] || die "Redis did not respond to ping"
+    verify_rabbitmq_loopback
+    markitdown_path="$APP_DIR/.venv-file-content/bin/markitdown"
+    [[ -x "$markitdown_path" ]] || die "MarkItDown executable was not installed: $markitdown_path"
+    "$IMAGEMAGICK_BINARY" -version >/dev/null 2>&1 \
+        || die "ImageMagick could not be executed: $IMAGEMAGICK_BINARY"
+    wait_for_document_server "http://127.0.0.1:${ONLYOFFICE_PORT}" 30 2 \
+        || die "ONLYOFFICE final readiness check failed"
+
+    queue_status="$(sudo supervisorctl status 'jin-queue:*')"
+    queue_running="$(printf '%s\n' "$queue_status" | awk '$2 == "RUNNING" { count++ } END { print count + 0 }')"
+    [[ "$queue_running" -eq 10 ]] || die "Expected 10 running Jin queue workers, found $queue_running"
+    sudo supervisorctl status jin-reverb jin-scheduler >/dev/null
+
+    if [[ "$NO_SSL" -eq 0 ]]; then
+        curl --resolve "$APP_DOMAIN:443:127.0.0.1" --connect-timeout 5 --max-time 15 \
+            -fsS -o /dev/null "https://${APP_DOMAIN}/up" \
+            || die "Application HTTPS health check failed"
+        office_health="$(curl --resolve "$APP_DOMAIN:443:127.0.0.1" --connect-timeout 5 --max-time 15 \
+            -fsS "https://${APP_DOMAIN}${ONLYOFFICE_PUBLIC_PATH}/healthcheck")" \
+            || die "ONLYOFFICE public HTTPS health request failed"
+    else
+        curl -H "Host: $APP_DOMAIN" --connect-timeout 5 --max-time 15 \
+            -fsS -o /dev/null "http://127.0.0.1/up" \
+            || die "Application HTTP health check failed"
+        office_health="$(curl -H "Host: $APP_DOMAIN" --connect-timeout 5 --max-time 15 \
+            -fsS "http://127.0.0.1${ONLYOFFICE_PUBLIC_PATH}/healthcheck")" \
+            || die "ONLYOFFICE public HTTP health request failed"
+    fi
+    grep -Eiq 'true|ok' <<< "$office_health" \
+        || die "Unexpected ONLYOFFICE public health response"
+    if [[ "$NO_SSL" -eq 0 ]]; then
+        curl --resolve "$APP_DOMAIN:443:127.0.0.1" --connect-timeout 5 --max-time 15 \
+            -fsS -o /dev/null "https://${APP_DOMAIN}${ONLYOFFICE_PUBLIC_PATH}/web-apps/apps/api/documents/api.js" \
+            || die "ONLYOFFICE editor API is not reachable through ${ONLYOFFICE_PUBLIC_PATH}"
+    else
+        curl -H "Host: $APP_DOMAIN" --connect-timeout 5 --max-time 15 \
+            -fsS -o /dev/null "http://127.0.0.1${ONLYOFFICE_PUBLIC_PATH}/web-apps/apps/api/documents/api.js" \
+            || die "ONLYOFFICE editor API is not reachable through ${ONLYOFFICE_PUBLIC_PATH}"
+    fi
+
+    if [[ "$NO_SSL" -eq 0 && "$(read_env MAIL_MAILER "$ENV_FILE")" != log && "$(read_env MAIL_MAILER "$ENV_FILE")" != array ]]; then
+        run_as_deploy php "$APP_DIR/artisan" app:production-check \
+            || die "Jin production configuration check failed"
+    else
+        warn "Skipping app:production-check until HTTPS and external SMTP settings are supplied"
+    fi
+    log "Verified Jin, Nginx, PHP-FPM, PostgreSQL/PGroonga, Redis, RabbitMQ, Supervisor, and ONLYOFFICE"
+}
+
 setup_ubuntu() {
-    local architecture version_id version_codename processor_count memory_mb swap_mb available_disk_mb
-    local onlyoffice_installed=0 local_json
+    local architecture processor_count memory_mb swap_mb available_disk_mb
+    local -a php_packages postgres_packages
+    local php_version_id
 
-    [[ "$(id -u)" -ne 0 ]] || die "Run as a regular sudo-capable user, not root"
-    command -v sudo >/dev/null 2>&1 || die "sudo is required"
-    sudo -v || die "sudo authentication failed"
-
+    [[ "$(id -u)" -eq 0 ]] || { command -v sudo >/dev/null || die "sudo is required"; sudo -v || die "sudo authentication failed"; }
     [[ -f /etc/os-release ]] || die "Could not identify the operating system"
     . /etc/os-release
-    version_id="${VERSION_ID:-}"
-    version_codename="${VERSION_CODENAME:-}"
-    [[ "${ID:-}" == "ubuntu" ]] || die "This Linux setup supports Ubuntu only"
-    case "$version_id" in
-        24.04|26.04) ;;
-        *) die "Unsupported Ubuntu version: $version_id (supported: 24.04, 26.04)" ;;
-    esac
-
-    command -v dpkg >/dev/null 2>&1 || die "dpkg is required"
+    [[ "${ID:-}" == ubuntu ]] || die "This Linux setup supports Ubuntu only"
+    set_ubuntu_package_matrix \
+        || die "Unsupported Ubuntu version: ${VERSION_ID:-unknown} (supported: 24.04, 26.04)"
+    VERSION_CODENAME="${VERSION_CODENAME:-$(lsb_release --codename --short 2>/dev/null || true)}"
     architecture="$(dpkg --print-architecture)"
-    [[ "$architecture" == "amd64" ]] \
+    [[ "$architecture" == amd64 ]] \
         || die "ONLYOFFICE DocumentServer APT setup requires amd64; detected $architecture"
-
     processor_count="$(getconf _NPROCESSORS_ONLN)"
     memory_mb="$(awk '/MemTotal:/ { print int($2 / 1024); exit }' /proc/meminfo)"
     swap_mb="$(awk '/SwapTotal:/ { print int($2 / 1024); exit }' /proc/meminfo)"
     available_disk_mb="$(df -Pm /var | awk 'NR == 2 { print $4 }')"
     [[ "$processor_count" =~ ^[0-9]+$ && "$processor_count" -ge 2 ]] \
         || die "At least 2 CPU cores are required for ONLYOFFICE"
-    [[ "$memory_mb" =~ ^[0-9]+$ && "$memory_mb" -ge 4096 ]] \
-        || die "At least 4 GB RAM is required for ONLYOFFICE"
-    [[ "$available_disk_mb" =~ ^[0-9]+$ && "$available_disk_mb" -ge 40960 ]] \
-        || die "At least 40 GB free space under /var is required"
-    [[ "$swap_mb" =~ ^[0-9]+$ && "$swap_mb" -ge 4096 ]] \
+    [[ "$memory_mb" =~ ^[0-9]+$ && "$memory_mb" -ge 2048 ]] \
+        || die "At least 2 GB RAM is required for ONLYOFFICE"
+    [[ "$available_disk_mb" =~ ^[0-9]+$ ]] \
+        || die "Could not determine free disk space under /var"
+    (( available_disk_mb >= 30720 )) \
+        || die "At least 30 GB free space under /var is required; detected $((available_disk_mb / 1024)) GB"
+    (( available_disk_mb >= 40960 )) \
+        || warn "ONLYOFFICE officially recommends at least 40 GB free space; continuing with $((available_disk_mb / 1024)) GB"
+    (( swap_mb >= 4096 )) \
         || warn "ONLYOFFICE recommends at least 4 GB swap; detected ${swap_mb:-0} MB"
-    log "Ubuntu $version_id ($version_codename) on $architecture"
-    log "Installing OnlyOffice prerequisites..."
-    sudo apt-get update -y
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        ca-certificates curl gnupg jq openssl python3
 
-    if [[ "$CONFIGURE_NGINX" -eq 1 ]]; then
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nginx
-        if [[ $NO_SSL -eq 0 ]]; then
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y certbot python3-certbot-nginx
+    DEPLOY_USER="${DEPLOY_USER:-$(id -un)}"
+    id "$DEPLOY_USER" >/dev/null 2>&1 || die "Deployment user does not exist: $DEPLOY_USER"
+    if [[ -z "$APP_DOMAIN" ]]; then
+        if [[ -t 0 ]]; then
+            read -r -p "Jin public domain: " APP_DOMAIN
+        else
+            die "--domain is required for a non-interactive Ubuntu deployment"
         fi
     fi
+    valid_postgresql_identifier "$DB_USER" || die "Invalid PostgreSQL role name: $DB_USER"
+    valid_postgresql_identifier "$DB_NAME" || die "Invalid PostgreSQL database name: $DB_NAME"
+    [[ "$DB_USER" != postgres && "$DB_NAME" != postgres && "$DB_NAME" != template0 && "$DB_NAME" != template1 ]] \
+        || die "Reserved PostgreSQL role or database name"
+    canonicalize_ubuntu_app_dir \
+        || die "--app-dir must resolve under /var/www or /home and not escape through a symlink"
+    validate_ubuntu_env_file \
+        || die "Ubuntu --env-file is confined to exactly ${APP_DIR}/.env"
+    [[ "$REPO_URL" != *$'\n'* && "$REPO_URL" != *$'\r'* && "$REPO_URL" != *[[:space:]]* ]] \
+        || die "--repo cannot contain whitespace or newlines"
+    [[ -z "$OFFICE_DOMAIN" ]] \
+        || die "Ubuntu deployment uses the Jin origin and ${ONLYOFFICE_PUBLIC_PATH}; do not pass --office-domain"
+    [[ "$CONFIGURE_NGINX" != 0 ]] \
+        || die "Ubuntu deployment requires Nginx; remove --no-nginx"
 
-    log "Configuring the official OnlyOffice APT repository..."
-    curl -fsSL https://download.onlyoffice.com/GPG-KEY-ONLYOFFICE | \
-        sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/onlyoffice.gpg
-    printf 'deb [signed-by=/usr/share/keyrings/onlyoffice.gpg] https://download.onlyoffice.com/repo/debian squeeze main\n' | \
-        sudo tee /etc/apt/sources.list.d/onlyoffice.list >/dev/null
-    sudo apt-get update -y
-
-    if onlyoffice_package_installed; then
-        onlyoffice_installed=1
-        log "ONLYOFFICE DocumentServer is already installed"
-        if [[ -z "$JWT_SECRET" ]]; then
-            JWT_SECRET="$(read_package_jwt_secret)"
-        fi
-        wait_for_health "http://127.0.0.1:${ONLYOFFICE_PORT}" 3 1 \
-            || die "Existing ONLYOFFICE is not healthy on port $ONLYOFFICE_PORT; pass its configured port"
+    if [[ "$(id -u)" -ne 0 ]]; then
+        (
+            while sleep 60; do sudo -n -v || exit; done
+        ) &
+        SUDO_KEEPALIVE_PID=$!
     fi
+    umask 022
+    JIN_NGINX_USE_SUDO=1
+    trap cleanup_jin_deployment EXIT
 
-    [[ -n "$JWT_SECRET" ]] || JWT_SECRET="$(openssl rand -hex 32)"
+    log "Ubuntu ${VERSION_ID} (${VERSION_CODENAME}) on ${architecture}"
+    log "Installing Jin runtime packages"
+    apt_get_with_lock_wait update
+    apt_get_with_lock_wait install -y \
+        ca-certificates curl gnupg lsb-release software-properties-common ubuntu-keyring wget
+    sudo add-apt-repository -y --no-update universe
+    apt_get_with_lock_wait update
+    apt_get_with_lock_wait install -y nginx-extras
+
+    install_pgroonga_repository
+    validate_ubuntu_database_packages
+    postgres_packages=(
+        "postgresql-${PG_MAJOR}" "postgresql-client-${PG_MAJOR}" "$PGROONGA_PACKAGE"
+    )
+    apt_get_with_lock_wait install -y \
+        apt-transport-https git unzip zip rsync acl jq openssl supervisor certbot python3-certbot-nginx \
+        unattended-upgrades python3 python3-venv build-essential pkg-config iproute2 \
+        "${postgres_packages[@]}" redis-server rabbitmq-server \
+        imagemagick poppler-utils ghostscript fonts-dejavu-core fonts-liberation fonts-noto-cjk
+
+    echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" \
+        | sudo debconf-set-selections
+    apt_get_with_lock_wait install -y ttf-mscorefonts-installer \
+        || warn "Microsoft core fonts could not be installed; continuing with open fonts"
+
+    IMAGEMAGICK_BINARY="$(resolve_imagemagick_path)" \
+        || die "ImageMagick was installed but neither magick nor convert is executable"
+    "$IMAGEMAGICK_BINARY" -version >/dev/null 2>&1 \
+        || die "ImageMagick could not be executed: $IMAGEMAGICK_BINARY"
+    log "ImageMagick executable: $IMAGEMAGICK_BINARY"
+
+    dpkg-query -W -f='${db:Status-Status}' nginx-extras 2>/dev/null | grep -qx installed \
+        || die "Ubuntu nginx-extras was not installed"
+    NGINX_VERSION="$(nginx -v 2>&1 | cut -d/ -f2)"
+    nginx -V 2>&1 | grep -q -- '--with-http_secure_link_module' \
+        || die "The installed nginx build lacks the http_secure_link module required by ONLYOFFICE"
+    log "Using Ubuntu nginx-extras (nginx $NGINX_VERSION)"
+    sudo systemctl enable --now redis-server
+    configure_rabbitmq
+    verify_rabbitmq_loopback
+    sudo systemctl enable --now supervisor
+    wait_for_supervisor || die "Supervisor did not expose its control socket before ONLYOFFICE installation"
+
+    if [[ -d "$APP_DIR/.git" ]]; then
+        prepare_jin_update
+    fi
+    ensure_jin_repository
+    APP_DIR="$(CDPATH= cd -- "$APP_DIR" && pwd -P)"
+    ENV_FILE="$APP_DIR/.env"
+    if [[ ! -f "$ENV_FILE" ]]; then
+        [[ -f "$APP_DIR/.env.example" ]] || die "Could not find $ENV_FILE or $APP_DIR/.env.example"
+        run_as_deploy cp "$APP_DIR/.env.example" "$ENV_FILE"
+    fi
+    sudo chmod o-rwx "$ENV_FILE"
+
+    DB_NAME="${DB_NAME:-jin}"
+    DB_USER="${DB_USER:-jin}"
+    resolve_ubuntu_instance_id
+    [[ "$INSTANCE_ID" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || die "Invalid ONLYOFFICE_INSTANCE_ID"
+    resolve_ubuntu_jwt_secret
+    ONLYOFFICE_PORT="${ONLYOFFICE_PORT:-8081}"
+    APP_INTERNAL_PORT="${APP_INTERNAL_PORT:-8090}"
+    REVERB_SERVER_PORT="${REVERB_SERVER_PORT:-8080}"
+    resolve_ubuntu_deployment_values
     validate_jwt_secret
 
-    if [[ $onlyoffice_installed -eq 0 ]]; then
-        log "Installing ONLYOFFICE DocumentServer on port $ONLYOFFICE_PORT with JWT enabled..."
-        printf 'onlyoffice-documentserver onlyoffice/ds-port select %s\n' \
-            "$ONLYOFFICE_PORT" | sudo debconf-set-selections
-        printf '%s\n' \
-            'onlyoffice-documentserver onlyoffice/jwt-enabled boolean true' \
-            | sudo debconf-set-selections
-        printf 'onlyoffice-documentserver onlyoffice/jwt-secret password %s\n' \
-            "$JWT_SECRET" | sudo debconf-set-selections
-        printf 'ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true\n' \
-            | sudo debconf-set-selections
+    configure_ubuntu_postgresql
+    configure_ubuntu_onlyoffice_deployment
+    configure_rabbitmq
+    verify_rabbitmq_loopback
 
-        if apt-cache show ttf-mscorefonts-installer >/dev/null 2>&1; then
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ttf-mscorefonts-installer \
-                || warn "Microsoft core fonts could not be installed; continuing with open fonts"
-        fi
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y onlyoffice-documentserver
+    case "$VERSION_ID" in
+        24.04)
+            log "Enabling the maintained PHP repository for PHP 8.5 on Ubuntu $VERSION_ID"
+            sudo add-apt-repository -y --no-update ppa:ondrej/php
+            apt_get_with_lock_wait update
+            ;;
+        26.04)
+            log "Using Ubuntu packages for PHP 8.5 on Ubuntu $VERSION_ID"
+            ;;
+    esac
+    php_packages=(
+        php8.5-cli php8.5-fpm php8.5-common php8.5-curl php8.5-mbstring
+        php8.5-xml php8.5-zip php8.5-bcmath php8.5-intl
+        php8.5-pgsql php8.5-gd php8.5-redis
+    )
+    apt_package_available php8.5-opcache && php_packages+=(php8.5-opcache)
+    apt_get_with_lock_wait install -y "${php_packages[@]}"
+    sudo update-alternatives --install /usr/bin/php php /usr/bin/php8.5 85
+    sudo update-alternatives --set php /usr/bin/php8.5
+    PHP_BINARY=/usr/bin/php8.5
+    PHP_FPM_SOCK=/run/php/php8.5-fpm.sock
+    php_version_id="$($PHP_BINARY -r 'echo PHP_VERSION_ID;')"
+    (( php_version_id >= 80500 )) || die "PHP 8.5 or newer is required"
+    [[ "$($PHP_BINARY -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')" == 8.5 ]] \
+        || die "PHP CLI was not switched to /usr/bin/php8.5"
+    for extension in curl mbstring xml zip bcmath intl pgsql gd redis; do
+        "$PHP_BINARY" -r "exit(extension_loaded('$extension') ? 0 : 1);" \
+            || die "PHP 8.5 extension is missing: $extension"
+    done
+    "$PHP_BINARY" -r 'exit(in_array("pgsql", PDO::getAvailableDrivers(), true) ? 0 : 1);' \
+        || die "PHP 8.5 PDO PostgreSQL driver is missing"
+    sudo systemctl enable --now php8.5-fpm
+    sudo systemctl is-active --quiet php8.5-fpm || die "PHP 8.5 FPM is not active"
+    [[ -S "$PHP_FPM_SOCK" ]] || die "PHP-FPM socket was not created at $PHP_FPM_SOCK"
+
+    install_composer
+    composer --version
+    if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1 \
+        || ! node_major_at_least_24 \
+        || ! grep -Fq 'https://deb.nodesource.com/node_24.x nodistro main' /etc/apt/sources.list.d/nodesource.list 2>/dev/null; then
+        install_nodesource_repository
+        apt_get_with_lock_wait install -y nodejs
     fi
+    node_major_at_least_24 \
+        || die "Node.js 24 or newer is required"
+    node --version
+    npm --version
 
-    local_json="/etc/onlyoffice/documentserver/local.json"
-    [[ -f "$local_json" ]] || die "Could not find $local_json after OnlyOffice installation"
+    prepare_jin_update
+    log "Installing production PHP dependencies"
+    (cd "$APP_DIR" && run_as_deploy composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader)
+    log "Installing the pinned MarkItDown environment"
+    run_as_deploy python3 -m venv --upgrade-deps "$APP_DIR/.venv-file-content"
+    run_as_deploy "$APP_DIR/.venv-file-content/bin/python" -m pip install --requirement "$APP_DIR/requirements-file-content.txt"
+    configure_jin_environment
+    configure_php_uploads
 
-    if [[ "$CONFIGURE_NGINX" -eq 1 ]]; then
-        configure_nginx
-    fi
+    log "Building Jin frontend"
+    (cd "$APP_DIR" && run_as_deploy npm ci --no-audit --no-fund)
+    (cd "$APP_DIR" && run_as_deploy npm run build)
+    (cd "$APP_DIR" && run_as_deploy php artisan optimize:clear)
+    (cd "$APP_DIR" && run_as_deploy php artisan migrate --force)
+    (cd "$APP_DIR" && run_as_deploy php artisan optimize)
 
-    log "Applying JWT and ${TARGET_MAX_DOWNLOAD_BYTES}-byte download limits..."
-    configure_ubuntu_jwt
-    configure_ubuntu_max_download_bytes
-    restart_ubuntu_onlyoffice
-
-    if ! wait_for_document_server "http://127.0.0.1:${ONLYOFFICE_PORT}" 90 2; then
-        sudo journalctl -u ds-converter -u ds-docservice --no-pager -n 80 || true
-        die "OnlyOffice health check failed on 127.0.0.1:${ONLYOFFICE_PORT}"
-    fi
-
-    configure_app_env
-    getent group www-data >/dev/null \
-        || die "The www-data group is required to secure $ENV_FILE"
-    sudo chown "$(id -un):www-data" "$ENV_FILE"
+    log "Securing Jin application paths"
+    sudo chown -R "$DEPLOY_USER":www-data "$APP_DIR"
+    sudo chown -R www-data:www-data "$APP_DIR/storage" "$APP_DIR/bootstrap/cache"
+    sudo chmod -R ug+rwX "$APP_DIR/storage" "$APP_DIR/bootstrap/cache"
+    sudo setfacl -R -m "u:${DEPLOY_USER}:rwx,u:www-data:rwx" \
+        -m "d:u:${DEPLOY_USER}:rwx,d:u:www-data:rwx" "$APP_DIR/storage" "$APP_DIR/bootstrap/cache"
+    sudo chown "$DEPLOY_USER":www-data "$ENV_FILE"
     sudo chmod 0640 "$ENV_FILE"
+    grant_web_traverse
 
-    if curl -fsS --max-time 5 "${TARGET_INTERNAL_URL}/up" >/dev/null 2>&1; then
-        log "OnlyOffice host can reach the application at $TARGET_INTERNAL_URL"
-    else
-        warn "The application healthcheck at ${TARGET_INTERNAL_URL}/up did not respond; verify Nginx and the application"
+    configure_jin_nginx
+    configure_jin_supervisor
+    configure_jin_tls
+    if [[ "$APP_MAINTENANCE" -eq 1 ]]; then
+        run_as_deploy php "$APP_DIR/artisan" up
+        APP_MAINTENANCE=0
     fi
-
-    warn "Keep TCP port ${ONLYOFFICE_PORT} blocked from external networks; expose OnlyOffice through Nginx only"
-    log "OnlyOffice is ready on host port ${ONLYOFFICE_PORT}"
-    log "Browser URL: $TARGET_PUBLIC_URL"
+    APP_PROCESSES_STOPPED=0
+    verify_jin_deployment
+    discard_jin_nginx_backup \
+        || die "Could not discard the temporary Jin Nginx backup"
+    trap - EXIT
+    [[ -z "$SUDO_KEEPALIVE_PID" ]] || kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+    log "Provisioning complete. Jin: ${PUBLIC_SCHEME}://${APP_DOMAIN}; ONLYOFFICE: ${TARGET_PUBLIC_URL}"
 }
 
 usage() {
     cat <<'EOF'
 Usage: ./setup.sh [options]
 
-Provision ONLYOFFICE DocumentServer and update the Jin .env file.
+Provision and deploy Jin on Ubuntu Server, or start the existing macOS Apple
+Container DocumentServer development environment.
+
+Ubuntu defaults:
+  Repository: https://github.com/askdkc/jin
+  App path:   /var/www/jin
+  Public Office path: <domain>/onlyoffice
+  Laravel -> DocumentServer: http://127.0.0.1:<onlyoffice-port>
+  DocumentServer -> Laravel: http://127.0.0.1:<app-internal-port>
 
 Options:
-  --app-dir <path>             Jin application directory (default: script directory)
-  --env-file <path>            Environment file (default: <app-dir>/.env)
-  --domain <domain>            Jin application domain (alias: --app-domain)
-  --office-domain <domain>     Public OnlyOffice domain
+  --domain <domain>            Jin public domain (prompted when interactive)
+  --app-domain <domain>        Alias for --domain
+  --repo <url>                 Git repository (default: https://github.com/askdkc/jin)
+  --app-dir <path>             Jin application directory (Ubuntu: /var/www/jin)
+  --env-file <path>            macOS environment file; Ubuntu requires <app-dir>/.env
+  --db-name <name>             PostgreSQL database (default: jin)
+  --db-user <name>             PostgreSQL application role (default: jin)
+  --db-password <password>     PostgreSQL password; prefer existing .env or env input
   --email <address>            Let's Encrypt registration / expiry mail
-  --onlyoffice-port <port>     DocumentServer host port (default: 8081)
-  --onlyoffice-image <image>   macOS container image (default: onlyoffice/documentserver:9.4.0.1)
-  --container-name <name>      macOS container name (default: app-specific)
-  --recreate-container         Explicitly replace an existing macOS container
-  --jwt-secret <secret>        JWT secret; prefer ONLYOFFICE_JWT_SECRET to avoid shell history
-  --instance-id <id>           ONLYOFFICE instance id (default: jin-production/local)
-  --app-internal-url <url>     DocumentServer-to-Jin URL
-  --public-url <url>           Browser-to-DocumentServer URL
-  --document-server-url <url>  Jin-to-DocumentServer URL
-  --max-file-size-bytes <n>    Jin file limit (default: 209715200)
-  --max-download-bytes <n>     DocumentServer limit (must cover file limit)
-  --nginx                      Configure an OnlyOffice Nginx virtual host
-  --no-nginx                   Do not configure Nginx
-  --no-ssl                     Skip Let's Encrypt and use HTTP for derived URLs
+  --onlyoffice-port <port>     Loopback DocumentServer port (default: 8081)
+  --app-internal-port <port>   Loopback Laravel callback port (default: 8090)
+  --jwt-secret <secret>        ONLYOFFICE JWT secret; prefer ONLYOFFICE_JWT_SECRET
+  --instance-id <id>           ONLYOFFICE instance id (Ubuntu: generated if local/blank)
+  --max-file-size-bytes <n>    Jin Office file limit
+  --max-download-bytes <n>     DocumentServer download limit
+  --no-ssl                     Skip Let's Encrypt and use HTTP
   --platform <auto|ubuntu|macos>
                                Override platform detection
+  --office-domain <domain>     macOS-only legacy public DocumentServer domain
+  --onlyoffice-image <image>   macOS Apple Container image
+  --container-name <name>      macOS Apple Container name
+  --recreate-container         Explicitly replace an existing macOS container
+  --nginx                      Accepted for macOS; Ubuntu always configures Nginx
+  --no-nginx                   macOS-only; Ubuntu requires Nginx
   -h, --help                   Show this help
 
-The same settings can be supplied through uppercase environment variables,
-including APP_DIR, OFFICE_DOMAIN, ONLYOFFICE_PORT, ONLYOFFICE_IMAGE,
-ONLYOFFICE_JWT_SECRET, APP_ONLYOFFICE_INTERNAL_URL, and ONLYOFFICE_PUBLIC_URL.
-
-Ubuntu setup requires Ubuntu 24.04 or 26.04, amd64, sudo, 2 CPU cores,
-4 GB RAM, and 40 GB free space under /var. macOS setup requires Apple silicon,
-macOS 26 or newer, and Apple's container runtime.
+Ubuntu installs PHP 8.5/FPM, Composer, Node.js 24+, PostgreSQL 16 with
+postgresql-16-pgroonga on Ubuntu 24.04 or PostgreSQL 18 with
+postgresql-18-pgdg-pgroonga on Ubuntu 26.04, Redis, RabbitMQ, the pinned
+requirements-file-content.txt MarkItDown venv, ONLYOFFICE, Nginx, and
+Supervisor queue/Reverb/scheduler processes. It uses fast-forward-only Git
+updates and preserves an existing .env, secrets, private storage, and database
+data. SMTP credentials remain operator-supplied. Ubuntu requires 24.04 or
+26.04 amd64, at least 2 CPU cores, 2 GB RAM, and 30 GB free space; 40 GB and
+4 GB swap are recommended. macOS requires Apple silicon, macOS 26 or newer,
+and Apple's container runtime.
 EOF
 }
 
 main() {
-# -------------------------------------------------------------- defaults ----
-APP_DIR="${APP_DIR:-$SCRIPT_DIR}"
-ENV_FILE="${ENV_FILE:-}"
-APP_DOMAIN="${APP_DOMAIN:-}"
-OFFICE_DOMAIN="${OFFICE_DOMAIN:-}"
-EMAIL="${EMAIL:-}"
-TARGET_DOCUMENT_SERVER_URL="${ONLYOFFICE_DOCUMENT_SERVER_URL:-}"
-TARGET_PUBLIC_URL="${ONLYOFFICE_PUBLIC_URL:-}"
-TARGET_INTERNAL_URL="${APP_ONLYOFFICE_INTERNAL_URL:-}"
-JWT_SECRET="${ONLYOFFICE_JWT_SECRET:-}"
-INSTANCE_ID="${ONLYOFFICE_INSTANCE_ID:-}"
-MAX_FILE_SIZE_BYTES="${ONLYOFFICE_MAX_FILE_SIZE_BYTES:-}"
-TARGET_MAX_DOWNLOAD_BYTES="${ONLYOFFICE_DOCUMENT_SERVER_MAX_DOWNLOAD_BYTES:-}"
-ONLYOFFICE_PORT_FROM_ENV="${ONLYOFFICE_PORT:-${ONLYOFFICE_HOST_PORT:-}}"
-ONLYOFFICE_PORT="${ONLYOFFICE_PORT_FROM_ENV:-8081}"
-ONLYOFFICE_IMAGE="${ONLYOFFICE_IMAGE:-onlyoffice/documentserver:9.4.0.1}"
-ONLYOFFICE_CONTAINER_NAME="${ONLYOFFICE_CONTAINER_NAME:-}"
-ONLYOFFICE_DATA_VOLUME="${ONLYOFFICE_DATA_VOLUME:-}"
-ONLYOFFICE_LOGS_VOLUME="${ONLYOFFICE_LOGS_VOLUME:-}"
-ONLYOFFICE_LIB_VOLUME="${ONLYOFFICE_LIB_VOLUME:-}"
-ONLYOFFICE_DB_VOLUME="${ONLYOFFICE_DB_VOLUME:-}"
-CONTAINER_CPUS="${ONLYOFFICE_CONTAINER_CPUS:-2}"
-CONTAINER_MEMORY="${ONLYOFFICE_CONTAINER_MEMORY:-4G}"
-CONTAINER_SHM_SIZE="${ONLYOFFICE_CONTAINER_SHM_SIZE:-2G}"
-MACOS_HOST_REDIRECT_IP="${ONLYOFFICE_HOST_REDIRECT_IP:-203.0.113.113}"
-PLATFORM="${ONLYOFFICE_PLATFORM:-auto}"
-CONFIGURE_NGINX="auto"
-NO_SSL=0
-PORT_EXPLICIT=0
-DOCUMENT_SERVER_URL_EXPLICIT=0
-PUBLIC_URL_EXPLICIT=0
-CONTAINER_NAME_EXPLICIT=0
-VOLUME_NAMES_EXPLICIT=0
-ALLOW_LEGACY_MACOS_RESOURCES=0
-RECREATE_CONTAINER=0
+    APP_DIR_EXPLICIT=0
+    [[ -n "${APP_DIR:-}" || -n "${JIN_PATH:-}" ]] && APP_DIR_EXPLICIT=1
+    APP_DIR="${APP_DIR:-${JIN_PATH:-$SCRIPT_DIR}}"
+    ENV_FILE="${ENV_FILE:-}"
+    REPO_URL="${REPO_URL:-${JIN_REPOSITORY:-https://github.com/askdkc/jin}}"
+    APP_DOMAIN="${APP_DOMAIN:-${DOMAIN:-}}"
+    OFFICE_DOMAIN="${OFFICE_DOMAIN:-}"
+    EMAIL="${EMAIL:-}"
+    DB_NAME="${DB_NAME:-jin}"
+    DB_USER="${DB_USER:-jin}"
+    DB_PASSWORD="${DB_PASSWORD:-}"
+    TARGET_DOCUMENT_SERVER_URL="${ONLYOFFICE_DOCUMENT_SERVER_URL:-}"
+    TARGET_PUBLIC_URL="${ONLYOFFICE_PUBLIC_URL:-}"
+    TARGET_INTERNAL_URL="${APP_ONLYOFFICE_INTERNAL_URL:-}"
+    JWT_SECRET="${ONLYOFFICE_JWT_SECRET:-}"
+    INSTANCE_ID="${ONLYOFFICE_INSTANCE_ID:-}"
+    MAX_FILE_SIZE_BYTES="${ONLYOFFICE_MAX_FILE_SIZE_BYTES:-}"
+    TARGET_MAX_DOWNLOAD_BYTES="${ONLYOFFICE_DOCUMENT_SERVER_MAX_DOWNLOAD_BYTES:-}"
+    ONLYOFFICE_PORT_FROM_ENV="${ONLYOFFICE_PORT:-${ONLYOFFICE_HOST_PORT:-}}"
+    ONLYOFFICE_PORT="${ONLYOFFICE_PORT_FROM_ENV:-8081}"
+    APP_INTERNAL_PORT_FROM_ENV="${APP_INTERNAL_PORT:-}"
+    APP_INTERNAL_PORT="${APP_INTERNAL_PORT_FROM_ENV:-8090}"
+    REVERB_SERVER_PORT="${REVERB_SERVER_PORT:-8080}"
+    ONLYOFFICE_PUBLIC_PATH=/onlyoffice
+    ONLYOFFICE_IMAGE="${ONLYOFFICE_IMAGE:-onlyoffice/documentserver:9.4.0.1}"
+    ONLYOFFICE_CONTAINER_NAME="${ONLYOFFICE_CONTAINER_NAME:-}"
+    ONLYOFFICE_DATA_VOLUME="${ONLYOFFICE_DATA_VOLUME:-}"
+    ONLYOFFICE_LOGS_VOLUME="${ONLYOFFICE_LOGS_VOLUME:-}"
+    ONLYOFFICE_LIB_VOLUME="${ONLYOFFICE_LIB_VOLUME:-}"
+    ONLYOFFICE_DB_VOLUME="${ONLYOFFICE_DB_VOLUME:-}"
+    CONTAINER_CPUS="${ONLYOFFICE_CONTAINER_CPUS:-2}"
+    CONTAINER_MEMORY="${ONLYOFFICE_CONTAINER_MEMORY:-4G}"
+    CONTAINER_SHM_SIZE="${ONLYOFFICE_CONTAINER_SHM_SIZE:-2G}"
+    MACOS_HOST_REDIRECT_IP="${ONLYOFFICE_HOST_REDIRECT_IP:-203.0.113.113}"
+    PLATFORM="${ONLYOFFICE_PLATFORM:-auto}"
+    CONFIGURE_NGINX=auto
+    NO_SSL=0
+    PORT_EXPLICIT=0
+    DOCUMENT_SERVER_URL_EXPLICIT=0
+    PUBLIC_URL_EXPLICIT=0
+    INTERNAL_PORT_EXPLICIT=0
+    CONTAINER_NAME_EXPLICIT=0
+    VOLUME_NAMES_EXPLICIT=0
+    ALLOW_LEGACY_MACOS_RESOURCES=0
+    RECREATE_CONTAINER=0
 
-if [[ -n "$ONLYOFFICE_PORT_FROM_ENV" ]]; then
-    PORT_EXPLICIT=1
-fi
-if [[ -n "${ONLYOFFICE_DOCUMENT_SERVER_URL:-}" ]]; then
-    DOCUMENT_SERVER_URL_EXPLICIT=1
-fi
-if [[ -n "${ONLYOFFICE_PUBLIC_URL:-}" ]]; then
-    PUBLIC_URL_EXPLICIT=1
-fi
-if [[ -n "${ONLYOFFICE_CONTAINER_NAME:-}" ]]; then
-    CONTAINER_NAME_EXPLICIT=1
-fi
-if [[ -n "${ONLYOFFICE_DATA_VOLUME:-}" || -n "${ONLYOFFICE_LOGS_VOLUME:-}" \
-    || -n "${ONLYOFFICE_LIB_VOLUME:-}" || -n "${ONLYOFFICE_DB_VOLUME:-}" ]]; then
-    VOLUME_NAMES_EXPLICIT=1
-fi
-if [[ -n "${ONLYOFFICE_RECREATE_CONTAINER:-}" ]]; then
-    case "$ONLYOFFICE_RECREATE_CONTAINER" in
-        true|1) RECREATE_CONTAINER=1 ;;
-        false|0) RECREATE_CONTAINER=0 ;;
-        *) die "ONLYOFFICE_RECREATE_CONTAINER must be true, false, 1, or 0" ;;
-    esac
-fi
-if [[ "${ONLYOFFICE_CONFIGURE_NGINX:-}" == "true" || "${ONLYOFFICE_CONFIGURE_NGINX:-}" == "1" ]]; then
-    CONFIGURE_NGINX=1
-elif [[ "${ONLYOFFICE_CONFIGURE_NGINX:-}" == "false" || "${ONLYOFFICE_CONFIGURE_NGINX:-}" == "0" ]]; then
-    CONFIGURE_NGINX=0
-fi
-if [[ "${ONLYOFFICE_NO_SSL:-}" == "true" || "${ONLYOFFICE_NO_SSL:-}" == "1" ]]; then
-    NO_SSL=1
-fi
-
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --app-dir|--env-file|--domain|--app-domain|--office-domain|--email|--onlyoffice-port|--onlyoffice-image|--container-name|--jwt-secret|--instance-id|--app-internal-url|--public-url|--document-server-url|--max-file-size-bytes|--max-download-bytes|--platform)
-            [[ $# -ge 2 ]] || die "$1 requires a value"
-            case "$1" in
-                --app-dir) APP_DIR="$2" ;;
-                --env-file) ENV_FILE="$2" ;;
-                --domain|--app-domain) APP_DOMAIN="$2" ;;
-                --office-domain) OFFICE_DOMAIN="$2" ;;
-                --email) EMAIL="$2" ;;
-                --onlyoffice-port) ONLYOFFICE_PORT="$2"; PORT_EXPLICIT=1 ;;
-                --onlyoffice-image) ONLYOFFICE_IMAGE="$2" ;;
-                --container-name) ONLYOFFICE_CONTAINER_NAME="$2"; CONTAINER_NAME_EXPLICIT=1 ;;
-                --jwt-secret) JWT_SECRET="$2" ;;
-                --instance-id) INSTANCE_ID="$2" ;;
-                --app-internal-url) TARGET_INTERNAL_URL="$2" ;;
-                --public-url) TARGET_PUBLIC_URL="$2"; PUBLIC_URL_EXPLICIT=1 ;;
-                --document-server-url) TARGET_DOCUMENT_SERVER_URL="$2"; DOCUMENT_SERVER_URL_EXPLICIT=1 ;;
-                --max-file-size-bytes) MAX_FILE_SIZE_BYTES="$2" ;;
-                --max-download-bytes) TARGET_MAX_DOWNLOAD_BYTES="$2" ;;
-                --platform) PLATFORM="$2" ;;
-            esac
-            shift 2
-            ;;
-        --nginx) CONFIGURE_NGINX=1; shift ;;
-        --no-nginx) CONFIGURE_NGINX=0; shift ;;
-        --no-ssl) NO_SSL=1; shift ;;
-        --recreate-container) RECREATE_CONTAINER=1; shift ;;
-        -h|--help) usage; exit 0 ;;
-        *) die "Unknown option: $1 (see --help)" ;;
-    esac
-done
-
-if [[ "$CONTAINER_NAME_EXPLICIT" -eq 1 || "$VOLUME_NAMES_EXPLICIT" -eq 1 ]]; then
-    ALLOW_LEGACY_MACOS_RESOURCES=1
-fi
-
-case "$PLATFORM" in
-    auto)
-        case "$(uname -s)" in
-            Darwin) PLATFORM="macos" ;;
-            Linux) PLATFORM="ubuntu" ;;
-            *) die "Unsupported operating system: $(uname -s)" ;;
+    [[ -n "$ONLYOFFICE_PORT_FROM_ENV" ]] && PORT_EXPLICIT=1
+    [[ -n "${ONLYOFFICE_DOCUMENT_SERVER_URL:-}" ]] && DOCUMENT_SERVER_URL_EXPLICIT=1
+    [[ -n "${ONLYOFFICE_PUBLIC_URL:-}" ]] && PUBLIC_URL_EXPLICIT=1
+    [[ -n "${APP_INTERNAL_PORT_FROM_ENV:-}" ]] && INTERNAL_PORT_EXPLICIT=1
+    [[ -n "${ONLYOFFICE_CONTAINER_NAME:-}" ]] && CONTAINER_NAME_EXPLICIT=1
+    if [[ -n "${ONLYOFFICE_DATA_VOLUME:-}" || -n "${ONLYOFFICE_LOGS_VOLUME:-}" \
+        || -n "${ONLYOFFICE_LIB_VOLUME:-}" || -n "${ONLYOFFICE_DB_VOLUME:-}" ]]; then
+        VOLUME_NAMES_EXPLICIT=1
+    fi
+    if [[ "${ONLYOFFICE_NO_SSL:-}" == true || "${ONLYOFFICE_NO_SSL:-}" == 1 ]]; then
+        NO_SSL=1
+    fi
+    if [[ "${ONLYOFFICE_CONFIGURE_NGINX:-}" == true || "${ONLYOFFICE_CONFIGURE_NGINX:-}" == 1 ]]; then
+        CONFIGURE_NGINX=1
+    elif [[ "${ONLYOFFICE_CONFIGURE_NGINX:-}" == false || "${ONLYOFFICE_CONFIGURE_NGINX:-}" == 0 ]]; then
+        CONFIGURE_NGINX=0
+    fi
+    if [[ -n "${ONLYOFFICE_RECREATE_CONTAINER:-}" ]]; then
+        case "$ONLYOFFICE_RECREATE_CONTAINER" in
+            true|1) RECREATE_CONTAINER=1 ;;
+            false|0) RECREATE_CONTAINER=0 ;;
+            *) die "ONLYOFFICE_RECREATE_CONTAINER must be true, false, 1, or 0" ;;
         esac
-        ;;
-    ubuntu|macos) ;;
-    *) die "Invalid platform: $PLATFORM (use auto, ubuntu, or macos)" ;;
-esac
+    fi
 
-[[ -n "$EMAIL" ]] || EMAIL=""
-[[ -z "$EMAIL" || "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] \
-    || die "Invalid email: $EMAIL"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --app-dir|--env-file|--domain|--app-domain|--repo|--db-name|--db-user|--db-password|--office-domain|--email|--onlyoffice-port|--app-internal-port|--onlyoffice-image|--container-name|--jwt-secret|--instance-id|--app-internal-url|--public-url|--document-server-url|--max-file-size-bytes|--max-download-bytes|--platform)
+                [[ $# -ge 2 ]] || die "$1 requires a value"
+                case "$1" in
+                    --app-dir) APP_DIR="$2"; APP_DIR_EXPLICIT=1 ;;
+                    --env-file) ENV_FILE="$2" ;;
+                    --domain|--app-domain) APP_DOMAIN="$2" ;;
+                    --repo) REPO_URL="$2" ;;
+                    --db-name) DB_NAME="$2" ;;
+                    --db-user) DB_USER="$2" ;;
+                    --db-password) DB_PASSWORD="$2" ;;
+                    --office-domain) OFFICE_DOMAIN="$2" ;;
+                    --email) EMAIL="$2" ;;
+                    --onlyoffice-port) ONLYOFFICE_PORT="$2"; PORT_EXPLICIT=1 ;;
+                    --app-internal-port) APP_INTERNAL_PORT="$2"; INTERNAL_PORT_EXPLICIT=1 ;;
+                    --onlyoffice-image) ONLYOFFICE_IMAGE="$2" ;;
+                    --container-name) ONLYOFFICE_CONTAINER_NAME="$2"; CONTAINER_NAME_EXPLICIT=1 ;;
+                    --jwt-secret) JWT_SECRET="$2" ;;
+                    --instance-id) INSTANCE_ID="$2" ;;
+                    --app-internal-url) TARGET_INTERNAL_URL="$2" ;;
+                    --public-url) TARGET_PUBLIC_URL="$2"; PUBLIC_URL_EXPLICIT=1 ;;
+                    --document-server-url) TARGET_DOCUMENT_SERVER_URL="$2"; DOCUMENT_SERVER_URL_EXPLICIT=1 ;;
+                    --max-file-size-bytes) MAX_FILE_SIZE_BYTES="$2" ;;
+                    --max-download-bytes) TARGET_MAX_DOWNLOAD_BYTES="$2" ;;
+                    --platform) PLATFORM="$2" ;;
+                esac
+                shift 2
+                ;;
+            --nginx) CONFIGURE_NGINX=1; shift ;;
+            --no-nginx) CONFIGURE_NGINX=0; shift ;;
+            --no-ssl) NO_SSL=1; shift ;;
+            --recreate-container) RECREATE_CONTAINER=1; shift ;;
+            -h|--help) usage; exit 0 ;;
+            *) die "Unknown option: $1 (see --help)" ;;
+        esac
+    done
 
-resolve_app_values
+    if [[ "$CONTAINER_NAME_EXPLICIT" -eq 1 || "$VOLUME_NAMES_EXPLICIT" -eq 1 ]]; then
+        ALLOW_LEGACY_MACOS_RESOURCES=1
+    fi
 
-case "$PLATFORM" in
-    macos) setup_macos ;;
-    ubuntu) setup_ubuntu ;;
-esac
+    case "$PLATFORM" in
+        auto)
+            case "$(uname -s)" in
+                Darwin) PLATFORM=macos ;;
+                Linux) PLATFORM=ubuntu ;;
+                *) die "Unsupported operating system: $(uname -s)" ;;
+            esac
+            ;;
+        ubuntu|macos) ;;
+        *) die "Invalid platform: $PLATFORM (use auto, ubuntu, or macos)" ;;
+    esac
 
-log "Provisioning complete."
-log "Environment: $ENV_FILE"
-log "Instance:    $INSTANCE_ID"
+    if [[ "$PLATFORM" == ubuntu && "$APP_DIR_EXPLICIT" -eq 0 ]]; then
+        APP_DIR=/var/www/jin
+    fi
+    [[ -n "$EMAIL" ]] || EMAIL=""
+    [[ -z "$EMAIL" || "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] \
+        || die "Invalid email: $EMAIL"
+
+    case "$PLATFORM" in
+        macos)
+            resolve_app_values
+            setup_macos
+            log "Provisioning complete."
+            log "Environment: $ENV_FILE"
+            log "Instance:    $INSTANCE_ID"
+            ;;
+        ubuntu)
+            setup_ubuntu
+            ;;
+    esac
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

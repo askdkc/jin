@@ -15,6 +15,7 @@ use Illuminate\Notifications\DatabaseNotification;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Middleware;
+use Throwable;
 
 class HandleInertiaRequests extends Middleware
 {
@@ -26,6 +27,9 @@ class HandleInertiaRequests extends Middleware
      * @var string
      */
     protected $rootView = 'app';
+
+    /** @var array<string, array{modifiedAt: int|false, catalog: array<string, string>}> */
+    private static array $catalogCache = [];
 
     /**
      * Determines the current asset version.
@@ -50,13 +54,15 @@ class HandleInertiaRequests extends Middleware
         $routeTeam = $request->route('current_team');
         $currentTeam = $routeTeam instanceof Team ? $routeTeam : $user?->currentTeam;
         $locale = app()->getLocale();
+        $localeNames = config('app.supported_locales', []);
+        $localeNames = is_array($localeNames) ? $localeNames : [];
 
         return [
             ...parent::share($request),
-            // The locale dictionary is ~69 KB; reuse it per locale but refresh the client cache daily.
-            'translations' => Inertia::once(fn (): array => is_file(lang_path($locale.'.json'))
-                ? json_decode((string) file_get_contents(lang_path($locale.'.json')), true, 512, JSON_THROW_ON_ERROR)
-                : [])
+            'locale' => $locale,
+            'locales' => array_keys($localeNames),
+            'localeNames' => $localeNames,
+            'translations' => Inertia::once(fn (): array => $this->loadCatalog($locale))
                 ->as("translations.{$locale}")
                 ->until(now()->addDay()),
             'name' => config('app.name'),
@@ -102,6 +108,52 @@ class HandleInertiaRequests extends Middleware
                 ? $this->workspaceBar($user, $currentTeam)
                 : $this->emptyWorkspaceBar(),
         ];
+    }
+
+    /** @return array<string, string> */
+    private function loadCatalog(string $locale): array
+    {
+        $supportedLocales = config('app.supported_locales', []);
+
+        if ($locale === 'en'
+            || ! is_array($supportedLocales)
+            || ! array_key_exists($locale, $supportedLocales)
+            || preg_match('/\A[a-z]{2}(?:_[A-Z]{2})?\z/', $locale) !== 1
+        ) {
+            return [];
+        }
+
+        $path = lang_path("{$locale}.json");
+
+        if (! is_file($path)) {
+            return [];
+        }
+
+        $modifiedAt = @filemtime($path);
+        $cached = self::$catalogCache[$path] ?? null;
+
+        if ($cached !== null && $cached['modifiedAt'] === $modifiedAt) {
+            return $cached['catalog'];
+        }
+
+        try {
+            $catalog = json_decode(
+                (string) file_get_contents($path),
+                true,
+                512,
+                JSON_THROW_ON_ERROR,
+            );
+        } catch (Throwable) {
+            $catalog = [];
+        }
+
+        $catalog = is_array($catalog) ? array_filter($catalog, 'is_string') : [];
+        self::$catalogCache[$path] = [
+            'modifiedAt' => $modifiedAt,
+            'catalog' => $catalog,
+        ];
+
+        return $catalog;
     }
 
     /** @return array<string, mixed> */

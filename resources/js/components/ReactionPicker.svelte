@@ -1,11 +1,10 @@
 <script lang="ts">
     import { Form } from '@inertiajs/svelte';
-    import ja from 'emoji-picker-element/i18n/ja.js';
     import type Picker from 'emoji-picker-element/picker';
     import type { EmojiClickEvent } from 'emoji-picker-element/shared';
-    import emojiDataSource from 'emoji-picker-element-data/ja/cldr-native/data.json?url';
-    import { tick } from 'svelte';
-    import { t } from '@/lib/i18n';
+    import { onDestroy, tick } from 'svelte';
+    import { currentLocale, t } from '@/lib/i18n';
+    import { loadEmojiPickerLocalization } from '@/lib/locale-integrations';
     import { themeState } from '@/lib/theme.svelte';
     import type { ProjectReaction } from '@/types';
 
@@ -25,6 +24,7 @@
     let customReaction = $state('');
     let pickerHost = $state<HTMLDivElement>();
     let picker = $state<Picker>();
+    let pickerLocale = $state<string>();
     let emojiSubmitButton = $state<HTMLButtonElement>();
 
     const selectEmoji = async (event: EmojiClickEvent): Promise<void> => {
@@ -37,6 +37,17 @@
         emojiSubmitButton?.click();
     };
 
+    const destroyPicker = (): void => {
+        if (!picker) {
+            return;
+        }
+
+        picker.removeEventListener('emoji-click', selectEmoji);
+        picker.remove();
+        picker = undefined;
+        pickerLocale = undefined;
+    };
+
     const toggleFullPicker = async (): Promise<void> => {
         moreOpen = !moreOpen;
 
@@ -46,16 +57,29 @@
 
         await tick();
 
+        const requestedLocale = currentLocale() ?? 'en';
+
+        if (picker && pickerLocale !== requestedLocale) {
+            destroyPicker();
+        }
+
         if (!picker) {
-            const { Picker: EmojiPicker } =
-                await import('emoji-picker-element');
+            const [{ Picker: EmojiPicker }, localization] = await Promise.all([
+                import('emoji-picker-element'),
+                loadEmojiPickerLocalization(requestedLocale),
+            ]);
+
+            if (!moreOpen || requestedLocale !== (currentLocale() ?? 'en')) {
+                return;
+            }
 
             picker = new EmojiPicker({
-                dataSource: emojiDataSource,
+                dataSource: localization.dataSource,
                 emojiVersion: 17,
-                i18n: ja,
-                locale: 'ja',
+                i18n: localization.i18n,
+                locale: localization.locale,
             });
+            pickerLocale = requestedLocale;
             picker.style.width = 'min(20rem, calc(100vw - 2rem))';
             picker.style.height = 'min(20rem, calc(100vh - 8rem))';
             picker.style.setProperty('--border-radius', '0.75rem');
@@ -68,8 +92,18 @@
     };
 
     $effect(() => {
+        const locale = currentLocale() ?? 'en';
+
+        if (picker && pickerLocale !== locale) {
+            destroyPicker();
+        }
+    });
+
+    $effect(() => {
         picker?.classList.toggle('dark', resolvedAppearance() === 'dark');
     });
+
+    onDestroy(destroyPicker);
 
     const close = (): void => {
         menuOpen = false;

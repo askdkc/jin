@@ -2,7 +2,7 @@
     import AppHead from '@/components/AppHead.svelte';
     import AppLogoIcon from '@/components/AppLogoIcon.svelte';
     import RichTextContent from '@/components/RichTextContent.svelte';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
 
     let {
         document,
@@ -17,7 +17,7 @@
 
     const updatedAt = $derived(
         document.updatedAt
-            ? new Intl.DateTimeFormat('ja-JP', {
+            ? new Intl.DateTimeFormat(currentLocale(), {
                   dateStyle: 'long',
                   timeStyle: 'short',
               }).format(new Date(document.updatedAt))

@@ -44,7 +44,7 @@
     import RichTextEditor from '@/components/RichTextEditor.svelte';
     import { Button } from '@/components/ui/button';
     import { Label } from '@/components/ui/label';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import type { ProjectScheduleEventDetail, TodoMember } from '@/types';
 
     let {
@@ -66,16 +66,20 @@
     ] as [string, number, number]);
     let commentComposerOpen = $state(false);
 
-    const monthFormatter = new Intl.DateTimeFormat('ja-JP', { month: 'short' });
-    const dayFormatter = new Intl.DateTimeFormat('ja-JP', { day: 'numeric' });
-    const dateTimeFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const monthFormatter = new Intl.DateTimeFormat(currentLocale(), {
+        month: 'short',
+    });
+    const dayFormatter = new Intl.DateTimeFormat(currentLocale(), {
+        day: 'numeric',
+    });
+    const dateTimeFormatter = new Intl.DateTimeFormat(currentLocale(), {
         dateStyle: 'long',
         timeStyle: 'short',
     });
-    const allDayFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const allDayFormatter = new Intl.DateTimeFormat(currentLocale(), {
         dateStyle: 'long',
     });
-    const commentDateFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const commentDateFormatter = new Intl.DateTimeFormat(currentLocale(), {
         dateStyle: 'medium',
         timeStyle: 'short',
     });

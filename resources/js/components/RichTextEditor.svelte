@@ -516,7 +516,15 @@
     const insertTable = (html?: string): void => {
         const content =
             html ??
-            '<div class="table-scroll"><table><thead><tr><th>見出し 1</th><th>見出し 2</th></tr></thead><tbody><tr><td>内容</td><td>内容</td></tr></tbody></table></div>';
+            '<div class="table-scroll"><table><thead><tr><th>' +
+                t('Heading 1') +
+                '</th><th>' +
+                t('Heading 2') +
+                '</th></tr></thead><tbody><tr><td>' +
+                t('Content') +
+                '</td><td>' +
+                t('Content') +
+                '</td></tr></tbody></table></div>';
         const trix = (window as typeof window & { Trix?: TrixConstructor })
             .Trix;
 

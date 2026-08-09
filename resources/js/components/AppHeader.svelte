@@ -46,7 +46,7 @@
     } from '@/components/ui/sheet';
     import UserMenuContent from '@/components/UserMenuContent.svelte';
     import { currentUrlState } from '@/lib/currentUrl.svelte';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import { getInitials } from '@/lib/initials';
     import { toUrl } from '@/lib/utils';
     import { dashboard } from '@/routes';
@@ -108,15 +108,15 @@
     const filteredProjects = $derived(
         navigationProjects.filter((project) =>
             project.name
-                .toLocaleLowerCase('ja-JP')
-                .includes(jumpQuery.trim().toLocaleLowerCase('ja-JP')),
+                .toLocaleLowerCase(currentLocale())
+                .includes(jumpQuery.trim().toLocaleLowerCase(currentLocale())),
         ),
     );
     const filteredPeople = $derived(
         navigationPeople.filter((person) =>
             person.name
-                .toLocaleLowerCase('ja-JP')
-                .includes(jumpQuery.trim().toLocaleLowerCase('ja-JP')),
+                .toLocaleLowerCase(currentLocale())
+                .includes(jumpQuery.trim().toLocaleLowerCase(currentLocale())),
         ),
     );
 
@@ -226,7 +226,7 @@
             shortcut: 'a',
         },
         {
-            title: currentTeam?.menuNames.calendar ?? '行程',
+            title: currentTeam?.menuNames.calendar ?? t('Calendar'),
             href: currentTeam
                 ? WorkspaceCalendarController(currentTeam.slug)
                 : '/',
@@ -248,13 +248,13 @@
             shortcut: 'n',
         },
         {
-            title: currentTeam?.menuNames.reports ?? '戦況',
+            title: currentTeam?.menuNames.reports ?? t('Reports'),
             href: currentTeam ? ReportsController(currentTeam.slug) : '/',
             icon: ChartColumn,
             shortcut: 'r',
         },
         {
-            title: currentTeam?.menuNames.lineup ?? '布陣',
+            title: currentTeam?.menuNames.lineup ?? t('Lineup'),
             href: currentTeam ? LineupController(currentTeam.slug) : '/',
             icon: ChartGantt,
             shortcut: 'l',
@@ -349,7 +349,7 @@
                 type="button"
                 class="absolute left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full px-2 py-1 outline-none transition hover:bg-white/70 focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-slate-800"
                 onclick={openJump}
-                aria-label="陣（JIN）メニュー"
+                aria-label={t('JIN menu')}
                 aria-haspopup="dialog"
                 aria-expanded={jumpOpen}
                 aria-controls="global-navigation-menu"
@@ -365,7 +365,7 @@
             <Link
                 href={dashboardUrl}
                 class="absolute left-1/2 -translate-x-1/2"
-                aria-label="陣（JIN）"
+                aria-label={t('JIN')}
             >
                 <AppLogo />
             </Link>
@@ -542,7 +542,7 @@
         >
             <nav
                 class="grid grid-cols-2 gap-2 border-b p-3 sm:grid-cols-4"
-                aria-label="主要メニュー"
+                aria-label={t('Primary navigation')}
             >
                 {#each jumpNavItems as item (toUrl(item.href))}
                     <Link

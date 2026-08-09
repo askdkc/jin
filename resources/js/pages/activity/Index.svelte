@@ -25,7 +25,7 @@
     import { Button } from '@/components/ui/button';
     import { Input } from '@/components/ui/input';
     import { activityAction, activityHref } from '@/lib/activity';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import { getInitials } from '@/lib/initials';
     import { show as showProject } from '@/routes/projects';
     import type {
@@ -66,20 +66,20 @@
     } = $props();
     let processing = $state(false);
 
-    const dateKeyFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const dateKeyFormatter = new Intl.DateTimeFormat(currentLocale(), {
         timeZone: 'Asia/Tokyo',
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
     });
-    const dateLabelFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const dateLabelFormatter = new Intl.DateTimeFormat(currentLocale(), {
         timeZone: 'Asia/Tokyo',
         year: 'numeric',
         month: 'long',
         day: 'numeric',
         weekday: 'long',
     });
-    const timeFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const timeFormatter = new Intl.DateTimeFormat(currentLocale(), {
         timeZone: 'Asia/Tokyo',
         hour: '2-digit',
         minute: '2-digit',

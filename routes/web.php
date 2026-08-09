@@ -36,10 +36,50 @@ use App\Http\Controllers\Teams\TeamInvitationController;
 use App\Http\Controllers\WorkspaceCalendarController;
 use App\Http\Middleware\EnsureProjectToolIsEnabled;
 use App\Http\Middleware\EnsureTeamMembership;
+use Illuminate\Http\Request;
 use Illuminate\Routing\Middleware\ValidateSignature;
 use Illuminate\Support\Facades\Route;
 
 Route::inertia('/', 'Welcome')->name('home');
+
+Route::get('language/{locale}', function (Request $request, string $locale) {
+    $supportedLocales = config('app.supported_locales', []);
+
+    abort_unless(is_array($supportedLocales) && array_key_exists($locale, $supportedLocales), 404);
+
+    app()->setLocale($locale);
+    $request->session()->put('locale', $locale);
+
+    $previousUrl = $request->headers->get('referer');
+    $sameOrigin = is_string($previousUrl)
+        && str_starts_with($previousUrl, '/')
+        && ! str_starts_with($previousUrl, '//');
+
+    if (is_string($previousUrl) && $previousUrl !== '' && ! $sameOrigin) {
+        try {
+            $parts = parse_url($previousUrl);
+        } catch (ValueError) {
+            $parts = false;
+        }
+
+        if (is_array($parts)) {
+            $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+            $host = strtolower((string) ($parts['host'] ?? ''));
+            $port = (int) ($parts['port'] ?? ($scheme === 'https' ? 443 : 80));
+            $sameOrigin = in_array($scheme, ['http', 'https'], true)
+                && $scheme === strtolower($request->getScheme())
+                && $host === strtolower($request->getHost())
+                && $port === $request->getPort()
+                && ! isset($parts['user'])
+                && ! isset($parts['pass']);
+        }
+    }
+
+    return $sameOrigin
+        ? redirect()->to($previousUrl)
+        : redirect()->route('home');
+})->name('language.switch');
+
 Route::get('calendar-subscriptions/{calendar_subscription}.ics', [CalendarSubscriptionController::class, 'show'])
     ->name('calendar-subscriptions.show');
 Route::get('shared/documents/{document:public_token}', PublicDocumentController::class)

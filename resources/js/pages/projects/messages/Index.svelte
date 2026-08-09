@@ -29,7 +29,7 @@
     import { Avatar, AvatarFallback } from '@/components/ui/avatar';
     import { Button } from '@/components/ui/button';
     import { Card, CardContent } from '@/components/ui/card';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import { getInitials } from '@/lib/initials';
     import type { MessageBoardPostSummary, Paginated } from '@/types';
 
@@ -49,7 +49,7 @@
     ]);
     const formatDate = (value: string | null): string =>
         value
-            ? new Intl.DateTimeFormat('ja-JP', {
+            ? new Intl.DateTimeFormat(currentLocale(), {
                   dateStyle: 'medium',
                   timeStyle: 'short',
               }).format(new Date(value))

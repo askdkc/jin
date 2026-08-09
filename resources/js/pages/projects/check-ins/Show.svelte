@@ -61,7 +61,7 @@
     } from '@/components/ui/dialog';
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import { getInitials } from '@/lib/initials';
     import type {
         CheckInDetail,
@@ -129,7 +129,7 @@
         }
 
         // Reuse formatters while rendering a response history instead of rebuilding each one.
-        const formatter = new Intl.DateTimeFormat('ja-JP', {
+        const formatter = new Intl.DateTimeFormat(currentLocale(), {
             timeZone: timezone,
             dateStyle: 'medium',
             timeStyle: 'short',
@@ -168,7 +168,7 @@
                   .join('・')}）`
             : t(schedule.frequency === 'weekly' ? 'Weekly' : 'Monthly');
     const memberInitial = (name: string | null): string =>
-        name?.trim().slice(0, 1).toLocaleUpperCase('ja-JP') || '?';
+        name?.trim().slice(0, 1).toLocaleUpperCase(currentLocale()) || '?';
 </script>
 
 <AppHead title={checkIn.question} />

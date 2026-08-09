@@ -22,7 +22,7 @@
     import AppHead from '@/components/AppHead.svelte';
     import { Button } from '@/components/ui/button';
     import { Card, CardContent } from '@/components/ui/card';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import type { ProjectNotification } from '@/types';
 
     let {
@@ -38,33 +38,45 @@
     );
     const formatDate = (value: string | null): string =>
         value
-            ? new Intl.DateTimeFormat('ja-JP', {
+            ? new Intl.DateTimeFormat(currentLocale(), {
                   dateStyle: 'medium',
                   timeStyle: 'short',
               }).format(new Date(value))
             : '';
     const notificationText = (notification: ProjectNotification): string => {
+        const actorName = notification.actorName ?? t('Deleted user');
+
         switch (notification.type) {
             case 'check_in_due':
                 return t('A check-in is ready for your answer');
             case 'todo_assigned':
-                return `${notification.actorName ?? t('Deleted user')}${t(' assigned you a to-do')}`;
+                return t(':actorName assigned you a to-do', { actorName });
             case 'todo_comment':
-                return `${notification.actorName ?? t('Deleted user')}${t(' commented on a to-do you follow')}`;
+                return t(':actorName commented on a to-do you follow', {
+                    actorName,
+                });
             case 'todo_completed':
-                return `${notification.actorName ?? t('Deleted user')}${t(' completed a to-do you follow')}`;
+                return t(':actorName completed a to-do you follow', {
+                    actorName,
+                });
             case 'todo_due':
                 return t('A to-do assigned to you is due today');
             case 'mention_message':
-                return `${notification.actorName ?? t('Deleted user')}${t(' mentioned you in a message')}`;
+                return t(':actorName mentioned you in a message', {
+                    actorName,
+                });
             case 'mention_todo':
-                return `${notification.actorName ?? t('Deleted user')}${t(' mentioned you in a to-do')}`;
+                return t(':actorName mentioned you in a to-do', { actorName });
             case 'mention_file':
-                return `${notification.actorName ?? t('Deleted user')}${t(' mentioned you in a file')}`;
+                return t(':actorName mentioned you in a file', { actorName });
             case 'todo_list_comment':
-                return `${notification.actorName ?? t('Deleted user')}${t(' commented on a to-do list you follow')}`;
+                return t(':actorName commented on a to-do list you follow', {
+                    actorName,
+                });
             default:
-                return `${notification.actorName ?? t('Deleted user')}${t(' commented on a subscribed message')}`;
+                return t(':actorName commented on a subscribed message', {
+                    actorName,
+                });
         }
     };
     const notificationHref = (notification: ProjectNotification) => {

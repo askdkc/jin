@@ -61,7 +61,7 @@
     } from '@/components/ui/dropdown-menu';
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import type {
         MaterialFilters,
         MaterialFolder,
@@ -130,7 +130,7 @@
 
     const formatDate = (value: string | null): string =>
         value
-            ? new Intl.DateTimeFormat('ja-JP', {
+            ? new Intl.DateTimeFormat(currentLocale(), {
                   dateStyle: 'medium',
               }).format(new Date(value))
             : '';

@@ -37,7 +37,7 @@
         CardHeader,
         CardTitle,
     } from '@/components/ui/card';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import type {
         NavItem,
         ReportSummary,
@@ -149,9 +149,9 @@
         'group flex min-h-56 flex-col items-center justify-center gap-4 rounded-2xl border bg-card p-6 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-64';
     const formatDate = (value: string | null): string =>
         value
-            ? new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium' }).format(
-                  new Date(`${value}T00:00:00+09:00`),
-              )
+            ? new Intl.DateTimeFormat(currentLocale(), {
+                  dateStyle: 'medium',
+              }).format(new Date(`${value}T00:00:00+09:00`))
             : t('No due date');
 </script>
 

@@ -112,6 +112,59 @@ test('the team edit page can be rendered', function () {
         );
 });
 
+test('default menu names follow the current locale while custom overrides remain literal', function () {
+    $team = Team::factory()->create([
+        'menu_names' => ['chat' => 'Ops room'],
+    ]);
+    $originalLocale = app()->getLocale();
+
+    try {
+        app()->setLocale('fr');
+
+        expect($team->menuNames())
+            ->projectHome->toBe('Accueil du projet')
+            ->todos->toBe('Tâche')
+            ->chat->toBe('Ops room');
+
+        app()->setLocale('ja');
+
+        expect($team->menuNames())
+            ->projectHome->toBe('本陣')
+            ->todos->toBe('任務')
+            ->chat->toBe('Ops room');
+    } finally {
+        app()->setLocale($originalLocale);
+    }
+});
+
+test('saving translated defaults does not turn them into custom menu names', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create(['name' => 'JIN']);
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $originalLocale = app()->getLocale();
+
+    try {
+        app()->setLocale('fr');
+        $frenchDefaults = $team->menuNames();
+
+        $this->withSession(['locale' => 'fr'])
+            ->actingAs($owner)
+            ->patch(route('teams.update', $team), [
+                'name' => $team->name,
+                'menu_names' => $frenchDefaults,
+            ])
+            ->assertRedirect(route('teams.edit', $team));
+
+        app()->setLocale('ja');
+
+        expect($team->fresh()->menuNames())
+            ->projectHome->toBe('本陣')
+            ->todos->toBe('任務');
+    } finally {
+        app()->setLocale($originalLocale);
+    }
+});
+
 test('team administrators can update menu names', function () {
     $owner = User::factory()->create();
     $administrator = User::factory()->create();
@@ -306,7 +359,10 @@ test('members can leave non personal teams', function () {
         ->delete(route('teams.leave', $team));
 
     $response->assertRedirect(route('teams.index'));
-    $response->assertInertiaFlash('toast', ['type' => 'success', 'message' => "You left the team \"{$team->name}\""]);
+    $response->assertInertiaFlash('toast', [
+        'type' => 'success',
+        'message' => __('You left the team ":name"', ['name' => $team->name]),
+    ]);
 
     expect($member->fresh()->belongsToTeam($team))->toBeFalse();
 });

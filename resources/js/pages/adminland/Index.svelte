@@ -73,8 +73,10 @@
             icon: FolderKanban,
         },
         {
-            title: 'メニュー名を変更',
-            description: '本陣、任務、行程などの表示名を設定',
+            title: t('Change menu names'),
+            description: t(
+                'Set display names for workspaces, tasks, and schedules',
+            ),
             href: `${editTeam.url(currentTeam.slug)}#menu-names`,
             icon: Pencil,
         },

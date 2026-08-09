@@ -145,7 +145,7 @@ class CreateWorkspaceItemTool extends Tool
             ?? (isset($input['channel_id']) ? $project->chatChannels()->find((int) $input['channel_id']) : null)
             ?? $project->chatChannels()->firstOrCreate(
                 ['name' => 'general'],
-                ['description' => 'プロジェクト全体の会話', 'created_by' => $user->id],
+                ['description' => __('Project-wide conversation'), 'created_by' => $user->id],
             );
 
         if (isset($input['parent_message_id']) && ! $parent) {

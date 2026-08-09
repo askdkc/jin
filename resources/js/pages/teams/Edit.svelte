@@ -50,7 +50,7 @@
         TooltipProvider,
         TooltipTrigger,
     } from '@/components/ui/tooltip';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import { getInitials } from '@/lib/initials';
     import { update } from '@/routes/teams';
     import { update as updateMember } from '@/routes/teams/members';
@@ -94,53 +94,53 @@
     }> = [
         {
             key: 'projectHome',
-            currentName: 'プロジェクトホーム',
-            description: 'プロジェクト全体の拠点・ダッシュボード',
+            currentName: t('Project home'),
+            description: t('Project hub and dashboard'),
         },
         {
             key: 'todos',
-            currentName: 'ToDo',
-            description: 'メンバーごとの作業・タスク管理',
+            currentName: t('To-do'),
+            description: t('Manage member work and tasks'),
         },
         {
             key: 'cardTable',
-            currentName: 'Card Table',
-            description: 'カード形式で進捗を管理するボード',
+            currentName: t('Card table'),
+            description: t('A board for tracking progress with cards'),
         },
         {
             key: 'checkIns',
-            currentName: '振り返り',
-            description: 'プロジェクトの振り返り・改善記録',
+            currentName: t('Retrospectives'),
+            description: t('Record project reviews and improvements'),
         },
         {
             key: 'calendar',
-            currentName: 'カレンダー',
-            description: '予定・期限・イベントを管理',
+            currentName: t('Calendar'),
+            description: t('Manage schedules, deadlines, and events'),
         },
         {
             key: 'lineup',
-            currentName: 'Lineup',
-            description: '全プロジェクトのスケジュールや配置を俯瞰',
+            currentName: t('Lineup'),
+            description: t('See schedules and placement across projects'),
         },
         {
             key: 'chat',
-            currentName: 'リアルタイムの会話',
-            description: 'チームメンバーとのリアルタイムチャット',
+            currentName: t('Real-time chat'),
+            description: t('Chat with team members in real time'),
         },
         {
             key: 'reports',
-            currentName: 'レポート',
-            description: 'プロジェクトの状況や進捗レポート',
+            currentName: t('Reports'),
+            description: t('Project status and progress reports'),
         },
         {
             key: 'timesheets',
-            currentName: '工数',
-            description: '作業時間・工数の記録と集計',
+            currentName: t('Time entries'),
+            description: t('Record and summarize work time'),
         },
         {
             key: 'adminland',
-            currentName: 'Adminland',
-            description: '組織・ユーザー・権限などの管理',
+            currentName: t('Adminland'),
+            description: t('Manage organizations, users, and permissions'),
         },
     ];
 
@@ -171,7 +171,7 @@
         }
     };
 
-    const dateTimeFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const dateTimeFormatter = new Intl.DateTimeFormat(currentLocale(), {
         dateStyle: 'medium',
         timeStyle: 'short',
     });
@@ -218,10 +218,12 @@
                         class="scroll-mt-24 space-y-4 border-t pt-6"
                     >
                         <legend class="text-lg font-semibold">
-                            メニュー名
+                            {t('Menu names')}
                         </legend>
                         <p class="text-sm text-muted-foreground">
-                            チーム内で表示する各機能の名称を変更できます。
+                            {t(
+                                'Change the names shown for each feature in your team.',
+                            )}
                         </p>
                         <div class="grid gap-4 md:grid-cols-2">
                             {#each menuNameFields as field (field.key)}

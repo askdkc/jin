@@ -94,6 +94,33 @@ test('authorized office config supports word cell and slide documents', function
     ['pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'slide'],
 ]);
 
+test('office editor language and region follow the selected application locale', function (string $locale, string $language, string $region) {
+    Storage::fake('local');
+    Queue::fake();
+    configureOnlyOffice();
+    ['owner' => $owner, 'team' => $team, 'project' => $project] = onlyOfficePreviewProject();
+    $file = createOfficeFile($project, $owner);
+
+    $response = $this->withSession(['locale' => $locale])
+        ->actingAs($owner)
+        ->getJson(route('projects.files.onlyoffice.config', [$team, $project, $file]))
+        ->assertOk();
+
+    expect($response->json('config.editorConfig.lang'))->toBe($language)
+        ->and($response->json('config.editorConfig.region'))->toBe($region);
+})->with([
+    ['en', 'en', 'en-US'],
+    ['ja', 'ja', 'ja-JP'],
+    ['fr', 'fr', 'fr-FR'],
+    ['de', 'de', 'de-DE'],
+    ['zh_CN', 'zh', 'zh-CN'],
+    ['zh_TW', 'zh-TW', 'zh-TW'],
+    ['es', 'es', 'es-ES'],
+    ['pt_BR', 'pt', 'pt-BR'],
+    ['pt_PT', 'pt-PT', 'pt-PT'],
+    ['ko', 'ko', 'ko-KR'],
+]);
+
 test('the complete read only config and expiry claims are signed with HS256', function () {
     Storage::fake('local');
     Queue::fake();

@@ -52,6 +52,20 @@ class Team extends Model
         'adminland' => '管理所',
     ];
 
+    /** @var array<string, string> */
+    private const DEFAULT_MENU_TRANSLATION_KEYS = [
+        'projectHome' => 'Project home',
+        'todos' => 'To-do',
+        'cardTable' => 'Card table',
+        'checkIns' => 'Retrospectives',
+        'calendar' => 'Calendar',
+        'lineup' => 'Lineup',
+        'chat' => 'Real-time chat',
+        'reports' => 'Reports',
+        'timesheets' => 'Time entries',
+        'adminland' => 'Adminland',
+    ];
+
     /** @use HasFactory<TeamFactory> */
     use GeneratesUniqueTeamSlugs, HasFactory, SoftDeletes;
 
@@ -81,12 +95,30 @@ class Team extends Model
     }
 
     /** @return array<string, string> */
+    public static function localizedDefaultMenuNames(): array
+    {
+        $localizedDefaults = [];
+
+        foreach (self::DEFAULT_MENU_TRANSLATION_KEYS as $menu => $translationKey) {
+            $localizedDefaults[$menu] = (string) __($translationKey);
+        }
+
+        return $localizedDefaults;
+    }
+
+    /** @return array<string, string> */
     public function menuNames(): array
     {
-        return array_replace(
-            self::DEFAULT_MENU_NAMES,
-            array_intersect_key($this->menu_names ?? [], self::DEFAULT_MENU_NAMES),
-        );
+        $localizedDefaults = self::localizedDefaultMenuNames();
+        $overrides = array_intersect_key($this->menu_names ?? [], $localizedDefaults);
+
+        foreach (self::DEFAULT_MENU_NAMES as $menu => $legacyDefault) {
+            if (($overrides[$menu] ?? null) === $legacyDefault) {
+                unset($overrides[$menu]);
+            }
+        }
+
+        return array_replace($localizedDefaults, $overrides);
     }
 
     /**

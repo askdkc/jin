@@ -25,7 +25,7 @@
         CardHeader,
         CardTitle,
     } from '@/components/ui/card';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import { show } from '@/routes/projects';
     import type { LineupProject } from '@/types';
 
@@ -39,13 +39,13 @@
 
     const formatDate = (value: string | null): string =>
         value
-            ? new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium' }).format(
-                  new Date(`${value}T00:00:00+09:00`),
-              )
+            ? new Intl.DateTimeFormat(currentLocale(), {
+                  dateStyle: 'medium',
+              }).format(new Date(`${value}T00:00:00+09:00`))
             : t('Not set');
     const formatEventDate = (value: string, allDay: boolean): string =>
         new Intl.DateTimeFormat(
-            'ja-JP',
+            currentLocale(),
             allDay
                 ? { dateStyle: 'medium' }
                 : { dateStyle: 'medium', timeStyle: 'short' },
@@ -111,7 +111,11 @@
                     <CardContent class="space-y-4">
                         <div class="space-y-2">
                             <div class="flex justify-between gap-3 text-sm">
-                                <span>{currentTeam.menuNames.todos}の進捗</span>
+                                <span>
+                                    {t(':name progress', {
+                                        name: currentTeam.menuNames.todos,
+                                    })}
+                                </span>
                                 <span class="text-muted-foreground">
                                     {project.todoCompleted}/{project.todoTotal}
                                 </span>

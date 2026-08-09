@@ -41,7 +41,7 @@
     import { Button } from '@/components/ui/button';
     import { Input } from '@/components/ui/input';
     import { getEcho } from '@/lib/echo';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import type {
         ChatChannel,
         ChatHistoryResponse,
@@ -106,7 +106,7 @@
     );
 
     const messageTime = (createdAt: string): string =>
-        new Intl.DateTimeFormat('ja-JP', {
+        new Intl.DateTimeFormat(currentLocale(), {
             month: 'numeric',
             day: 'numeric',
             hour: '2-digit',
@@ -644,7 +644,7 @@
                         bind:value={sendHttp.body}
                         rows="1"
                         maxlength="2000"
-                        placeholder={t('Message #channel', {
+                        placeholder={t('Message #:channel', {
                             channel: selectedChannel.name,
                         })}
                         aria-label={t('Write a message')}

@@ -108,11 +108,11 @@ class ProjectController extends Controller
             $project->chatChannels()->create([
                 'created_by' => $request->user()->id,
                 'name' => 'general',
-                'description' => 'プロジェクト全体の会話',
+                'description' => __('Project-wide conversation'),
             ]);
 
             $project->todoLists()->create([
-                'title' => '未分類の任務',
+                'title' => __('Unsorted to-dos'),
                 'is_loose' => true,
                 'position' => 0,
             ]);

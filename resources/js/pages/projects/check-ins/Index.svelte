@@ -41,7 +41,7 @@
     } from '@/components/ui/dialog';
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import type {
         CheckInPrompt,
         CheckInResponse,
@@ -89,7 +89,7 @@
         }
 
         // Intl formatter construction is comparatively expensive on response lists.
-        const formatter = new Intl.DateTimeFormat('ja-JP', {
+        const formatter = new Intl.DateTimeFormat(currentLocale(), {
             timeZone: timezone,
             dateStyle: 'medium',
             timeStyle: 'short',
@@ -128,7 +128,7 @@
         return grouped;
     });
     const memberInitial = (name: string | null): string =>
-        name?.trim().slice(0, 1).toLocaleUpperCase('ja-JP') || '?';
+        name?.trim().slice(0, 1).toLocaleUpperCase(currentLocale()) || '?';
 </script>
 
 <AppHead title={currentTeam.menuNames.checkIns} />

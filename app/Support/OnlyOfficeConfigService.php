@@ -56,6 +56,7 @@ class OnlyOfficeConfigService
         $version = $this->documentVersion->key($storedFile);
         $issuedAt = now()->timestamp;
         $expiresAt = now()->addSeconds($this->downloadTtl());
+        [$editorLanguage, $editorRegion] = $this->editorLocale();
 
         $config = [
             'type' => 'embedded',
@@ -83,8 +84,8 @@ class OnlyOfficeConfigService
             ],
             'editorConfig' => [
                 'mode' => 'view',
-                'lang' => 'ja',
-                'region' => 'ja-JP',
+                'lang' => $editorLanguage,
+                'region' => $editorRegion,
                 'coEditing' => [
                     'mode' => 'strict',
                     'change' => false,
@@ -99,6 +100,23 @@ class OnlyOfficeConfigService
         ];
 
         return [...$config, 'token' => $this->tokenService->encode($payload)];
+    }
+
+    /** @return array{string, string} */
+    private function editorLocale(): array
+    {
+        return match (app()->getLocale()) {
+            'ja' => ['ja', 'ja-JP'],
+            'fr' => ['fr', 'fr-FR'],
+            'de' => ['de', 'de-DE'],
+            'zh_CN' => ['zh', 'zh-CN'],
+            'zh_TW' => ['zh-TW', 'zh-TW'],
+            'es' => ['es', 'es-ES'],
+            'pt_BR' => ['pt', 'pt-BR'],
+            'pt_PT' => ['pt-PT', 'pt-PT'],
+            'ko' => ['ko', 'ko-KR'],
+            default => ['en', 'en-US'],
+        };
     }
 
     private function downloadUrl(

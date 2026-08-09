@@ -10,6 +10,8 @@
     import ShieldCheck from 'lucide-svelte/icons/shield-check';
     import AppHead from '@/components/AppHead.svelte';
     import AppLogoIcon from '@/components/AppLogoIcon.svelte';
+    import LanguageSwitcher from '@/components/LanguageSwitcher.svelte';
+    import { t } from '@/lib/i18n';
     import { toUrl } from '@/lib/utils';
     import { dashboard, login } from '@/routes';
     import type { Team } from '@/types';
@@ -20,50 +22,56 @@
     const primaryHref = $derived(
         canOpenJin && currentTeam ? dashboard(currentTeam.slug) : login(),
     );
-    const primaryLabel = $derived(canOpenJin ? 'JINを開く' : 'ログイン');
+    const primaryLabel = $derived(canOpenJin ? t('Open JIN') : t('Log in'));
 
     const features = [
         {
             icon: FolderKanban,
-            label: '状況をそろえる',
-            title: '本陣・最近のみんなの行動',
-            description:
-                '掲示板、任務、行程、資料、会話を一つの陣に集約。最近のみんなの行動から、仕事の流れもすぐに追えます。',
+            label: t('Stay aligned'),
+            title: t('Your project hub and recent team activity'),
+            description: t(
+                'Bring boards, tasks, schedules, materials, and conversations together in one workspace. Follow the flow of work from recent team activity.',
+            ),
         },
         {
             icon: CheckCircle,
-            label: '仕事を前へ動かす',
-            title: '任務・作戦盤・振り返り',
-            description:
-                '担当者と期限を明確にし、一覧とカードの両方で進行を整理。定期チェックインで報告の抜けも防ぎます。',
+            label: t('Move work forward'),
+            title: t('Tasks, planning boards, and retrospectives'),
+            description: t(
+                'Make owners and deadlines clear, then organize progress in both lists and cards. Regular check-ins help prevent missed reports.',
+            ),
         },
         {
             icon: CalendarDays,
-            label: '予定を見渡す',
-            title: '行程・布陣',
-            description:
-                '日・週・月・ガント表示を切り替え、複数プロジェクトの予定と期間を同じ時間軸で確認できます。',
+            label: t('See the schedule'),
+            title: t('Schedules and lineup'),
+            description: t(
+                'Switch between day, week, month, and Gantt views to see schedules and project timelines on one shared time axis.',
+            ),
         },
         {
             icon: MessageCircle,
-            label: '判断を止めない',
-            title: '会話・コメント・通知',
-            description:
-                'Laravel Reverbによるチャット、コメント、通知を用意。離れたメンバーとも、その場で相談して決められます。',
+            label: t('Keep decisions moving'),
+            title: t('Conversations, comments, and notifications'),
+            description: t(
+                'With chat, comments, and notifications powered by Laravel Reverb, teams can discuss and decide together in the moment.',
+            ),
         },
         {
             icon: FileText,
-            label: '知識を残す',
-            title: '資料庫',
-            description:
-                'ファイルをドラッグ＆ドロップで共有。PDF、Office、CSVはダウンロードせず、その場で内容を確認できます。',
+            label: t('Preserve knowledge'),
+            title: t('Materials library'),
+            description: t(
+                'Share files by drag and drop. Preview PDF, Office, and CSV files in place without downloading them.',
+            ),
         },
         {
             icon: ChartColumn,
-            label: '全体を把握する',
-            title: '戦況・稼働・管理所',
-            description:
-                '横断レポートと工数記録で全体を把握。管理者はプロジェクトと利用者の権限をまとめて管理できます。',
+            label: t('See the whole picture'),
+            title: t('Status, workload, and administration'),
+            description: t(
+                'Use cross-project reports and time entries to see the whole picture. Administrators can manage project and user permissions in one place.',
+            ),
         },
     ];
 
@@ -71,39 +79,42 @@
         {
             image: '/images/landing/project.webp?v=20260724-dummy',
             eyebrow: 'PROJECT HOME',
-            title: '必要なものが、最初から同じ場所にある',
-            description:
-                'プロジェクトを開けば、直近の行動と各ツールの状況が一画面に並びます。情報を探すために複数サービスを行き来する必要はありません。',
+            title: t('Everything you need, in one place'),
+            description: t(
+                'When you open a project, recent activity and each tool’s status appear on one screen. No need to jump between services to find information.',
+            ),
             points: [
-                '最近の行動を3件まで表示',
-                '主要ツールを一覧で確認',
-                'スマートフォンでも同じ情報構造',
+                t('See up to three recent activities'),
+                t('Review the main tools in one list'),
+                t('Same information structure on mobile'),
             ],
             imageOrder: '',
         },
         {
             image: '/images/landing/calendar.webp?v=20260724-dummy',
             eyebrow: 'CALENDAR & LINEUP',
-            title: '今日の予定から数か月先の陣形まで',
-            description:
-                '日・週・月の予定とガント表示を切り替えられます。個々の予定だけでなく、複数プロジェクトが重なる時期も見逃しません。',
+            title: t('From today’s schedule to months ahead'),
+            description: t(
+                'Switch between day, week, month, and Gantt views. See not only individual events but also periods when projects overlap.',
+            ),
             points: [
-                '日・週・月・ガント表示',
-                '全プロジェクトを横断',
-                '外部カレンダーから購読可能',
+                t('Day, week, month, and Gantt views'),
+                t('Across all projects'),
+                t('Subscribe from external calendars'),
             ],
             imageOrder: 'lg:order-2',
         },
         {
             image: '/images/landing/materials.webp?v=20260724-dummy',
             eyebrow: 'MATERIALS',
-            title: '資料は置くだけ。閲覧まで迷わせない',
-            description:
-                '資料庫へドラッグ＆ドロップし、保存先を選ぶだけで共有完了。プレビュー対応文書はブラウザ内でそのまま確認できます。',
+            title: t('Drop in your files. Find them effortlessly.'),
+            description: t(
+                'Drop files into the materials library, choose a destination, and sharing is done. Supported documents can be previewed right in the browser.',
+            ),
             points: [
-                'ドラッグ＆ドロップ対応',
-                'フォルダーで整理',
-                'PDF・Office・CSVをプレビュー',
+                t('Drag-and-drop support'),
+                t('Organize with folders'),
+                t('Preview PDF, Office, and CSV files'),
             ],
             imageOrder: '',
         },
@@ -113,7 +124,9 @@
 <AppHead title="JIN（陣）">
     <meta
         name="description"
-        content="JINは、プロジェクト、予定、会話、資料を一つの場所に集める社内向けグループウェアです。"
+        content={t(
+            'JIN is an internal workspace that brings projects, schedules, conversations, and materials together.',
+        )}
     />
     <meta name="theme-color" content="#071017" />
 </AppHead>
@@ -125,7 +138,7 @@
         href="#main-content"
         class="sr-only z-[100] rounded-md bg-white px-4 py-2 text-slate-950 focus:not-sr-only focus:fixed focus:top-4 focus:left-4"
     >
-        本文へ移動
+        {t('Skip to content')}
     </a>
 
     <header
@@ -137,7 +150,7 @@
             <a
                 href="#main-content"
                 class="flex items-center gap-3 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
-                aria-label="陣（JIN）トップ"
+                aria-label={t('JIN home')}
             >
                 <AppLogoIcon class="size-11 shrink-0" />
                 <span class="leading-none">
@@ -154,34 +167,37 @@
 
             <nav
                 class="hidden items-center gap-8 text-sm font-medium text-slate-300 md:flex"
-                aria-label="ページ内メニュー"
+                aria-label={t('In-page navigation')}
             >
                 <a
                     href="#features"
                     class="rounded-sm outline-none transition-colors hover:text-white focus-visible:ring-2 focus-visible:ring-amber-300 motion-safe:duration-200"
-                    >機能</a
+                    >{t('Features')}</a
                 >
                 <a
                     href="#workflow"
                     class="rounded-sm outline-none transition-colors hover:text-white focus-visible:ring-2 focus-visible:ring-amber-300 motion-safe:duration-200"
-                    >使いやすさ</a
+                    >{t('Easy to use')}</a
                 >
                 <a
                     href="#screens"
                     class="rounded-sm outline-none transition-colors hover:text-white focus-visible:ring-2 focus-visible:ring-amber-300 motion-safe:duration-200"
-                    >画面</a
+                    >{t('Screens')}</a
                 >
             </nav>
 
-            <Link
-                href={toUrl(primaryHref)}
-                prefetch
-                data-test="welcome-primary-action"
-                class="inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-amber-300/50 bg-amber-200 px-5 text-sm font-bold text-[#142029] shadow-[0_8px_24px_rgba(218,176,77,0.16)] outline-none transition hover:-translate-y-0.5 hover:bg-amber-100 focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#071017] motion-safe:duration-200"
-            >
-                {primaryLabel}
-                <ArrowRight class="size-4" aria-hidden="true" />
-            </Link>
+            <div class="flex shrink-0 items-center gap-2">
+                <LanguageSwitcher dark compact />
+                <Link
+                    href={toUrl(primaryHref)}
+                    prefetch
+                    data-test="welcome-primary-action"
+                    class="inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-amber-300/50 bg-amber-200 px-5 text-sm font-bold text-[#142029] shadow-[0_8px_24px_rgba(218,176,77,0.16)] outline-none transition hover:-translate-y-0.5 hover:bg-amber-100 focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#071017] motion-safe:duration-200"
+                >
+                    {primaryLabel}
+                    <ArrowRight class="size-4" aria-hidden="true" />
+                </Link>
+            </div>
         </div>
     </header>
 
@@ -202,18 +218,22 @@
                         class="mb-6 inline-flex items-center gap-2 rounded-full border border-[#d7b45d]/30 bg-[#d7b45d]/8 px-4 py-2 text-xs font-bold tracking-[0.18em] text-amber-200"
                     >
                         <span class="size-1.5 rounded-full bg-[#c24f3a]"></span>
-                        社内の仕事を一つの陣に
+                        {t('One workspace for internal work')}
                     </p>
                     <h1
                         id="hero-heading"
                         class="max-w-3xl text-4xl leading-[1.12] font-black tracking-[-0.045em] text-balance text-white sm:text-6xl lg:text-7xl"
                     >
-                        チームの仕事を、<br />ひとつの陣に
+                        {t("Bring your team's work")}<br />{t(
+                            'into one JIN workspace',
+                        )}
                     </h1>
                     <p
                         class="mt-7 max-w-xl text-base leading-8 text-pretty text-slate-300 sm:text-lg"
                     >
-                        プロジェクト、予定、会話、資料を一か所へ。JINは、複数のチームが同じ状況を見ながら協調して動くための社内グループウェアです。
+                        {t(
+                            'Bring projects, schedules, conversations, and materials together. JIN is an internal workspace where multiple teams can collaborate from the same view.',
+                        )}
                     </p>
                     <div class="mt-9 flex flex-col gap-3 sm:flex-row">
                         <Link
@@ -228,28 +248,36 @@
                             href="#features"
                             class="inline-flex min-h-12 items-center justify-center rounded-full border border-white/15 bg-white/5 px-6 text-sm font-bold text-slate-100 outline-none transition hover:border-white/30 hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-amber-300 motion-safe:duration-200"
                         >
-                            できることを見る
+                            {t('See what you can do')}
                         </a>
                     </div>
                     <dl
                         class="mt-11 grid max-w-xl grid-cols-1 gap-5 border-t border-white/10 pt-6 text-sm sm:grid-cols-3"
                     >
                         <div>
-                            <dt class="font-bold text-white">見つけやすい</dt>
+                            <dt class="font-bold text-white">
+                                {t('Easy to find')}
+                            </dt>
                             <dd class="mt-1 text-slate-400">
-                                一つのプロジェクト画面
+                                {t('One project screen')}
                             </dd>
                         </div>
                         <div>
-                            <dt class="font-bold text-white">伝わりやすい</dt>
+                            <dt class="font-bold text-white">
+                                {t('Easy to follow')}
+                            </dt>
                             <dd class="mt-1 text-slate-400">
-                                行動と会話を時系列で
+                                {t(
+                                    'Activity and conversations in chronological order',
+                                )}
                             </dd>
                         </div>
                         <div>
-                            <dt class="font-bold text-white">場所を選ばない</dt>
+                            <dt class="font-bold text-white">
+                                {t('Work anywhere')}
+                            </dt>
                             <dd class="mt-1 text-slate-400">
-                                スマートフォンにも対応
+                                {t('Works on smartphones too')}
                             </dd>
                         </div>
                     </dl>
@@ -280,7 +308,9 @@
                         </div>
                         <img
                             src="/images/landing/dashboard.webp?v=20260724-dummy"
-                            alt="JINのダッシュボード。プロジェクト一覧と最近の更新を一画面で確認できる"
+                            alt={t(
+                                'JIN dashboard with projects and recent updates on one screen',
+                            )}
                             width="1440"
                             height="900"
                             fetchpriority="high"
@@ -289,7 +319,7 @@
                         />
                     </div>
                     <figcaption class="sr-only">
-                        匿名デモデータを使用したJINの実際のダッシュボード画面
+                        {t('JIN dashboard using anonymous demo data')}
                     </figcaption>
                 </figure>
             </div>
@@ -311,13 +341,16 @@
                         id="features-heading"
                         class="mt-4 text-3xl font-black tracking-[-0.035em] text-white sm:text-5xl"
                     >
-                        必要な情報が、ひとつに集まる<br
-                        />迷わず判断し、すぐ動ける
+                        {t('All the information you need, together')}<br />{t(
+                            'Decide clearly and move quickly',
+                        )}
                     </h2>
                     <p
                         class="mt-6 max-w-2xl text-base leading-8 text-slate-400"
                     >
-                        必要な機能はプロジェクトごとにまとまり、更新はチーム全体へ伝わります。使う人は「次にどこを見るか」で迷いません。
+                        {t(
+                            'The tools you need are organized by project, and updates reach the whole team. People always know where to look next.',
+                        )}
                     </p>
                 </div>
 
@@ -368,12 +401,16 @@
                             id="workflow-heading"
                             class="mt-4 text-3xl font-black tracking-[-0.035em] text-white sm:text-5xl"
                         >
-                            覚える順番は、<br />たった三つ
+                            {t('Three simple steps')}<br />{t(
+                                'That is all it takes',
+                            )}
                         </h2>
                         <p
                             class="mt-6 max-w-lg text-base leading-8 text-slate-400"
                         >
-                            専門的な設定を覚えなくても、プロジェクトを開けば仕事を始められる設計です。
+                            {t(
+                                'Open a project and start working without learning complicated settings.',
+                            )}
                         </p>
                     </div>
 
@@ -387,10 +424,12 @@
                             >
                             <div>
                                 <h3 class="text-xl font-black text-white">
-                                    プロジェクトを開く
+                                    {t('Open a project')}
                                 </h3>
                                 <p class="mt-3 leading-7 text-slate-400">
-                                    参加メンバー、最近の動き、利用するツールが最初の画面にまとまっています。
+                                    {t(
+                                        'Members, recent activity, and the tools you use are gathered on the first screen.',
+                                    )}
                                 </p>
                             </div>
                         </li>
@@ -403,10 +442,12 @@
                             >
                             <div>
                                 <h3 class="text-xl font-black text-white">
-                                    仕事を記録する
+                                    {t('Record your work')}
                                 </h3>
                                 <p class="mt-3 leading-7 text-slate-400">
-                                    任務、行程、掲示板、資料庫から目的に合う場所を選び、担当と期限を残します。
+                                    {t(
+                                        'Choose the right place from tasks, schedules, boards, and materials, then record the owner and deadline.',
+                                    )}
                                 </p>
                             </div>
                         </li>
@@ -419,10 +460,12 @@
                             >
                             <div>
                                 <h3 class="text-xl font-black text-white">
-                                    更新を見て、次に動く
+                                    {t('See updates and take the next step')}
                                 </h3>
                                 <p class="mt-3 leading-7 text-slate-400">
-                                    最近のみんなの行動と通知から変化を把握し、コメントやチャットで次の判断につなげます。
+                                    {t(
+                                        'Follow changes through recent activity and notifications, then use comments or chat to make the next decision.',
+                                    )}
                                 </p>
                             </div>
                         </li>
@@ -447,10 +490,12 @@
                         id="screens-heading"
                         class="mt-4 text-3xl font-black tracking-[-0.035em] text-white sm:text-5xl"
                     >
-                        毎日使う画面を、そのまま
+                        {t('See the screens you use every day')}
                     </h2>
                     <p class="mt-6 text-base leading-8 text-slate-400">
-                        以下は匿名デモデータを使ったJINの実画面です。デスクトップでもスマートフォンでも、同じ情報へ迷わずたどり着けます。
+                        {t(
+                            'These are real JIN screens using anonymous demo data. Find the same information easily on desktop or mobile.',
+                        )}
                     </p>
                 </div>
 
@@ -474,7 +519,12 @@
                                     />
                                 </div>
                                 <figcaption class="sr-only">
-                                    匿名デモデータを使用したJINの{screen.title}画面
+                                    {t(
+                                        'JIN :title screen using anonymous demo data',
+                                        {
+                                            title: screen.title,
+                                        },
+                                    )}
                                 </figcaption>
                             </figure>
                             <div>
@@ -545,10 +595,12 @@
                                 id="access-heading"
                                 class="mt-4 text-3xl font-black tracking-[-0.035em] text-white sm:text-5xl"
                             >
-                                必要な人だけが、必要な陣へ
+                                {t('The right people, in the right workspace')}
                             </h2>
                             <p class="mt-6 max-w-3xl leading-8 text-slate-300">
-                                管理所からプロジェクトと利用者を管理し、公開範囲はプロジェクト単位・ユーザー単位で設定できます。オンプレミス環境の運用方針に合わせて、社内の情報を社内で管理できます。
+                                {t(
+                                    'Manage projects and users from administration, set visibility by project and user, and keep internal information inside your organization with an on-premises deployment.',
+                                )}
                             </p>
                         </div>
                     </div>
@@ -559,10 +611,10 @@
                 >
                     <div>
                         <p class="text-2xl font-black text-white">
-                            準備ができたら、JINへ
+                            {t('Ready when you are? Open JIN')}
                         </p>
                         <p class="mt-2 text-sm text-slate-400">
-                            いつものアカウントでログインしてください。
+                            {t('Log in with your usual account.')}
                         </p>
                     </div>
                     <Link
@@ -588,7 +640,10 @@
                     >JIN</span
                 >
             </div>
-            <p>チームの仕事を、ひとつの陣に</p>
+            <p>
+                {t("Bring your team's work")}
+                {t('into one JIN workspace')}
+            </p>
         </div>
     </footer>
 </div>

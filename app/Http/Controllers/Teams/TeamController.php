@@ -112,10 +112,20 @@ class TeamController extends Controller
     {
         Gate::authorize('update', $team);
 
-        $team = DB::transaction(function () use ($request, $team) {
+        $attributes = $request->safe()->only(['name', 'menu_names']);
+
+        if (isset($attributes['menu_names']) && is_array($attributes['menu_names'])) {
+            $overrides = array_diff_assoc(
+                $attributes['menu_names'],
+                Team::localizedDefaultMenuNames(),
+            );
+            $attributes['menu_names'] = $overrides === [] ? null : $overrides;
+        }
+
+        $team = DB::transaction(function () use ($attributes, $team) {
             $team = Team::whereKey($team->id)->lockForUpdate()->firstOrFail();
 
-            $team->update($request->safe()->only(['name', 'menu_names']));
+            $team->update($attributes);
 
             return $team;
         });

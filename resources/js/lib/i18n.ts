@@ -1,5 +1,13 @@
 import { page } from '@inertiajs/svelte';
 
+export function currentLocale(): string | undefined {
+    const locale = page.props.locale;
+
+    return typeof locale === 'string' && locale
+        ? locale.replaceAll('_', '-')
+        : undefined;
+}
+
 /**
  * Translate the given key using the translations shared via Inertia props.
  * Behaves like Laravel's __() helper, including :placeholder replacement.

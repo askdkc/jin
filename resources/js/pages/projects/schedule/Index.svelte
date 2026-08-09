@@ -43,7 +43,7 @@
     } from '@/components/ui/dialog';
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import {
         defaultScheduleEventTimes,
         halfHourOptions,
@@ -133,12 +133,12 @@
                 null,
         );
 
-    const shortDateFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const shortDateFormatter = new Intl.DateTimeFormat(currentLocale(), {
         month: 'numeric',
         day: 'numeric',
         weekday: 'short',
     });
-    const longDateFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const longDateFormatter = new Intl.DateTimeFormat(currentLocale(), {
         year: 'numeric',
         month: 'long',
         day: 'numeric',
@@ -199,7 +199,7 @@
     const ganttGridStepDays = $derived(ganttDayCount > 180 ? 7 : 1);
     const ganttTickOffset = (value: string): number =>
         ((epochDay(value) - epochDay(rangeStart)) / ganttDayCount) * 100;
-    const ganttMonthFormatter = new Intl.DateTimeFormat('ja-JP', {
+    const ganttMonthFormatter = new Intl.DateTimeFormat(currentLocale(), {
         year: 'numeric',
         month: 'short',
     });
@@ -229,7 +229,7 @@
 
     const formatEventDate = (value: string, allDay: boolean): string =>
         new Intl.DateTimeFormat(
-            'ja-JP',
+            currentLocale(),
             allDay
                 ? { dateStyle: 'long' }
                 : { dateStyle: 'medium', timeStyle: 'short' },
@@ -310,18 +310,18 @@
     };
 
     const monthTitle = $derived(
-        new Intl.DateTimeFormat('ja-JP', {
+        new Intl.DateTimeFormat(currentLocale(), {
             year: 'numeric',
             month: 'long',
         }).format(new Date(`${month}-01T00:00:00`)),
     );
     const monthAbbrev = (value: string): string =>
-        new Intl.DateTimeFormat('ja-JP', { month: 'short' }).format(
+        new Intl.DateTimeFormat(currentLocale(), { month: 'short' }).format(
             new Date(value),
         );
     const dayNumber = (value: string): number => new Date(value).getDate();
     const weekdayAbbrev = (value: string): string =>
-        new Intl.DateTimeFormat('ja-JP', { weekday: 'short' }).format(
+        new Intl.DateTimeFormat(currentLocale(), { weekday: 'short' }).format(
             new Date(value),
         );
     const hourHeight = 64;
@@ -832,7 +832,7 @@
                                             /><span
                                                 class="text-muted-foreground"
                                                 >{new Intl.DateTimeFormat(
-                                                    'ja-JP',
+                                                    currentLocale(),
                                                     { timeStyle: 'short' },
                                                 ).format(
                                                     new Date(event.startsAt),

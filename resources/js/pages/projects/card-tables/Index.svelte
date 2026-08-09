@@ -60,7 +60,7 @@
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
     import { cardTableColumnLayout } from '@/lib/card-table-columns';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import { cn } from '@/lib/utils';
     import type {
         ProjectCard,
@@ -129,7 +129,7 @@
         return column.name;
     };
     const memberInitial = (name: string | null): string =>
-        name?.trim().slice(0, 1).toLocaleUpperCase('ja-JP') || '?';
+        name?.trim().slice(0, 1).toLocaleUpperCase(currentLocale()) || '?';
     const confirmDelete = (): boolean =>
         window.confirm(t('Are you sure you want to delete this?'));
     const visibleCards = (column: ProjectCardColumn): ProjectCard[] => {

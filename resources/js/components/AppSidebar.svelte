@@ -80,7 +80,7 @@
             icon: History,
         },
         {
-            title: currentTeam?.menuNames.calendar ?? '行程',
+            title: currentTeam?.menuNames.calendar ?? t('Calendar'),
             href: calendarUrl,
             icon: CalendarDays,
         },
@@ -90,12 +90,12 @@
             icon: Search,
         },
         {
-            title: currentTeam?.menuNames.reports ?? '戦況',
+            title: currentTeam?.menuNames.reports ?? t('Reports'),
             href: reportsUrl,
             icon: ChartColumn,
         },
         {
-            title: currentTeam?.menuNames.lineup ?? '布陣',
+            title: currentTeam?.menuNames.lineup ?? t('Lineup'),
             href: lineupUrl,
             icon: ChartGantt,
         },

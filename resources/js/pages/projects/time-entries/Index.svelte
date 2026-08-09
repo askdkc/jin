@@ -125,7 +125,9 @@
                     class="border-input focus-visible:border-ring focus-visible:ring-ring/50 h-9 rounded-md border bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:ring-[3px]"
                 >
                     <option value=""
-                        >{currentTeam.menuNames.todos}に関連付けない</option
+                        >{t('Do not associate with :name', {
+                            name: currentTeam.menuNames.todos,
+                        })}</option
                     >
                     {#each todos as todo (todo.id)}
                         <option value={todo.id}>{todo.name}</option>

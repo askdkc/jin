@@ -1,0 +1,199 @@
+name: setup-smoke
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - setup.sh
+      - .github/setup-systemd.Dockerfile
+      - .github/workflows/setup-smoke.yml
+  pull_request:
+    paths:
+      - setup.sh
+      - .github/setup-systemd.Dockerfile
+      - .github/workflows/setup-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    name: Shell validation
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Validate setup.sh
+        run: |
+          bash -n setup.sh
+          shellcheck -x -S error setup.sh
+          ./setup.sh --help | grep -Fq -- 'https://github.com/askdkc/jin'
+          ./setup.sh --help | grep -Fq -- '<domain>/onlyoffice'
+
+  ubuntu:
+    name: Ubuntu ${{ matrix.version }} PostgreSQL systemd smoke test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - '24.04'
+          - '26.04'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build Ubuntu systemd image
+        run: |
+          docker build --pull \
+            --build-arg UBUNTU_VERSION=${{ matrix.version }} \
+            --file .github/setup-systemd.Dockerfile \
+            --tag jin-setup:${{ matrix.version }} .
+
+      - name: Run setup.sh twice in a clean Ubuntu container
+        run: |
+          set -Eeuo pipefail
+
+          container_name="jin-setup-${{ matrix.version }}"
+          cleanup() {
+            docker exec "$container_name" bash -lc '
+              systemctl is-system-running || true
+              systemctl --no-pager --full status systemd dbus supervisor nginx postgresql redis-server || true
+              journalctl -b --no-pager -n 300 || true
+              ls -l /run/systemd/private /run/dbus/system_bus_socket 2>/dev/null || true
+            ' 2>&1 || true
+            docker logs "$container_name" 2>&1 || true
+            docker rm -f "$container_name" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker run --detach \
+            --name "$container_name" \
+            --privileged \
+            --cgroupns=host \
+            --tmpfs /run \
+            --tmpfs /run/lock \
+            --volume /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            --volume "$GITHUB_WORKSPACE:/workspace/jin:ro" \
+            "jin-setup:${{ matrix.version }}"
+
+          system_state=""
+          for _ in $(seq 1 90); do
+            system_state="$(docker exec "$container_name" systemctl is-system-running 2>/dev/null || true)"
+            if [[ "$system_state" == running || "$system_state" == degraded ]]; then
+              break
+            fi
+            sleep 1
+          done
+          [[ "$system_state" == running || "$system_state" == degraded ]] || {
+            docker exec "$container_name" systemctl --no-pager --failed || true
+            printf 'systemd did not become ready: %s\n' "$system_state" >&2
+            exit 1
+          }
+
+          docker exec --interactive "$container_name" bash -s <<'CONTAINER'
+            set -Eeuo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get -y upgrade
+            cd /workspace/jin
+            git_config_global="$(mktemp)"
+            printf "%s\n" \
+              "[safe]" \
+              "directory = /workspace/jin" \
+              "directory = /workspace/jin/.git" \
+              >"$git_config_global"
+            export GIT_CONFIG_GLOBAL="$git_config_global"
+            ./setup.sh \
+              --domain jin.test \
+              --db-name jin \
+              --db-user jin \
+              --app-dir /var/www/jin \
+              --repo file:///workspace/jin \
+              --no-ssl
+            jwt_first="$(sed -n "s/^ONLYOFFICE_JWT_SECRET=//p" /var/www/jin/.env)"
+            reverb_key_first="$(sed -n "s/^REVERB_APP_KEY=//p" /var/www/jin/.env)"
+            reverb_secret_first="$(sed -n "s/^REVERB_APP_SECRET=//p" /var/www/jin/.env)"
+            instance_first="$(sed -n "s/^ONLYOFFICE_INSTANCE_ID=//p" /var/www/jin/.env)"
+            db_password_first="$(sed -n "s/^DB_PASSWORD=//p" /var/www/jin/.env)"
+            grep -qx "APP_ENV=production" /var/www/jin/.env
+            grep -qx "DB_CONNECTION=pgsql" /var/www/jin/.env
+            grep -qx "ONLYOFFICE_DOCUMENT_SERVER_URL=http://127.0.0.1:8081" /var/www/jin/.env
+            grep -qx "ONLYOFFICE_PUBLIC_URL=http://jin.test/onlyoffice" /var/www/jin/.env
+            grep -qx "APP_ONLYOFFICE_INTERNAL_URL=http://127.0.0.1:8090" /var/www/jin/.env
+            php -r 'exit(PHP_MAJOR_VERSION === 8 && PHP_MINOR_VERSION === 5 ? 0 : 1);'
+            systemctl is-active --quiet php8.5-fpm
+            node_major="$(node -p 'process.versions.node.split(".")[0]')"
+            [[ "$node_major" =~ ^[0-9]+$ && "$node_major" -ge 24 ]]
+            expected_pg_major=16
+            expected_pgroonga=postgresql-16-pgroonga
+            if [[ "${{ matrix.version }}" == 26.04 ]]; then
+              expected_pg_major=18
+              expected_pgroonga=postgresql-18-pgdg-pgroonga
+            fi
+            actual_pg_major="$(pg_lsclusters --no-header | awk 'NR == 1 { print $1 }')"
+            [[ "$actual_pg_major" == "$expected_pg_major" ]]
+            dpkg-query -W -f='${db:Status-Status}' "$expected_pgroonga" | grep -qx installed
+            test -x /var/www/jin/.venv-file-content/bin/markitdown
+            systemctl is-active --quiet rabbitmq-server
+            for rabbit_port in 5672 25672 4369; do
+              ss -H -ltn | awk -v suffix=":${rabbit_port}" '
+                length($4) >= length(suffix) && substr($4, length($4) - length(suffix) + 1) == suffix {
+                  found = 1
+                  if ($4 != ("127.0.0.1" suffix) && $4 != ("[::1]" suffix)) { public = 1 }
+                }
+                END { exit !(found && !public) }
+              '
+            done
+            rabbitmq-diagnostics listeners | grep -Eq '127\.0\.0\.1.*25672'
+            curl --fail --silent --show-error \
+              -H "Host: jin.test" \
+              "http://127.0.0.1/onlyoffice/web-apps/apps/api/documents/api.js" >/dev/null
+            ./setup.sh \
+              --domain jin.test \
+              --db-name jin \
+              --db-user jin \
+              --app-dir /var/www/jin \
+              --repo file:///workspace/jin \
+              --no-ssl
+            jwt_second="$(sed -n "s/^ONLYOFFICE_JWT_SECRET=//p" /var/www/jin/.env)"
+            reverb_key_second="$(sed -n "s/^REVERB_APP_KEY=//p" /var/www/jin/.env)"
+            reverb_secret_second="$(sed -n "s/^REVERB_APP_SECRET=//p" /var/www/jin/.env)"
+            instance_second="$(sed -n "s/^ONLYOFFICE_INSTANCE_ID=//p" /var/www/jin/.env)"
+            db_password_second="$(sed -n "s/^DB_PASSWORD=//p" /var/www/jin/.env)"
+            [[ "$jwt_first" == "$jwt_second" ]]
+            [[ "$reverb_key_first" == "$reverb_key_second" ]]
+            [[ "$reverb_secret_first" == "$reverb_secret_second" ]]
+            [[ "$instance_first" == "$instance_second" ]]
+            [[ "$db_password_first" == "$db_password_second" ]]
+            extension_version="$(runuser -u postgres -- psql -d jin -Atqc \
+              "SELECT extversion FROM pg_extension WHERE extname = \$\$pgroonga\$\$")"
+            [[ -n "$extension_version" ]]
+            grep -q "listen 127.0.0.1:8081" /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/*
+            ! grep -RqsE "listen (0\.0\.0\.0:)?8081" /etc/nginx/conf.d /etc/nginx/sites-enabled
+            ss -ltn | grep -Eq "127\.0\.0\.1:8081"
+            curl --fail --silent --show-error \
+              -H "Host: jin.test" http://127.0.0.1/up >/dev/null
+            token="ci-acme-${RANDOM}${RANDOM}"
+            challenge="/var/www/letsencrypt/.well-known/acme-challenge/$token"
+            printf "%s\n" "$token" > "$challenge"
+            response="$(curl --fail --silent --show-error \
+              --header "Host: jin.test" \
+              "http://127.0.0.1/.well-known/acme-challenge/$token")"
+            [[ "$response" == "$token" ]]
+            rm -f "$challenge"
+          CONTAINER

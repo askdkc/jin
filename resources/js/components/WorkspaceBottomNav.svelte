@@ -28,7 +28,7 @@
     } from '@/components/ui/dropdown-menu';
     import UserMenuContent from '@/components/UserMenuContent.svelte';
     import { getEcho } from '@/lib/echo';
-    import { t } from '@/lib/i18n';
+    import { currentLocale, t } from '@/lib/i18n';
     import { show } from '@/routes/projects';
     import type { Team, WorkspacePing } from '@/types';
 
@@ -107,15 +107,17 @@
               ? 'border-lime-400 bg-lime-100 text-lime-950 dark:bg-lime-800 dark:text-white'
               : 'border-amber-300 bg-amber-50 text-amber-950 dark:bg-amber-900 dark:text-amber-50',
     );
-    const eventFormatter = new Intl.DateTimeFormat('ja-JP', {
-        timeZone: 'Asia/Tokyo',
-        month: 'numeric',
-        day: 'numeric',
-        weekday: 'short',
-        hour: '2-digit',
-        minute: '2-digit',
-    });
-    const dockItems = [
+    const eventFormatter = $derived(
+        new Intl.DateTimeFormat(currentLocale(), {
+            timeZone: 'Asia/Tokyo',
+            month: 'numeric',
+            day: 'numeric',
+            weekday: 'short',
+            hour: '2-digit',
+            minute: '2-digit',
+        }),
+    );
+    const dockItems = $derived([
         { panel: 'tasks' as const, label: t('My tasks'), icon: CheckSquare2 },
         { panel: 'events' as const, label: t('My events'), icon: CalendarDays },
         {
@@ -124,7 +126,7 @@
             icon: Bookmark,
         },
         { panel: 'notes' as const, label: t('My notes'), icon: NotebookPen },
-    ];
+    ]);
 
     const itemClasses = (isActive: boolean): string =>
         `flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-0.5 text-[9px] font-medium whitespace-nowrap transition sm:flex-none sm:flex-row sm:px-2 sm:text-xs ${

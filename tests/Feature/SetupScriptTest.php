@@ -115,6 +115,39 @@ BASH, base_path('setup.sh'));
         );
 });
 
+it('accepts IPv4 and IPv6 loopback-only RabbitMQ listeners', function () {
+    $process = runSetupBash(<<<'BASH'
+source "$1"
+sudo() { "$@"; }
+ss() {
+    printf '%s\n' \
+        'LISTEN 0 128 127.0.0.1:5672 0.0.0.0:*' \
+        'LISTEN 0 128 [::1]:25672 [::]:*' \
+        'LISTEN 0 128 127.0.0.1:4369 0.0.0.0:*'
+}
+verify_rabbitmq_loopback
+BASH, base_path('setup.sh'));
+
+    expect($process->isSuccessful())->toBeTrue($process->getErrorOutput());
+});
+
+it('rejects publicly bound RabbitMQ listeners', function () {
+    $process = runSetupBash(<<<'BASH'
+source "$1"
+sudo() { "$@"; }
+ss() {
+    printf '%s\n' \
+        'LISTEN 0 128 0.0.0.0:5672 0.0.0.0:*' \
+        'LISTEN 0 128 127.0.0.1:25672 0.0.0.0:*' \
+        'LISTEN 0 128 127.0.0.1:4369 0.0.0.0:*'
+}
+verify_rabbitmq_loopback
+BASH, base_path('setup.sh'));
+
+    expect($process->isSuccessful())->toBeFalse()
+        ->and($process->getErrorOutput())->toContain('RabbitMQ listener 5672 is not loopback-only');
+});
+
 it('canonicalizes Ubuntu paths and confines its environment file', function () {
     $directory = sys_get_temp_dir().'/jin-setup-'.bin2hex(random_bytes(8));
     $outside = sys_get_temp_dir().'/jin-outside-'.bin2hex(random_bytes(8));

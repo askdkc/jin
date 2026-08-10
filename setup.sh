@@ -1214,7 +1214,7 @@ verify_rabbitmq_loopback() {
         sudo ss -H -ltn | awk -v port=":${port}" '
             $4 ~ (port "$" ) {
                 found = 1
-                if ($4 !~ /^127\\.0\\.0\\.1:/ && $4 !~ /^\\[::1\\]:/) {
+                if ($4 !~ /^127\.0\.0\.1:/ && $4 !~ /^\[::1\]:/) {
                     public = 1
                 }
             }

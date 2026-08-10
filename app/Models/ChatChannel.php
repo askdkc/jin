@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Database\Factories\ChatChannelFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -20,6 +21,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $updated_at
  * @property-read Project $project
  * @property-read User|null $creator
+ * @property-read Collection<int, Todo> $todos
  */
 #[Fillable(['project_id', 'created_by', 'name', 'description'])]
 class ChatChannel extends Model
@@ -43,5 +45,11 @@ class ChatChannel extends Model
     public function messages(): HasMany
     {
         return $this->hasMany(ChatMessage::class);
+    }
+
+    /** @return HasMany<Todo, $this> */
+    public function todos(): HasMany
+    {
+        return $this->hasMany(Todo::class);
     }
 }

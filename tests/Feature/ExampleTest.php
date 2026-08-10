@@ -93,3 +93,37 @@ test('the introduction uses the JIN brand copy and icon', function () {
         ->and($favicon)
         ->toContain('id="gunbai-head"');
 });
+
+test('the introduction exposes translated registration and login links to guests', function () {
+    $welcome = (string) file_get_contents(resource_path('js/pages/Welcome.svelte'));
+
+    expect($welcome)
+        ->toContain("import { dashboard, login, register } from '@/routes';")
+        ->toContain('data-test="welcome-login-link"')
+        ->toContain('data-test="welcome-register-button"')
+        ->toContain('data-test="welcome-hero-register-button"')
+        ->toContain('data-test="welcome-footer-register-button"')
+        ->toContain('data-test="welcome-hero-login-link"')
+        ->toContain("t('Register')")
+        ->toContain("t('Create account')")
+        ->toContain("t('Log in')");
+
+    expect(substr_count($welcome, 'href={toUrl(register())}'))->toBe(3);
+
+    foreach (array_keys(config('app.supported_locales')) as $locale) {
+        if ($locale === 'en') {
+            continue;
+        }
+
+        $translations = json_decode(
+            (string) file_get_contents(lang_path("{$locale}.json")),
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
+
+        expect($translations)
+            ->toHaveKey('Register')
+            ->toHaveKey('Log in');
+    }
+});

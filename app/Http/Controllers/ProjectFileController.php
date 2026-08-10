@@ -20,6 +20,7 @@ use App\Support\StoredFileDeletion;
 use App\Support\StoredFilePreviewDispatcher;
 use App\Support\StoredFilePreviewGenerator;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
@@ -121,6 +122,7 @@ class ProjectFileController extends Controller
         $onlyOfficeSupported = $onlyOfficeResolver->supports($storedFile);
         $storedFile->load([
             'uploader:id,name',
+            'materialFolder:id,name',
             'comments' => fn ($query) => $query->with('user:id,name')->oldest(),
             'reactors:id,name',
         ]);
@@ -148,6 +150,12 @@ class ProjectFileController extends Controller
                 'uploaderName' => $storedFile->uploader?->name,
                 'createdAt' => $storedFile->created_at?->toISOString(),
                 'canManage' => $canManageProject || $storedFile->uploaded_by === $userId,
+                'folder' => $storedFile->materialFolder === null
+                    ? null
+                    : [
+                        'id' => $storedFile->materialFolder->id,
+                        'name' => $storedFile->materialFolder->name,
+                    ],
             ],
             'reactions' => Reactions::grouped($storedFile->reactors, $userId),
             'comments' => $storedFile->comments->map(fn (Comment $comment): array => [
@@ -372,15 +380,20 @@ class ProjectFileController extends Controller
     }
 
     public function destroy(
+        Request $request,
         Team $currentTeam,
         Project $project,
         StoredFile $storedFile,
         StoredFileDeletion $deletion,
     ): RedirectResponse {
         Gate::authorize('view', $project);
-        abort_unless($storedFile->uploaded_by === request()->user()->id || Gate::allows('update', $project), 403);
+        abort_unless($storedFile->uploaded_by === $request->user()->id || Gate::allows('update', $project), 403);
 
         $deletion->delete($storedFile->id);
+
+        if ($request->query('return_to') === 'materials') {
+            return to_route('projects.materials.index', [$currentTeam, $project]);
+        }
 
         return back();
     }

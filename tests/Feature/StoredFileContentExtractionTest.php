@@ -118,6 +118,33 @@ test('markitdown extraction normalizes and truncates successful output', functio
         ->and(dirname((string) $stagedPath))->not->toBeDirectory();
 });
 
+test('markitdown extraction excludes embedded image data from searchable content', function () {
+    Storage::fake('local');
+    $storedFile = storedFileContentFile(
+        'docx',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+
+    Process::fake(function (PendingProcess $process): object {
+        file_put_contents(
+            $process->command[3],
+            'Visible text ![](data:image/jpeg;base64,/9j/4AAQ) '
+                .'![Revenue chart](data:image/png;base64,iVBORw0KGgo=) after.',
+        );
+
+        return Process::result();
+    });
+
+    $result = app(StoredFileContentExtractor::class)->extract(
+        $storedFile,
+        $storedFile->checksum,
+    );
+
+    expect($result->status)->toBe(StoredFileContentStatus::Ready)
+        ->and($result->content)->toBe('Visible text Revenue chart after.')
+        ->and($result->content)->not->toContain('data:image');
+});
+
 test('encrypted modern office documents publish no content without starting markitdown', function () {
     Storage::fake('local');
     $storedFile = storedFileContentFile(

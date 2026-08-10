@@ -4,10 +4,13 @@ namespace App\Models;
 
 use Database\Factories\ChatMessageFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Support\Carbon;
 
 /**
@@ -23,6 +26,8 @@ use Illuminate\Support\Carbon;
  * @property-read ChatChannel|null $channel
  * @property-read User|null $user
  * @property-read ChatMessage|null $parent
+ * @property-read Collection<int, StoredFile> $attachments
+ * @property-read Collection<int, User> $reactors
  */
 #[Fillable(['project_id', 'chat_channel_id', 'user_id', 'parent_id', 'body'])]
 class ChatMessage extends Model
@@ -66,5 +71,19 @@ class ChatMessage extends Model
     public function replies(): HasMany
     {
         return $this->hasMany(self::class, 'parent_id');
+    }
+
+    /** @return MorphMany<StoredFile, $this> */
+    public function attachments(): MorphMany
+    {
+        return $this->morphMany(StoredFile::class, 'attachable');
+    }
+
+    /** @return BelongsToMany<User, $this> */
+    public function reactors(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'chat_message_reactions')
+            ->withPivot('reaction')
+            ->withTimestamps();
     }
 }

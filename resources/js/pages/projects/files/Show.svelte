@@ -1,35 +1,23 @@
 <script module lang="ts">
     import ProjectFileController from '@/actions/App/Http/Controllers/ProjectFileController';
-    import ProjectMaterialController from '@/actions/App/Http/Controllers/ProjectMaterialController';
-    import { show as showProject } from '@/routes/projects';
+    import { buildMaterialBreadcrumbs } from '@/lib/materialBreadcrumbs';
     import type { ProjectTool, Team } from '@/types';
 
     export const layout = (props: {
         currentTeam: Team;
         project: ProjectTool;
-        file: { id: number; name: string };
+        file: {
+            id: number;
+            name: string;
+            folder: { id: number; name: string } | null;
+        };
     }) => ({
-        breadcrumbs: [
-            {
-                title: props.project.name,
-                href: showProject([props.currentTeam.slug, props.project.id]),
-            },
-            {
-                translationKey: 'Materials',
-                href: ProjectMaterialController.index([
-                    props.currentTeam.slug,
-                    props.project.id,
-                ]),
-            },
-            {
-                title: props.file.name,
-                href: ProjectFileController.show([
-                    props.currentTeam.slug,
-                    props.project.id,
-                    props.file.id,
-                ]),
-            },
-        ],
+        breadcrumbs: buildMaterialBreadcrumbs({
+            teamSlug: props.currentTeam.slug,
+            project: props.project,
+            folder: props.file.folder,
+            file: props.file,
+        }),
     });
 </script>
 
@@ -43,8 +31,10 @@
     import AttachmentController from '@/actions/App/Http/Controllers/AttachmentController';
     import CommentController from '@/actions/App/Http/Controllers/CommentController';
     import AppHead from '@/components/AppHead.svelte';
+    import Breadcrumbs from '@/components/Breadcrumbs.svelte';
     import FileDropzone from '@/components/FileDropzone.svelte';
     import InputError from '@/components/InputError.svelte';
+    import OnlyOfficePreview from '@/components/OnlyOfficePreview.svelte';
     import OnlyOfficePreviewDialog from '@/components/OnlyOfficePreviewDialog.svelte';
     import ReactionPicker from '@/components/ReactionPicker.svelte';
     import RichTextContent from '@/components/RichTextContent.svelte';
@@ -92,6 +82,7 @@
             uploaderName: string | null;
             createdAt: string | null;
             canManage: boolean;
+            folder: { id: number; name: string } | null;
         };
         reactions: ProjectReaction[];
         comments: FileComment[];
@@ -103,6 +94,14 @@
         number,
         number,
     ]);
+    const materialBreadcrumbs = $derived(
+        buildMaterialBreadcrumbs({
+            teamSlug: currentTeam.slug,
+            project,
+            folder: file.folder,
+            file,
+        }),
+    );
     const extension = $derived(
         file.name.split('.').pop()?.toLocaleLowerCase('en-US') ?? '',
     );
@@ -110,16 +109,23 @@
     const usesGeneratedPreview = $derived(
         generatedPreviewExtensions.includes(extension),
     );
+    const usesOnlyOffice = $derived(
+        onlyOffice.enabled &&
+            onlyOffice.supported &&
+            onlyOffice.configUrl !== null,
+    );
     const previewKind = $derived(
-        ['jpg', 'jpeg', 'png', 'webp'].includes(extension)
-            ? 'image'
-            : ['mp4', 'webm', 'mov', 'm4v'].includes(extension)
-              ? 'video'
-              : usesGeneratedPreview
-                ? 'generated'
-                : canPreviewStoredFile(file.name)
-                  ? 'embed'
-                  : 'none',
+        usesOnlyOffice
+            ? 'onlyoffice'
+            : ['jpg', 'jpeg', 'png', 'webp'].includes(extension)
+              ? 'image'
+              : ['mp4', 'webm', 'mov', 'm4v'].includes(extension)
+                ? 'video'
+                : usesGeneratedPreview
+                  ? 'generated'
+                  : canPreviewStoredFile(file.name)
+                    ? 'embed'
+                    : 'none',
     );
     const previewUrl = $derived(
         ProjectFileController.preview.url([
@@ -129,10 +135,7 @@
         ]),
     );
     const canOpenPreview = $derived(
-        canPreviewStoredFile(file.name) ||
-            (onlyOffice.enabled &&
-                onlyOffice.supported &&
-                onlyOffice.configUrl !== null),
+        canPreviewStoredFile(file.name) || usesOnlyOffice,
     );
     let previewOpen = $state(false);
     let onlyOfficeOpen = $state(false);
@@ -181,24 +184,7 @@
     <article class="overflow-hidden rounded-xl border bg-card">
         <header class="px-5 pt-5 pb-6 sm:px-8">
             <div class="flex items-center justify-between gap-4">
-                <nav
-                    class="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted-foreground"
-                    aria-label={t('Breadcrumb')}
-                >
-                    <Link
-                        href={showProject([currentTeam.slug, project.id])}
-                        class="truncate font-semibold text-foreground hover:underline"
-                        >{project.name}</Link
-                    >
-                    <span aria-hidden="true">‹</span>
-                    <Link
-                        href={ProjectMaterialController.index([
-                            currentTeam.slug,
-                            project.id,
-                        ])}
-                        class="hover:underline">{t('Materials')}</Link
-                    >
-                </nav>
+                <Breadcrumbs breadcrumbs={materialBreadcrumbs} />
 
                 {#if file.canManage}
                     <div class="flex shrink-0 items-center gap-1">
@@ -214,6 +200,11 @@
                         <Form
                             {...ProjectFileController.destroy.form(
                                 routeArguments,
+                                {
+                                    query: {
+                                        return_to: 'materials',
+                                    },
+                                },
                             )}
                             onBefore={confirmDelete}
                         >
@@ -287,7 +278,16 @@
 
         <section class="px-5 pb-6 sm:px-8">
             <div class="overflow-hidden rounded-lg border bg-muted/30">
-                {#if previewKind === 'image'}
+                {#if previewKind === 'onlyoffice' && onlyOffice.configUrl}
+                    <OnlyOfficePreview
+                        {currentTeam}
+                        {project}
+                        {file}
+                        configUrl={onlyOffice.configUrl}
+                        active={!onlyOfficeOpen}
+                        class="h-[75vh] min-h-80 w-full"
+                    />
+                {:else if previewKind === 'image'}
                     <img
                         src={previewUrl}
                         alt={file.name}

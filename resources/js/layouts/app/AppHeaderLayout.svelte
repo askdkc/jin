@@ -5,6 +5,7 @@
     import AppHeader from '@/components/AppHeader.svelte';
     import AppShell from '@/components/AppShell.svelte';
     import ProfileDialog from '@/components/ProfileDialog.svelte';
+    import RealtimeNotificationToasts from '@/components/RealtimeNotificationToasts.svelte';
     import { Toaster } from '@/components/ui/sonner';
     import WorkspaceBottomNav from '@/components/WorkspaceBottomNav.svelte';
     import type { BreadcrumbItem, HeaderAction, Team } from '@/types';
@@ -33,5 +34,6 @@
         {/key}
     {/if}
     <ProfileDialog />
-    <Toaster />
+    <RealtimeNotificationToasts />
+    <Toaster offset="4rem" richColors closeButton />
 </AppShell>

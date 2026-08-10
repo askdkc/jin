@@ -17,6 +17,7 @@ use Illuminate\Support\Carbon;
 /**
  * @property int $id
  * @property int $todo_list_id
+ * @property int|null $chat_channel_id
  * @property int|null $parent_id
  * @property int|null $assignee_id
  * @property array<int, int>|null $completion_notify_ids
@@ -30,6 +31,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  * @property-read TodoList $todoList
+ * @property-read ChatChannel|null $chatChannel
  * @property-read Todo|null $parent
  * @property-read Collection<int, Todo> $subtasks
  * @property-read User|null $assignee
@@ -39,7 +41,7 @@ use Illuminate\Support\Carbon;
  * @property-read Collection<int, StoredFile> $attachments
  * @property-read Collection<int, User> $reactors
  */
-#[Fillable(['todo_list_id', 'parent_id', 'assignee_id', 'completion_notify_ids', 'created_by', 'title', 'details', 'due_on', 'completed_at', 'completed_by', 'position'])]
+#[Fillable(['todo_list_id', 'chat_channel_id', 'parent_id', 'assignee_id', 'completion_notify_ids', 'created_by', 'title', 'details', 'due_on', 'completed_at', 'completed_by', 'position'])]
 class Todo extends Model
 {
     /** @use HasFactory<TodoFactory> */
@@ -49,6 +51,12 @@ class Todo extends Model
     public function todoList(): BelongsTo
     {
         return $this->belongsTo(TodoList::class);
+    }
+
+    /** @return BelongsTo<ChatChannel, $this> */
+    public function chatChannel(): BelongsTo
+    {
+        return $this->belongsTo(ChatChannel::class);
     }
 
     /** @return BelongsTo<Todo, $this> */

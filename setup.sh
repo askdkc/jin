@@ -48,6 +48,7 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 MAX_SAFE_INTEGER=9007199254740991
 MAX_SAFE_FILE_SIZE_MB=8589934591
 SUDO_KEEPALIVE_PID=""
+SUDO_NOPASSWD="${SUDO_NOPASSWD:-0}"
 APP_PROCESSES_STOPPED=0
 APP_MAINTENANCE=0
 JIN_NGINX_CHANGED=0
@@ -1150,6 +1151,104 @@ run_as_deploy() {
     fi
 }
 
+announce_passwordless_sudo_option() {
+    [[ "$(id -u)" -ne 0 && "$SUDO_NOPASSWD" != "1" ]] || return 0
+
+    if sudo -n true >/dev/null 2>&1; then
+        log "Passwordless sudo detected; rerun with: ./setup.sh --sudo-nopasswd"
+        exit 0
+    fi
+}
+
+configure_deploy_postgresql_peer_authentication() {
+    local hba_directory hba_file hba_temp_file include_rule peer_file peer_rule_count peer_rule_errors
+
+    hba_file="$(sudo -u postgres psql -p "$PG_PORT" -Atqc 'SHOW hba_file' postgres)"
+    [[ "$hba_file" == /* ]] || die "PostgreSQL returned an invalid hba_file path: $hba_file"
+    sudo test -f "$hba_file" || die "PostgreSQL hba_file does not exist: $hba_file"
+    hba_directory="$(dirname -- "$hba_file")"
+    peer_file="$hba_directory/jin-pg_hba.conf"
+    include_rule="include_if_exists 'jin-pg_hba.conf'"
+
+    printf '# Managed by Jin setup.sh\nlocal all %s peer\n' "$DEPLOY_USER" \
+        | sudo tee "$peer_file" >/dev/null
+    sudo chown postgres:postgres "$peer_file"
+    sudo chmod 0640 "$peer_file"
+
+    if [[ "$(sudo sed -n '1p' "$hba_file")" != "$include_rule" ]]; then
+        hba_temp_file="$(sudo mktemp "${hba_file}.jin.XXXXXX")"
+        if ! {
+            printf '%s\n' "$include_rule"
+            sudo awk -v include_rule="$include_rule" '$0 != include_rule { print }' "$hba_file"
+        } | sudo tee "$hba_temp_file" >/dev/null; then
+            sudo rm -f "$hba_temp_file"
+            die "Could not add the Jin peer authentication include to $hba_file"
+        fi
+        sudo chown postgres:postgres "$hba_temp_file"
+        sudo chmod 0640 "$hba_temp_file"
+        sudo mv -f "$hba_temp_file" "$hba_file"
+    fi
+
+    peer_rule_errors="$(sudo -u postgres psql \
+        -p "$PG_PORT" \
+        --set=peer_file="$peer_file" \
+        -Atq postgres <<'SQL'
+SELECT coalesce(string_agg(format('%s: %s', line_number, error), E'\n'), '')
+FROM pg_hba_file_rules
+WHERE file_name = :'peer_file' AND error IS NOT NULL;
+SQL
+    )"
+    [[ -z "$peer_rule_errors" ]] \
+        || die "Invalid Jin PostgreSQL peer authentication rule: $peer_rule_errors"
+    peer_rule_count="$(sudo -u postgres psql \
+        -p "$PG_PORT" \
+        --set=deploy_user="$DEPLOY_USER" \
+        --set=peer_file="$peer_file" \
+        -Atq postgres <<'SQL'
+SELECT count(*)
+FROM pg_hba_file_rules
+WHERE file_name = :'peer_file'
+  AND type = 'local'
+  AND 'all' = ANY(database)
+  AND :'deploy_user' = ANY(user_name)
+  AND auth_method = 'peer'
+  AND error IS NULL;
+SQL
+    )"
+    [[ "$peer_rule_count" == "1" ]] \
+        || die "Jin PostgreSQL peer authentication rule was not loaded from $peer_file"
+    sudo systemctl reload "$PG_SERVICE"
+}
+
+ensure_deploy_postgresql_role() {
+    local connected_role installer_role_is_superuser
+
+    log "Ensuring PostgreSQL superuser role '$DEPLOY_USER' exists for passwordless local administration"
+    sudo -u postgres psql \
+        -p "$PG_PORT" \
+        --set=ON_ERROR_STOP=1 \
+        --set=installer_role="$DEPLOY_USER" \
+        postgres <<'SQL'
+SELECT format('CREATE ROLE %I LOGIN SUPERUSER', :'installer_role')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'installer_role') \gexec
+SELECT format('ALTER ROLE %I WITH LOGIN SUPERUSER', :'installer_role') \gexec
+SQL
+    installer_role_is_superuser="$(sudo -u postgres psql \
+        -p "$PG_PORT" \
+        --set=installer_role="$DEPLOY_USER" \
+        -Atq postgres <<'SQL'
+SELECT rolsuper FROM pg_roles WHERE rolname = :'installer_role';
+SQL
+    )"
+    [[ "$installer_role_is_superuser" == "t" ]] \
+        || die "PostgreSQL superuser role was not created for $DEPLOY_USER"
+
+    connected_role="$(run_as_deploy psql --no-password -p "$PG_PORT" -Atqc 'SELECT current_user' postgres)" \
+        || die "PostgreSQL peer authentication failed for $DEPLOY_USER"
+    [[ "$connected_role" == "$DEPLOY_USER" ]] \
+        || die "PostgreSQL peer authentication connected as '$connected_role', expected '$DEPLOY_USER'"
+}
+
 endpoint_returns_ok() {
     local response
 
@@ -1587,7 +1686,10 @@ resolve_ubuntu_deployment_values() {
 
 configure_ubuntu_postgresql() {
     local cluster_line
+    local db_credential_file=/etc/jin/database-password
     local db_password_from_env
+    local db_password_generated=0
+    local role_is_privileged
 
     sudo systemctl enable --now postgresql
     mapfile -t PG_CLUSTERS < <(pg_lsclusters --no-header)
@@ -1612,22 +1714,40 @@ configure_ubuntu_postgresql() {
     db_password_from_env="$(read_env DB_PASSWORD "$ENV_FILE")"
     is_placeholder_value "$db_password_from_env" && db_password_from_env=""
     DB_PASSWORD="${DB_PASSWORD:-$db_password_from_env}"
-    DB_CREDENTIAL_FILE="/etc/jin/database-password"
-    if [[ -z "$DB_PASSWORD" ]] && sudo test -r "$DB_CREDENTIAL_FILE"; then
-        DB_PASSWORD="$(sudo sh -c "tr -d '\\r\\n' < '$DB_CREDENTIAL_FILE'")"
+    if [[ -z "$DB_PASSWORD" ]] && sudo test -r "$db_credential_file"; then
+        DB_PASSWORD="$(sudo sh -c "tr -d '\\r\\n' < '$db_credential_file'")"
         is_placeholder_value "$DB_PASSWORD" && DB_PASSWORD=""
     fi
     if [[ -z "$DB_PASSWORD" && -t 0 ]]; then
         read -r -s -p "PostgreSQL password (leave blank to generate): " DB_PASSWORD
         printf '\n'
     fi
-    DB_PASSWORD="${DB_PASSWORD:-$(openssl rand -hex 32)}"
+    if [[ -z "$DB_PASSWORD" ]]; then
+        DB_PASSWORD="$(openssl rand -hex 32)"
+        db_password_generated=1
+    fi
     [[ "$DB_PASSWORD" != *$'\n'* && "$DB_PASSWORD" != *$'\r'* ]] \
         || die "PostgreSQL password cannot contain newlines"
-    sudo install -d -m 0700 /etc/jin
-    printf '%s\n' "$DB_PASSWORD" | sudo tee "$DB_CREDENTIAL_FILE" >/dev/null
-    sudo chown root:root "$DB_CREDENTIAL_FILE"
-    sudo chmod 0600 "$DB_CREDENTIAL_FILE"
+    sudo install -d -o root -g root -m 0700 /etc/jin
+    printf '%s\n' "$DB_PASSWORD" | sudo tee "$db_credential_file" >/dev/null
+    sudo chown root:root "$db_credential_file"
+    sudo chmod 0600 "$db_credential_file"
+    if [[ "$db_password_generated" -eq 1 ]]; then
+        log "Generated PostgreSQL password saved to $db_credential_file (root-only; view with: sudo cat $db_credential_file)"
+    fi
+
+    configure_deploy_postgresql_peer_authentication
+    ensure_deploy_postgresql_role
+
+    role_is_privileged="$(sudo -u postgres psql -p "$PG_PORT" --set=db_user="$DB_USER" -Atq postgres <<'SQL'
+SELECT EXISTS (
+    SELECT 1 FROM pg_roles
+    WHERE rolname = :'db_user'
+      AND (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls)
+);
+SQL
+    )"
+    [[ "$role_is_privileged" != "t" ]] || die "Refusing to use privileged PostgreSQL role: $DB_USER"
 
     sudo -u postgres env JIN_DB_PASSWORD="$DB_PASSWORD" psql -p "$PG_PORT" \
         --set=ON_ERROR_STOP=1 --set=db_name="$DB_NAME" --set=db_user="$DB_USER" postgres <<'SQL'
@@ -2120,7 +2240,15 @@ setup_ubuntu() {
     local -a php_packages postgres_packages
     local php_version_id
 
-    [[ "$(id -u)" -eq 0 ]] || { command -v sudo >/dev/null || die "sudo is required"; sudo -v || die "sudo authentication failed"; }
+    announce_passwordless_sudo_option
+    if [[ "$(id -u)" -eq 0 ]]; then
+        command -v runuser >/dev/null || die "runuser is required for direct root execution"
+    else
+        command -v sudo >/dev/null || die "sudo is required"
+        if [[ "$SUDO_NOPASSWD" != "1" ]]; then
+            sudo -v || die "sudo authentication failed"
+        fi
+    fi
     [[ -f /etc/os-release ]] || die "Could not identify the operating system"
     . /etc/os-release
     [[ "${ID:-}" == ubuntu ]] || die "This Linux setup supports Ubuntu only"
@@ -2149,6 +2277,10 @@ setup_ubuntu() {
 
     DEPLOY_USER="${DEPLOY_USER:-$(id -un)}"
     id "$DEPLOY_USER" >/dev/null 2>&1 || die "Deployment user does not exist: $DEPLOY_USER"
+    valid_postgresql_identifier "$DEPLOY_USER" \
+        || die "Deployment user must be a valid PostgreSQL role name: $DEPLOY_USER"
+    [[ "$DB_USER" != "$DEPLOY_USER" ]] \
+        || die "DB_USER must differ from DEPLOY_USER because the deployment role is a PostgreSQL superuser"
     if [[ -z "$APP_DOMAIN" ]]; then
         if [[ -t 0 ]]; then
             read -r -p "Jin public domain: " APP_DOMAIN
@@ -2171,7 +2303,7 @@ setup_ubuntu() {
     [[ "$CONFIGURE_NGINX" != 0 ]] \
         || die "Ubuntu deployment requires Nginx; remove --no-nginx"
 
-    if [[ "$(id -u)" -ne 0 ]]; then
+    if [[ "$(id -u)" -ne 0 && "$SUDO_NOPASSWD" != "1" ]]; then
         (
             while sleep 60; do sudo -n -v || exit; done
         ) &
@@ -2364,7 +2496,7 @@ Options:
   --env-file <path>            macOS environment file; Ubuntu requires <app-dir>/.env
   --db-name <name>             PostgreSQL database (default: jin)
   --db-user <name>             PostgreSQL application role (default: jin)
-  --db-password <password>     PostgreSQL password; prefer existing .env or env input
+  --db-password <password>     PostgreSQL password; generated values are stored root-only
   --email <address>            Let's Encrypt registration / expiry mail
   --onlyoffice-port <port>     Loopback DocumentServer port (default: 8081)
   --app-internal-port <port>   Loopback Laravel callback port (default: 8090)
@@ -2372,6 +2504,7 @@ Options:
   --instance-id <id>           ONLYOFFICE instance id (Ubuntu: generated if local/blank)
   --max-file-size-bytes <n>    Jin Office file limit
   --max-download-bytes <n>     DocumentServer download limit
+  --sudo-nopasswd              Use a passwordless sudo user and skip sudo -v validation
   --no-ssl                     Skip Let's Encrypt and use HTTP
   --platform <auto|ubuntu|macos>
                                Override platform detection
@@ -2499,12 +2632,18 @@ main() {
                 ;;
             --nginx) CONFIGURE_NGINX=1; shift ;;
             --no-nginx) CONFIGURE_NGINX=0; shift ;;
+            --sudo-nopasswd) SUDO_NOPASSWD=1; shift ;;
             --no-ssl) NO_SSL=1; shift ;;
             --recreate-container) RECREATE_CONTAINER=1; shift ;;
             -h|--help) usage; exit 0 ;;
             *) die "Unknown option: $1 (see --help)" ;;
         esac
     done
+
+    case "$SUDO_NOPASSWD" in
+        0|1) ;;
+        *) die "SUDO_NOPASSWD must be 0 or 1" ;;
+    esac
 
     if [[ "$CONTAINER_NAME_EXPLICIT" -eq 1 || "$VOLUME_NAMES_EXPLICIT" -eq 1 ]]; then
         ALLOW_LEGACY_MACOS_RESOURCES=1

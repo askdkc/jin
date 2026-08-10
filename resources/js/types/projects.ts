@@ -435,6 +435,15 @@ export type ChatUser = {
     name: string;
 };
 
+export type ChatAttachment = {
+    id: number;
+    name: string;
+    mimeType: string | null;
+    size: number;
+    uploaderName: string | null;
+    createdAt: string | null;
+};
+
 export type ChatMessage = {
     id: number;
     channelId: number;
@@ -442,7 +451,9 @@ export type ChatMessage = {
     body: string;
     createdAt: string;
     replyCount: number;
+    reactions: ProjectReaction[];
     user: ChatUser | null;
+    attachments: ChatAttachment[];
 };
 
 export type ChatChannel = {
@@ -450,11 +461,28 @@ export type ChatChannel = {
     name: string;
     description: string | null;
     messageCount: number;
+    canManage: boolean;
 };
 
 export type ChatProject = {
     id: number;
     name: string;
+};
+
+export type ChatTodoList = {
+    id: number;
+    title: string;
+};
+
+export type ChatTodo = {
+    id: number;
+    listId: number;
+    listTitle: string;
+    title: string;
+    completed: boolean;
+    assigneeName: string | null;
+    dueOn: string | null;
+    canEdit: boolean;
 };
 
 export type ChatHistoryResponse = {
@@ -465,6 +493,11 @@ export type ChatHistoryResponse = {
 
 export type ChatStoreResponse = {
     message: ChatMessage;
+};
+
+export type ChatReactionResponse = {
+    messageId: number;
+    reactions: ProjectReaction[];
 };
 
 export type ChatThreadResponse = ChatHistoryResponse & {
@@ -577,6 +610,7 @@ export type ProjectTodo = {
     assigneeName: string | null;
     completionNotifyIds: number[];
     dueOn: string | null;
+    chatChannel: { id: number; name: string } | null;
     completed: boolean;
     creatorName: string | null;
     createdAt: string | null;

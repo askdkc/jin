@@ -96,6 +96,11 @@ test('file results reuse previews and navigate with server-owned hrefs', () => {
         /\{#if item\.snippet\}[\s\S]*?line-clamp-2[\s\S]*?\{item\.snippet\}[\s\S]*?\{\/if\}[\s\S]*?item\.uploader/,
     );
     assert.doesNotMatch(everythingPage, /\{@html\s+item\.snippet/);
+    assert.match(
+        everythingPage,
+        /fileTypeLabelKey\(\s*item\.title,\s*item\.mimeType/,
+    );
+    assert.doesNotMatch(everythingPage, /\{item\.mimeType\s*\|\|/);
     assert.match(fileThumbnail, /'index' \| 'result' \| 'summary'/);
     assert.match(fileThumbnail, /max-h-56/);
     assert.match(fileThumbnail, /max-w-72/);
@@ -130,4 +135,7 @@ test('everything results support update and name sorting', () => {
     assert.equal(translations['Name descending'], '名前の降順');
     assert.equal(translations[':count results'], ':count件の結果');
     assert.equal(translations['Preview :file'], ':fileをプレビュー');
+    assert.equal(translations['Word document'], 'Word文書');
+    assert.equal(translations.Presentation, 'プレゼンテーション');
+    assert.equal(translations['PDF document'], 'PDF文書');
 });

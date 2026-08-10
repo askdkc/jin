@@ -2,6 +2,7 @@
 
 use App\Enums\ActivityType;
 use App\Enums\TeamRole;
+use App\Models\ChatChannel;
 use App\Models\Comment;
 use App\Models\Project;
 use App\Models\Team;
@@ -185,6 +186,63 @@ test('todos can be created with subtasks and completion watchers in one request'
             ]],
         ])
         ->assertSessionHasErrors('subtasks.0.assignee_id');
+});
+
+test('todos can belong to a project chat channel', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($owner);
+    $todoList = TodoList::factory()->for($project)->create();
+    $channel = ChatChannel::factory()->for($project)->for($owner, 'creator')->create([
+        'name' => 'launch',
+    ]);
+
+    $this
+        ->actingAs($owner)
+        ->post(route('projects.todos.store', [$team, $project, $todoList]), [
+            'title' => '公開前チェック',
+            'chat_channel_id' => $channel->id,
+        ])
+        ->assertRedirect()
+        ->assertSessionHasNoErrors();
+
+    $todo = Todo::query()->firstOrFail();
+
+    expect($todo->chatChannel->is($channel))->toBeTrue();
+
+    $this
+        ->get(route('projects.todos.show', [$team, $project, $todoList, $todo]))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('todo.chatChannel.id', $channel->id)
+            ->where('todo.chatChannel.name', 'launch'));
+
+    $channel->delete();
+
+    expect($todo->fresh()->chat_channel_id)->toBeNull();
+});
+
+test('a todo cannot link to a chat channel from another project', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $otherProject = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($owner);
+    $todoList = TodoList::factory()->for($project)->create();
+    $otherChannel = ChatChannel::factory()->for($otherProject)->for($owner, 'creator')->create();
+
+    $this
+        ->actingAs($owner)
+        ->post(route('projects.todos.store', [$team, $project, $todoList]), [
+            'title' => '不正なチャンネル連携',
+            'chat_channel_id' => $otherChannel->id,
+        ])
+        ->assertSessionHasErrors('chat_channel_id');
+
+    expect(Todo::query()->exists())->toBeFalse();
 });
 
 test('top-level todo positions ignore subtask positions', function () {

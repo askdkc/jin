@@ -22,7 +22,7 @@ class TeamInvitation extends Notification implements ShouldQueue
      */
     public function __construct(public TeamInvitationModel $invitation)
     {
-        //
+        $this->afterCommit();
     }
 
     /**
@@ -32,7 +32,9 @@ class TeamInvitation extends Notification implements ShouldQueue
      */
     public function via(object $notifiable): array
     {
-        return ['mail'];
+        return $notifiable instanceof User
+            ? ['broadcast', 'mail']
+            : ['mail'];
     }
 
     /**
@@ -67,10 +69,18 @@ class TeamInvitation extends Notification implements ShouldQueue
     public function toArray(object $notifiable): array
     {
         return [
-            'invitation_id' => $this->invitation->id,
-            'team_id' => $this->invitation->team_id,
-            'team_name' => $this->invitation->team->name,
+            'type' => 'team_invitation',
+            'invitationId' => $this->invitation->id,
+            'invitationCode' => $this->invitation->code,
+            'teamId' => $this->invitation->team_id,
+            'teamName' => $this->invitation->team->name,
+            'inviterName' => $this->invitation->inviter->name,
             'role' => $this->invitation->role->value,
         ];
+    }
+
+    public function broadcastType(): string
+    {
+        return 'team_invitation';
     }
 }

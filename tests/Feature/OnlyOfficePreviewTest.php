@@ -452,8 +452,9 @@ test('file detail exposes onlyoffice without initializing it on the server', fun
             )));
 });
 
-test('onlyoffice frontend loads once lazily cleans up and has a download fallback', function () {
-    $component = file_get_contents(resource_path('js/components/OnlyOfficePreviewDialog.svelte'));
+test('onlyoffice frontend renders inline and in the dialog with cleanup and a download fallback', function () {
+    $component = file_get_contents(resource_path('js/components/OnlyOfficePreview.svelte'));
+    $dialog = file_get_contents(resource_path('js/components/OnlyOfficePreviewDialog.svelte'));
     $storedFileDialog = file_get_contents(resource_path('js/components/StoredFilePreviewDialog.svelte'));
     $show = file_get_contents(resource_path('js/pages/projects/files/Show.svelte'));
 
@@ -464,14 +465,22 @@ test('onlyoffice frontend loads once lazily cleans up and has a download fallbac
         ->toContain('destroyEditor()')
         ->toContain('onDestroy(cleanupPreview)')
         ->toContain('fetch(configUrl')
-        ->toContain('min-h-[70dvh]')
         ->toContain('role="alert"')
         ->toContain('ProjectFileController.download.url')
+        ->and($dialog)
+        ->toContain('<OnlyOfficePreview')
+        ->toContain('active={open}')
+        ->toContain('min-h-[70dvh]')
         ->and($storedFileDialog)
         ->toContain('isOnlyOfficeStoredFile')
         ->toContain('<OnlyOfficePreviewDialog')
         ->toContain('OnlyOfficePreviewController.url')
-        ->and($show)->toContain('onlyOffice.enabled')->toContain('onlyOffice.supported');
+        ->and($show)
+        ->toContain("previewKind === 'onlyoffice'")
+        ->toContain('<OnlyOfficePreview')
+        ->toContain('active={!onlyOfficeOpen}')
+        ->toContain('onlyOffice.enabled')
+        ->toContain('onlyOffice.supported');
 });
 
 test('the internal route has only an unbound file identifier', function () {

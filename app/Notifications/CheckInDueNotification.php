@@ -60,4 +60,9 @@ class CheckInDueNotification extends Notification implements ShouldQueue
             'promptId' => $this->prompt->id,
         ];
     }
+
+    public function broadcastType(): string
+    {
+        return 'check_in_due';
+    }
 }

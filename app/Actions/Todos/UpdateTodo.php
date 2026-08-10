@@ -19,6 +19,7 @@ class UpdateTodo
      *     details?: string|null,
      *     assignee_id?: int|null,
      *     due_on?: string|null,
+     *     chat_channel_id?: int|null,
      *     completion_notify_ids?: array<int, int>|null
      * }  $changes
      */

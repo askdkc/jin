@@ -10,6 +10,7 @@ use App\Http\Requests\Teams\RespondToTeamInvitationRequest;
 use App\Models\Team;
 use App\Models\TeamAuditLog;
 use App\Models\TeamInvitation;
+use App\Models\User;
 use App\Notifications\Teams\TeamInvitation as TeamInvitationNotification;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -63,8 +64,14 @@ class TeamInvitationController extends Controller
             return $invitation;
         });
 
-        Notification::route('mail', $invitation->email)
-            ->notify(new TeamInvitationNotification($invitation));
+        $notification = new TeamInvitationNotification($invitation);
+        $invitedUser = User::query()->where('email', $invitation->email)->first();
+
+        if ($invitedUser) {
+            $invitedUser->notify($notification);
+        } else {
+            Notification::route('mail', $invitation->email)->notify($notification);
+        }
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Invitation sent.')]);
 

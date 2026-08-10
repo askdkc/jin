@@ -2,6 +2,7 @@
     import { Form } from '@inertiajs/svelte';
     import type Picker from 'emoji-picker-element/picker';
     import type { EmojiClickEvent } from 'emoji-picker-element/shared';
+    import SmilePlus from 'lucide-svelte/icons/smile-plus';
     import { onDestroy, tick } from 'svelte';
     import { currentLocale, t } from '@/lib/i18n';
     import { loadEmojiPickerLocalization } from '@/lib/locale-integrations';
@@ -11,9 +12,11 @@
     let {
         action,
         reactions,
+        onToggle,
     }: {
         action: string;
         reactions: ProjectReaction[];
+        onToggle?: (reaction: string) => Promise<void>;
     } = $props();
 
     const quickReactions = ['👍', '👏', '👋', '❤️', '😂', '😊', '🎉'];
@@ -25,9 +28,13 @@
     let pickerHost = $state<HTMLDivElement>();
     let picker = $state<Picker>();
     let pickerLocale = $state<string>();
+    let pickerAbove = $state(true);
     let pickerLoadId = 0;
     let destroyed = false;
     let emojiSubmitButton = $state<HTMLButtonElement>();
+    let moreButton = $state<HTMLButtonElement>();
+    let togglingReaction = $state('');
+    let toggleError = $state('');
 
     const selectEmoji = async (event: EmojiClickEvent): Promise<void> => {
         if (!event.detail.unicode) {
@@ -56,6 +63,15 @@
 
         if (!moreOpen) {
             return;
+        }
+
+        if (moreButton) {
+            const triggerBounds = moreButton.getBoundingClientRect();
+            const pickerHeight = Math.min(320, window.innerHeight - 128);
+            const spaceAbove = triggerBounds.top;
+            const spaceBelow = window.innerHeight - triggerBounds.bottom;
+
+            pickerAbove = spaceBelow < pickerHeight && spaceAbove > spaceBelow;
         }
 
         await tick();
@@ -123,6 +139,30 @@
         moreOpen = false;
         customOpen = false;
         customReaction = '';
+        toggleError = '';
+    };
+    const handleReactionClick = (event: MouseEvent, reaction: string): void => {
+        if (!onToggle) {
+            return;
+        }
+
+        event.preventDefault();
+
+        if (togglingReaction !== '') {
+            return;
+        }
+
+        togglingReaction = reaction;
+        toggleError = '';
+
+        void onToggle(reaction)
+            .then(close)
+            .catch(() => {
+                toggleError = t('Something went wrong.');
+            })
+            .finally(() => {
+                togglingReaction = '';
+            });
     };
     const handleKeydown = (event: KeyboardEvent): void => {
         if (event.key !== 'Escape' || !menuOpen) {
@@ -146,7 +186,9 @@
                 />
                 <button
                     type="submit"
-                    disabled={processing}
+                    disabled={processing || togglingReaction !== ''}
+                    onclick={(event) =>
+                        handleReactionClick(event, reaction.reaction)}
                     aria-pressed={reaction.reacted}
                     title={reaction.names.join(', ')}
                     class={[
@@ -189,7 +231,9 @@
                         />
                         <button
                             type="submit"
-                            disabled={processing}
+                            disabled={processing || togglingReaction !== ''}
+                            onclick={(event) =>
+                                handleReactionClick(event, customReaction)}
                             aria-label={t('Save')}
                             class="flex size-7 items-center justify-center rounded-full text-emerald-600 hover:bg-emerald-500/10 disabled:opacity-50"
                         >
@@ -233,7 +277,10 @@
                                 />
                                 <button
                                     type="submit"
-                                    disabled={processing}
+                                    disabled={processing ||
+                                        togglingReaction !== ''}
+                                    onclick={(event) =>
+                                        handleReactionClick(event, reaction)}
                                     aria-label={`${t('React with')} ${reaction}`}
                                     class="flex size-8 items-center justify-center rounded-full text-xl transition hover:scale-110 hover:bg-muted disabled:opacity-50"
                                 >
@@ -243,6 +290,7 @@
                         </Form>
                     {/each}
                     <button
+                        bind:this={moreButton}
                         type="button"
                         aria-label={t('More reactions')}
                         aria-expanded={moreOpen}
@@ -255,7 +303,10 @@
 
                 {#if moreOpen}
                     <div
-                        class="absolute bottom-full left-0 z-50 mb-2 overflow-hidden rounded-xl bg-popover shadow-xl"
+                        class={[
+                            'absolute left-0 z-50 overflow-hidden rounded-xl bg-popover shadow-xl',
+                            pickerAbove ? 'bottom-full mb-2' : 'top-full mt-2',
+                        ]}
                     >
                         <div bind:this={pickerHost}></div>
                     </div>
@@ -275,7 +326,9 @@
                             <button
                                 bind:this={emojiSubmitButton}
                                 type="submit"
-                                disabled={processing}
+                                disabled={processing || togglingReaction !== ''}
+                                onclick={(event) =>
+                                    handleReactionClick(event, customReaction)}
                                 tabindex="-1"
                                 aria-hidden="true"
                             ></button>
@@ -291,8 +344,12 @@
                 onclick={() => (menuOpen = true)}
                 class="flex size-8 items-center justify-center rounded-full border bg-background text-sm shadow-sm transition hover:-translate-y-0.5 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-                <span aria-hidden="true">🚀</span>
+                <SmilePlus class="size-4" aria-hidden="true" />
             </button>
         {/if}
     </div>
+
+    {#if toggleError}
+        <span class="w-full text-xs text-destructive">{toggleError}</span>
+    {/if}
 </div>

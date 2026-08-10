@@ -62,4 +62,9 @@ class NewTodoListCommentNotification extends Notification implements ShouldQueue
             'actorName' => $this->actor->name,
         ];
     }
+
+    public function broadcastType(): string
+    {
+        return 'todo_list_comment';
+    }
 }

@@ -41,8 +41,10 @@
     import { Badge } from '@/components/ui/badge';
     import { Button } from '@/components/ui/button';
     import { activityAction, activityHref } from '@/lib/activity';
+    import { dashboardActivityPanel } from '@/lib/dashboard-activity-panel.svelte';
     import { currentLocale, t } from '@/lib/i18n';
     import { getInitials } from '@/lib/initials';
+    import { cn } from '@/lib/utils';
     import { create, show } from '@/routes/projects';
     import type {
         ActivityItem,
@@ -191,7 +193,12 @@
         class="mx-auto w-full max-w-[96rem] px-4 py-6 sm:px-6 sm:py-8 xl:py-10"
     >
         <div
-            class="grid min-w-0 gap-6 lg:grid-cols-[15rem_minmax(0,44rem)_minmax(17rem,21rem)] lg:items-start xl:gap-8"
+            class={cn(
+                'grid min-w-0 gap-6 lg:items-start xl:gap-8',
+                dashboardActivityPanel.open
+                    ? 'lg:grid-cols-[15rem_minmax(0,44rem)_minmax(17rem,21rem)]'
+                    : 'lg:grid-cols-[15rem_minmax(0,1fr)]',
+            )}
         >
             <aside class="space-y-4 lg:sticky lg:top-24">
                 <h1 class="text-xl font-bold tracking-tight">
@@ -274,7 +281,7 @@
                             {currentTeam.name}
                         </h2>
                     </div>
-                    <div class="flex items-center gap-1">
+                    <div class="flex flex-wrap items-center justify-end gap-1">
                         <div
                             class="flex rounded-lg border bg-card p-1"
                             aria-label={t('Project display')}
@@ -313,6 +320,20 @@
                                     {t('Find everything')}
                                 </Link>
                             {/snippet}
+                        </Button>
+                        <Button
+                            type="button"
+                            variant={dashboardActivityPanel.open
+                                ? 'secondary'
+                                : 'outline'}
+                            size="sm"
+                            class="hidden lg:inline-flex"
+                            aria-pressed={dashboardActivityPanel.open}
+                            aria-controls="dashboard-recent-activity"
+                            onclick={() => dashboardActivityPanel.toggle()}
+                        >
+                            <History class="size-4" />
+                            {t('Recent activity list')}
                         </Button>
                     </div>
                 </div>
@@ -451,7 +472,13 @@
                 {/if}
             </section>
 
-            <aside class="min-w-0 lg:sticky lg:top-24">
+            <aside
+                id="dashboard-recent-activity"
+                class={cn(
+                    'min-w-0 lg:sticky lg:top-24',
+                    !dashboardActivityPanel.open && 'lg:hidden',
+                )}
+            >
                 <div class="mb-4 flex items-center justify-between gap-3">
                     <h2 class="text-lg font-bold">{t('Recent activity')}</h2>
                     <Link

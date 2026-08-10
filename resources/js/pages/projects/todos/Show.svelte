@@ -43,6 +43,7 @@
     import Pencil from 'lucide-svelte/icons/pencil';
     import Trash2 from 'lucide-svelte/icons/trash-2';
     import AttachmentController from '@/actions/App/Http/Controllers/AttachmentController';
+    import ChatController from '@/actions/App/Http/Controllers/ChatController';
     import CommentController from '@/actions/App/Http/Controllers/CommentController';
     import ProjectFileController from '@/actions/App/Http/Controllers/ProjectFileController';
     import AppHead from '@/components/AppHead.svelte';
@@ -298,6 +299,18 @@
                         · {formatDate(todo.createdAt)}
                     {/if}
                 </p>
+                {#if todo.chatChannel}
+                    <Link
+                        href={ChatController.show(
+                            [currentTeam.slug, project.id],
+                            { query: { channel: todo.chatChannel.id } },
+                        )}
+                        class="inline-flex items-center gap-1 rounded-md bg-secondary px-2 py-1 text-xs font-medium text-secondary-foreground hover:bg-secondary/80"
+                        prefetch
+                    >
+                        # {todo.chatChannel.name}
+                    </Link>
+                {/if}
             </div>
         </header>
 

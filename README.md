@@ -1,5 +1,9 @@
 # Jin
 
+## 翻訳
+
+[English](docs/README_en.md) | [日本語](README.md) | [Français](docs/README_fr.md) | [Deutsch](docs/README_de.md) | [简体中文](docs/README_zh_CN.md) | [繁體中文](docs/README_zh_TW.md) | [Español](docs/README_es.md) | [Português (Brasil)](docs/README_pt_BR.md) | [Português (Portugal)](docs/README_pt_PT.md) | [한국어](docs/README_ko.md)
+
 Jin（陣）は、複数のチームがプロジェクト単位で協調して仕事を進めるための、日本語グループウェアです。メッセージ、To-do、予定、資料庫、チャット、カードテーブル、定期チェックインを1つのプロジェクトに集約します。
 
 Basecampの情報設計を参考にしていますが、名称、画面、配色、アイコンは独自のものです。詳しい設計方針と実装計画は [PLAN.md](PLAN.md) を参照してください。
@@ -208,10 +212,10 @@ Claude Codeなど、`.mcp.json`形式に対応するクライアントでは次�
 
 対応環境はamd64版Ubuntu Serverです。ONLYOFFICE Docsの公式APT packageがamd64向けであるため、arm64ホストは対象外です。
 
-| Ubuntu | PostgreSQL / PGroonga | PHP | Node.js |
-| --- | --- | --- | --- |
-| 24.04 LTS | PostgreSQL 16 / `postgresql-16-pgroonga` | 8.5 | 24 |
-| 26.04 | PostgreSQL 18 / `postgresql-18-pgdg-pgroonga` | 8.5 | 24 |
+| Ubuntu    | PostgreSQL / PGroonga                         | PHP | Node.js |
+| --------- | --------------------------------------------- | --- | ------- |
+| 24.04 LTS | PostgreSQL 16 / `postgresql-16-pgroonga`      | 8.5 | 24      |
+| 26.04     | PostgreSQL 18 / `postgresql-18-pgdg-pgroonga` | 8.5 | 24      |
 
 ### 前提
 
@@ -223,11 +227,11 @@ Claude Codeなど、`.mcp.json`形式に対応するクライアントでは次�
 
 ONLYOFFICEは別domainを使用しません。ブラウザはJinと同じoriginの`/onlyoffice`へ接続し、DocumentServerの実portはloopbackだけで待ち受けます。
 
-| 通信方向 | URL |
-| --- | --- |
+| 通信方向                 | URL                                  |
+| ------------------------ | ------------------------------------ |
 | Browser → DocumentServer | `https://jin.example.com/onlyoffice` |
-| Laravel → DocumentServer | `http://127.0.0.1:8081` |
-| DocumentServer → Laravel | `http://127.0.0.1:8090` |
+| Laravel → DocumentServer | `http://127.0.0.1:8081`              |
+| DocumentServer → Laravel | `http://127.0.0.1:8090`              |
 
 ### 初回セットアップ
 
@@ -255,12 +259,32 @@ cd /tmp/jin-installer
 
 Let's Encryptの登録/期限通知先を指定する場合は`--email admin@example.com`を追加します。TLSをまだ発行できない閉域検証環境では`--no-ssl`を使用します。
 
+実行ユーザーが`sudoers`で`NOPASSWD`設定済みの場合、引数なしの初回実行はそれを検出して終了します。表示に従い、sudo password検証とkeepaliveを省略する`--sudo-nopasswd`を付けて再実行してください。
+
+```bash
+./setup.sh --sudo-nopasswd \
+  --platform ubuntu \
+  --domain "$JIN_DOMAIN" \
+  --repo "$JIN_REPOSITORY" \
+  --app-dir "$JIN_PATH"
+```
+
 database passwordやONLYOFFICE JWT secretは、既存`.env`の有効な値を優先し、未設定またはplaceholderの場合は安全なランダム値を生成して保持します。初回実行前に値を指定する場合は、コマンド引数ではなく環境変数を使用してください。
 
 ```bash
 export DB_PASSWORD='replace-with-a-random-production-value'
 export ONLYOFFICE_JWT_SECRET='replace-with-at-least-32-random-characters'
 ```
+
+生成したdatabase passwordは`.env`に加え、再実行時のroot専用退避先`/etc/jin/database-password`へowner `root:root`、mode `0600`で保存します。`/tmp`には保存しません。確認が必要な場合だけ`sudo cat /etc/jin/database-password`を使用してください。
+
+Ubuntu setupは実行OSユーザー（`DEPLOY_USER`、通常はsetupを起動した一般ユーザー）と同名のPostgreSQL `LOGIN SUPERUSER` role、およびそのユーザーだけに一致するlocal peer認証ruleを作成します。そのため、実行ユーザーはpasswordを入力せずUnix socketへ接続できます。
+
+```bash
+psql --no-password -d postgres
+```
+
+このroleはdatabase全体を管理できる強い権限です。アプリケーション用`DB_USER`とは必ず別名にし、setup実行OSアカウントへのshell accessを厳格に管理してください。
 
 SMTPなど環境固有の設定は、初回完了後に`/var/www/jin/.env`へ設定してください。587番portのSTARTTLSは通常`MAIL_SCHEME=smtp`、465番portのimplicit TLSは`MAIL_SCHEME=smtps`です。providerの指定を優先します。
 

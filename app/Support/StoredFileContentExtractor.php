@@ -32,6 +32,7 @@ final class StoredFileContentExtractor
 
     public function __construct(
         private StoredFileContentTypeResolver $typeResolver,
+        private StoredFileContentSanitizer $sanitizer,
     ) {}
 
     public function extract(
@@ -244,6 +245,8 @@ final class StoredFileContentExtractor
         string $extractor,
         string $content,
     ): StoredFileContentExtractionResult {
+        $content = $this->sanitizer->sanitize($content);
+
         if (strlen($content) > $this->maxOutputBytes()) {
             return StoredFileContentExtractionResult::failed(
                 $extractor,

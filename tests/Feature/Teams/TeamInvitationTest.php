@@ -32,6 +32,34 @@ test('team invitations can be created', function () {
     ]);
 });
 
+test('existing users receive team invitations through real-time channels', function () {
+    Notification::fake();
+
+    $owner = User::factory()->create();
+    $invitedUser = User::factory()->create(['email' => 'invited@example.com']);
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+
+    $this
+        ->actingAs($owner)
+        ->post(route('teams.invitations.store', $team), [
+            'email' => $invitedUser->email,
+            'role' => TeamRole::Member->value,
+        ])
+        ->assertSessionHasNoErrors();
+
+    Notification::assertSentTo(
+        $invitedUser,
+        TeamInvitationNotification::class,
+        function (TeamInvitationNotification $notification, array $channels) use ($team, $owner): bool {
+            return $channels === ['broadcast', 'mail']
+                && $notification->broadcastType() === 'team_invitation'
+                && $notification->toArray((object) [])['teamId'] === $team->id
+                && $notification->toArray((object) [])['inviterName'] === $owner->name;
+        },
+    );
+});
+
 test('invitation email for existing users uses login route', function () {
     $owner = User::factory()->create();
     $invitedUser = User::factory()->create(['email' => 'invited@example.com']);

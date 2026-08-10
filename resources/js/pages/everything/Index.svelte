@@ -34,6 +34,7 @@
     import { Button } from '@/components/ui/button';
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
+    import { fileTypeLabelKey } from '@/lib/file-type-label';
     import { currentLocale, t } from '@/lib/i18n';
     import { getInitials } from '@/lib/initials';
     import type {
@@ -576,8 +577,12 @@
                                                     <p
                                                         class="truncate text-sm font-medium"
                                                     >
-                                                        {item.mimeType ||
-                                                            t('File')}
+                                                        {t(
+                                                            fileTypeLabelKey(
+                                                                item.title,
+                                                                item.mimeType,
+                                                            ),
+                                                        )}
                                                     </p>
                                                     <p
                                                         class="text-xs text-muted-foreground"

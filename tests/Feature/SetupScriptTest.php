@@ -17,12 +17,14 @@ function setupTestEnvironment(): array
             'DB_NAME',
             'DB_PASSWORD',
             'DB_USER',
+            'DEPLOY_USER',
             'DOMAIN',
             'EMAIL',
             'ENV_FILE',
             'INTERNAL_PORT_EXPLICIT',
             'OFFICE_DOMAIN',
             'REPO_URL',
+            'SUDO_NOPASSWD',
             'UPLOAD_MAX_FILE_MB',
             'UPLOAD_MAX_FILES',
             'UPLOAD_MAX_REQUEST_MB',
@@ -53,16 +55,17 @@ it('runs under the macOS system Bash', function () {
     expect($process->isSuccessful())->toBeTrue($process->getErrorOutput())
         ->and($process->getOutput())->toContain('Provision and deploy Jin on Ubuntu Server')
         ->and($process->getOutput())->toContain('https://github.com/askdkc/jin')
-        ->and($process->getOutput())->toContain('<domain>/onlyoffice');
+        ->and($process->getOutput())->toContain('<domain>/onlyoffice')
+        ->and($process->getOutput())->toContain('--sudo-nopasswd');
 });
 
 it('dispatches Ubuntu with the public Jin repository and production app path defaults', function () {
     $process = runSetupBash(<<<'BASH'
 source "$1"
 setup_ubuntu() {
-    printf 'repo=%s\napp=%s\ndomain=%s\n' "$REPO_URL" "$APP_DIR" "$APP_DOMAIN"
+    printf 'repo=%s\napp=%s\ndomain=%s\nnopasswd=%s\n' "$REPO_URL" "$APP_DIR" "$APP_DOMAIN" "$SUDO_NOPASSWD"
 }
-main --platform ubuntu --domain jin.example.com --no-ssl
+main --platform ubuntu --domain jin.example.com --sudo-nopasswd --no-ssl
 BASH, base_path('setup.sh'));
 
     expect($process->isSuccessful())->toBeTrue($process->getErrorOutput())
@@ -70,7 +73,72 @@ BASH, base_path('setup.sh'));
             'repo=https://github.com/askdkc/jin',
             'app=/var/www/jin',
             'domain=jin.example.com',
+            'nopasswd=1',
         );
+});
+
+it('detects passwordless sudo and requires the explicit non-interactive option', function () {
+    $process = runSetupBash(<<<'BASH'
+source "$1"
+id() {
+    [[ "$1" == -u ]] && printf '1000'
+}
+sudo() {
+    [[ "$1" == -n && "$2" == true ]]
+}
+SUDO_NOPASSWD=0
+announce_passwordless_sudo_option
+printf 'unexpected-continuation\n'
+BASH, base_path('setup.sh'));
+
+    expect($process->isSuccessful())->toBeTrue($process->getErrorOutput())
+        ->and($process->getOutput())->toContain('Passwordless sudo detected', './setup.sh --sudo-nopasswd')
+        ->and($process->getOutput())->not->toContain('unexpected-continuation');
+});
+
+it('creates and verifies the deployment PostgreSQL administration role', function () {
+    $process = runSetupBash(<<<'BASH'
+source "$1"
+sudo() {
+    if [[ " $* " == *" -Atq postgres "* ]]; then
+        printf 't'
+        return 0
+    fi
+
+    command cat >/dev/null
+}
+run_as_deploy() {
+    printf '%s' "$DEPLOY_USER"
+}
+DEPLOY_USER=deploy_operator
+PG_PORT=5432
+ensure_deploy_postgresql_role
+printf 'verified=%s\n' "$DEPLOY_USER"
+BASH, base_path('setup.sh'));
+
+    expect($process->isSuccessful())->toBeTrue($process->getErrorOutput())
+        ->and($process->getOutput())->toContain('verified=deploy_operator');
+});
+
+it('manages a deploy-user peer rule and a root-only database password recovery file', function () {
+    $setup = (string) file_get_contents(base_path('setup.sh'));
+    $setupWorkflow = (string) file_get_contents(base_path('.github/workflows/setup-smoke.yml'));
+
+    expect($setup)->toContain(
+        "include_if_exists 'jin-pg_hba.conf'",
+        'local all %s peer',
+        'CREATE ROLE %I LOGIN SUPERUSER',
+        'psql --no-password',
+        '/etc/jin/database-password',
+        'sudo chmod 0600 "$db_credential_file"',
+        'Generated PostgreSQL password saved to $db_credential_file',
+    )->and($setupWorkflow)->toContain(
+        'useradd --create-home --shell /bin/bash jindeploy',
+        'jindeploy ALL=(ALL:ALL) NOPASSWD: ALL',
+        '--sudo-nopasswd',
+        'psql --no-password',
+        '/etc/jin/database-password)" == root:root:600',
+    );
 });
 
 it('checks health without Bash 4 lowercase expansion', function () {
@@ -718,6 +786,9 @@ it('documents the supported one-shot Ubuntu deployment contract', function () {
         ->toContain('Node.js 24')
         ->toContain('/onlyoffice')
         ->toContain('./setup.sh')
+        ->toContain('--sudo-nopasswd')
+        ->toContain('/etc/jin/database-password')
+        ->toContain('psql --no-password')
         ->not->toContain('PostgreSQL 17', 'setup_22.x', 'OFFICE_DOMAIN', '--office-domain');
 });
 

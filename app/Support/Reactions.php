@@ -29,6 +29,28 @@ class Reactions
     }
 
     /**
+     * Toggle one reaction without replacing the user's other reactions.
+     *
+     * @template TDeclaringModel of Model
+     *
+     * @param  BelongsToMany<User, TDeclaringModel>  $reactors
+     */
+    public static function toggleMultiple(BelongsToMany $reactors, int $userId, string $reaction): void
+    {
+        $pivot = $reactors->newPivotQuery()
+            ->where($reactors->getRelatedPivotKeyName(), $userId)
+            ->where('reaction', $reaction);
+
+        if ($pivot->exists()) {
+            $pivot->delete();
+
+            return;
+        }
+
+        $reactors->attach($userId, ['reaction' => $reaction]);
+    }
+
+    /**
      * @param  Collection<int, User>  $reactors
      * @return list<array{reaction: string, count: int, reacted: bool, names: list<string>}>
      */

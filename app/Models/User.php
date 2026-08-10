@@ -178,7 +178,7 @@ class User extends Authenticatable implements MustVerifyEmail, PasskeyUser
             return [];
         }
 
-        $channels = $preferences['in_app'] ? ['database'] : [];
+        $channels = $preferences['in_app'] ? ['database', 'broadcast'] : [];
 
         if ($preferences['email'] && $this->isWithinNotificationWindow()) {
             $channels[] = 'mail';

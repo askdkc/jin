@@ -183,6 +183,23 @@ test('breadcrumbs distinguish translation keys from literal model values', funct
     }
 });
 
+test('material pages use the shared hierarchical breadcrumb builder', function () {
+    $builder = File::get(resource_path('js/lib/materialBreadcrumbs.ts'));
+    $materials = File::get(resource_path('js/pages/projects/materials/Index.svelte'));
+    $file = File::get(resource_path('js/pages/projects/files/Show.svelte'));
+
+    expect($builder)
+        ->toContain("translationKey: 'Materials'")
+        ->toContain('query: { folder: folder.id }')
+        ->toContain('ProjectFileController.show')
+        ->and($materials)
+        ->toContain('<Breadcrumbs breadcrumbs={materialBreadcrumbs} />')
+        ->not->toContain('ChevronLeft')
+        ->and($file)
+        ->toContain('<Breadcrumbs breadcrumbs={materialBreadcrumbs} />')
+        ->toContain('folder: props.file.folder');
+});
+
 test('stored file previews reject obsolete asynchronous continuations', function () {
     $source = File::get(resource_path('js/components/StoredFilePreviewDialog.svelte'));
 

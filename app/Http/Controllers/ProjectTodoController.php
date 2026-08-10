@@ -91,6 +91,7 @@ class ProjectTodoController extends Controller
         $canManageProject = Gate::allows('update', $project);
         $todo->load([
             'assignee:id,name',
+            'chatChannel:id,name',
             'creator:id,name',
             'comments' => fn ($query) => $query->with('user:id,name')->oldest(),
             'subtasks' => fn ($query) => $query->with('assignee:id,name')->orderBy('position'),
@@ -467,6 +468,12 @@ class ProjectTodoController extends Controller
             'assigneeName' => $todo->assignee?->name,
             'completionNotifyIds' => $todo->completion_notify_ids ?? [],
             'dueOn' => $todo->due_on?->toDateString(),
+            'chatChannel' => $todo->chatChannel === null
+                ? null
+                : [
+                    'id' => $todo->chatChannel->id,
+                    'name' => $todo->chatChannel->name,
+                ],
             'completed' => $todo->completed_at !== null,
             'creatorName' => $todo->creator?->name,
             'createdAt' => $todo->created_at?->toISOString(),

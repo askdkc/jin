@@ -133,7 +133,10 @@ Route::prefix('{current_team}')
             Route::get('projects/{project}/chat/messages', [ChatController::class, 'history'])->name('projects.chat.messages.index');
             Route::post('projects/{project}/chat/messages', [ChatController::class, 'store'])->name('projects.chat.messages.store');
             Route::get('projects/{project}/chat/messages/{chat_message}/replies', [ChatController::class, 'thread'])->name('projects.chat.messages.replies');
+            Route::post('projects/{project}/chat/messages/{chat_message}/reaction', [ChatController::class, 'toggleReaction'])->name('projects.chat.messages.reaction.toggle');
             Route::post('projects/{project}/chat/channels', [ChatChannelController::class, 'store'])->name('projects.chat.channels.store');
+            Route::patch('projects/{project}/chat/channels/{chat_channel}', [ChatChannelController::class, 'update'])->name('projects.chat.channels.update');
+            Route::delete('projects/{project}/chat/channels/{chat_channel}', [ChatChannelController::class, 'destroy'])->name('projects.chat.channels.destroy');
 
             Route::get('projects/{project}/messages', [MessageBoardController::class, 'index'])->name('projects.messages.index');
             Route::get('projects/{project}/messages/create', [MessageBoardController::class, 'create'])->name('projects.messages.create');

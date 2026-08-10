@@ -8,9 +8,13 @@ final class StoredFileContentSnippet
 {
     private const MAX_LENGTH = 240;
 
+    public function __construct(
+        private StoredFileContentSanitizer $sanitizer,
+    ) {}
+
     public function make(string $content, string $search): ?string
     {
-        $content = Str::squish($content);
+        $content = Str::squish($this->sanitizer->sanitize($content));
         $search = Str::squish($search);
 
         if ($content === '' || $search === '') {

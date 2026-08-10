@@ -224,6 +224,32 @@ test('everything search finds current ready file content and returns a centered 
             ->missing('results.data.0.failure_code'));
 });
 
+test('everything file snippets hide embedded image data from existing indexed content', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $file = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
+        ->for($project)
+        ->for($owner, 'uploader')
+        ->create([
+            'original_name' => 'embedded-images.docx',
+            'mime_type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        ]));
+    $search = '固有検索語';
+    storedFileSearchContent(
+        $file,
+        "{$search} ![](data:image/jpeg;base64,/9j/4AAQ) ![売上グラフ](data:image/png;base64,iVBORw0KGgo=) の説明",
+    );
+
+    $this->actingAs($owner)
+        ->get(route('everything.index', [$team, 'q' => $search]))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('results.data', 1)
+            ->where('results.data.0.snippet', "{$search} 売上グラフ の説明"));
+});
+
 test('everything search ignores content from retired legacy extractors', function (
     string $extension,
     string $mimeType,

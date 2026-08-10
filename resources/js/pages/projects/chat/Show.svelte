@@ -27,28 +27,63 @@
     import { Form, Link, router, useHttp } from '@inertiajs/svelte';
     import type { ConnectionStatus } from 'laravel-echo';
     import Circle from 'lucide-svelte/icons/circle';
+    import FileText from 'lucide-svelte/icons/file-text';
     import Hash from 'lucide-svelte/icons/hash';
+    import ListTodo from 'lucide-svelte/icons/list-todo';
     import LoaderCircle from 'lucide-svelte/icons/loader-circle';
-    import MessageSquareText from 'lucide-svelte/icons/message-square-text';
+    import Paperclip from 'lucide-svelte/icons/paperclip';
     import Plus from 'lucide-svelte/icons/plus';
     import Send from 'lucide-svelte/icons/send';
     import X from 'lucide-svelte/icons/x';
     import { onMount, tick } from 'svelte';
     import { SvelteSet } from 'svelte/reactivity';
+    import AttachmentController from '@/actions/App/Http/Controllers/AttachmentController';
     import ChatChannelController from '@/actions/App/Http/Controllers/ChatChannelController';
     import AppHead from '@/components/AppHead.svelte';
+    import ChatChannelActions from '@/components/ChatChannelActions.svelte';
+    import ChatContextPanel from '@/components/ChatContextPanel.svelte';
+    import ChatMessageItem from '@/components/ChatMessageItem.svelte';
     import InputError from '@/components/InputError.svelte';
+    import { Badge } from '@/components/ui/badge';
     import { Button } from '@/components/ui/button';
     import { Input } from '@/components/ui/input';
+    import {
+        Sheet,
+        SheetContent,
+        SheetDescription,
+        SheetHeader,
+        SheetTitle,
+    } from '@/components/ui/sheet';
     import { getEcho } from '@/lib/echo';
-    import { currentLocale, t } from '@/lib/i18n';
+    import { t } from '@/lib/i18n';
+    import { cn } from '@/lib/utils';
     import type {
+        ChatAttachment,
         ChatChannel,
         ChatHistoryResponse,
         ChatMessage,
+        ChatReactionResponse,
         ChatStoreResponse,
         ChatThreadResponse,
+        ChatTodo,
+        ChatTodoList,
+        ProjectReaction,
+        TodoMember,
     } from '@/types';
+
+    type ChatMessagePayload = {
+        body: string;
+        channel_id: number;
+        parent_id: number | null;
+        attachment_ids: number[];
+    };
+    type ChatReactionBroadcast = {
+        messageId: number;
+        reactions: Array<
+            Omit<ProjectReaction, 'reacted'> & { userIds: number[] }
+        >;
+    };
+    type ContextSection = 'todos' | 'files';
 
     let {
         currentTeam,
@@ -57,6 +92,13 @@
         selectedChannel,
         messages: initialMessages,
         historyCursor: initialHistoryCursor,
+        todoLists,
+        relatedTodos,
+        linkableTodos,
+        channelFiles: initialChannelFiles,
+        members,
+        maxChatAttachments,
+        currentUserId,
     }: {
         currentTeam: Team;
         project: ChatProject;
@@ -64,38 +106,67 @@
         selectedChannel: ChatChannel;
         messages: ChatMessage[];
         historyCursor: string | null;
+        todoLists: ChatTodoList[];
+        relatedTodos: ChatTodo[];
+        linkableTodos: ChatTodo[];
+        channelFiles: ChatAttachment[];
+        members: TodoMember[];
+        maxChatAttachments: number;
+        currentUserId: number;
     } = $props();
 
     const initialChannelId = (): number => selectedChannel.id;
     const initialMessageState = (): ChatMessage[] => [...initialMessages];
+    const initialFileState = (): ChatAttachment[] => [...initialChannelFiles];
     const initialCursorState = (): string | null => initialHistoryCursor;
-    const sendHttp = useHttp<
-        { body: string; channel_id: number; parent_id: null },
-        ChatStoreResponse
-    >({ body: '', channel_id: initialChannelId(), parent_id: null });
-    const replyHttp = useHttp<
-        { body: string; channel_id: number; parent_id: number | null },
-        ChatStoreResponse
-    >({ body: '', channel_id: initialChannelId(), parent_id: null });
+    const sendHttp = useHttp<ChatMessagePayload, ChatStoreResponse>({
+        body: '',
+        channel_id: initialChannelId(),
+        parent_id: null,
+        attachment_ids: [],
+    });
+    const replyHttp = useHttp<ChatMessagePayload, ChatStoreResponse>({
+        body: '',
+        channel_id: initialChannelId(),
+        parent_id: null,
+        attachment_ids: [],
+    });
     const historyHttp = useHttp<Record<string, never>, ChatHistoryResponse>({});
     const syncHttp = useHttp<Record<string, never>, ChatHistoryResponse>({});
     const threadHttp = useHttp<Record<string, never>, ChatThreadResponse>({});
+    const reactionHttp = useHttp<{ reaction: string }, ChatReactionResponse>({
+        reaction: '',
+    });
 
     let messages = $state<ChatMessage[]>(initialMessageState());
+    let channelFiles = $state<ChatAttachment[]>(initialFileState());
     let historyCursor = $state<string | null>(initialCursorState());
     let connectionStatus = $state<ConnectionStatus>('connecting');
     let isComposing = $state(false);
     let sendError = $state('');
+    let uploadError = $state('');
     let showChannelForm = $state(false);
     let activeThread = $state<ChatMessage | null>(null);
     let threadMessages = $state<ChatMessage[]>([]);
     let threadCursor = $state<string | null>(null);
     let threadError = $state('');
+    let pendingAttachments = $state<ChatAttachment[]>([]);
+    let pendingUploadCount = $state(0);
+    let dragActive = $state(false);
+    let contextSheetOpen = $state(false);
+    let contextSection = $state<ContextSection>('todos');
     let messageList = $state<HTMLDivElement>();
     let threadList = $state<HTMLDivElement>();
+    let fileInput = $state<HTMLInputElement>();
+    let composerShell = $state<HTMLDivElement>();
+    let messageComposer = $state<HTMLTextAreaElement>();
+    let composerExpanded = $state(false);
 
     const receivedReplyIds = new SvelteSet<number>();
     const channelName = $derived(`projects.${project.id}.chat`);
+    const incompleteTodoCount = $derived(
+        relatedTodos.filter((todo) => !todo.completed).length,
+    );
     const connectionLabel = $derived(
         connectionStatus === 'connected'
             ? t('Connected')
@@ -104,17 +175,23 @@
               ? t('Connecting')
               : t('Offline — messages are still saved'),
     );
+    const canSend = $derived(
+        !sendHttp.processing &&
+            pendingUploadCount === 0 &&
+            (sendHttp.body.trim() !== '' || pendingAttachments.length > 0),
+    );
 
-    const messageTime = (createdAt: string): string =>
-        new Intl.DateTimeFormat(currentLocale(), {
-            month: 'numeric',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-        }).format(new Date(createdAt));
+    const mergeChannelFiles = (incoming: ChatAttachment[]): void => {
+        const existingIds = new Set(channelFiles.map((file) => file.id));
+        const uniqueFiles = incoming.filter(
+            (file) => !existingIds.has(file.id),
+        );
 
-    const userInitial = (message: ChatMessage): string =>
-        (message.user?.name ?? '?').slice(0, 1).toUpperCase();
+        if (uniqueFiles.length > 0) {
+            channelFiles = [...uniqueFiles.reverse(), ...channelFiles];
+        }
+    };
+
     const mergeMessages = (incoming: ChatMessage[]): void => {
         const existingIds = new Set(messages.map((message) => message.id));
         const uniqueMessages = incoming.filter(
@@ -123,6 +200,8 @@
                 message.parentId === null &&
                 !existingIds.has(message.id),
         );
+
+        incoming.forEach((message) => mergeChannelFiles(message.attachments));
 
         if (uniqueMessages.length > 0) {
             messages = [...messages, ...uniqueMessages].sort(
@@ -141,6 +220,7 @@
         }
 
         receivedReplyIds.add(reply.id);
+        mergeChannelFiles(reply.attachments);
         messages = messages.map((message) =>
             message.id === reply.parentId
                 ? { ...message, replyCount: message.replyCount + 1 }
@@ -153,6 +233,53 @@
             );
             void scrollThreadToLatest();
         }
+    };
+
+    const setMessageReactions = (
+        messageId: number,
+        reactions: ProjectReaction[],
+    ): void => {
+        messages = messages.map((message) =>
+            message.id === messageId ? { ...message, reactions } : message,
+        );
+        threadMessages = threadMessages.map((message) =>
+            message.id === messageId ? { ...message, reactions } : message,
+        );
+
+        if (activeThread?.id === messageId) {
+            activeThread = { ...activeThread, reactions };
+        }
+    };
+
+    const toggleMessageReaction = async (
+        message: ChatMessage,
+        reaction: string,
+    ): Promise<void> => {
+        reactionHttp.reaction = reaction;
+
+        const response = await reactionHttp.submit(
+            ChatController.toggleReaction([
+                currentTeam.slug,
+                project.id,
+                message.id,
+            ]),
+        );
+
+        if (!response) {
+            throw new Error('Chat reaction response was empty.');
+        }
+
+        setMessageReactions(response.messageId, response.reactions);
+    };
+
+    const handleReactionBroadcast = (event: ChatReactionBroadcast): void => {
+        setMessageReactions(
+            event.messageId,
+            event.reactions.map(({ userIds: reactorIds, ...reaction }) => ({
+                ...reaction,
+                reacted: reactorIds.includes(currentUserId),
+            })),
+        );
     };
 
     const scrollToLatest = async (smooth = true): Promise<void> => {
@@ -203,11 +330,7 @@
     };
 
     const loadOlderMessages = async (): Promise<void> => {
-        if (!historyCursor || historyHttp.processing) {
-            return;
-        }
-
-        if (!messageList) {
+        if (!historyCursor || historyHttp.processing || !messageList) {
             return;
         }
 
@@ -232,15 +355,87 @@
         }
     };
 
+    const uploadFiles = async (files: File[]): Promise<void> => {
+        if (files.length === 0) {
+            return;
+        }
+
+        expandComposer();
+
+        const availableSlots =
+            maxChatAttachments - pendingAttachments.length - pendingUploadCount;
+
+        if (files.length > availableSlots) {
+            uploadError = t('You can upload up to :count files at a time.', {
+                count: String(maxChatAttachments),
+            });
+
+            return;
+        }
+
+        uploadError = '';
+        pendingUploadCount += files.length;
+
+        for (const file of files) {
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                const csrfToken = document.querySelector<HTMLMetaElement>(
+                    'meta[name="csrf-token"]',
+                )?.content;
+                const response = await fetch(
+                    AttachmentController.uploadInline.url([
+                        currentTeam.slug,
+                        project.id,
+                    ]),
+                    {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: {
+                            Accept: 'application/json',
+                            ...(csrfToken ? { 'X-CSRF-TOKEN': csrfToken } : {}),
+                        },
+                        body: formData,
+                    },
+                );
+
+                if (!response.ok) {
+                    throw new Error(`Upload failed: ${response.status}`);
+                }
+
+                const attachment = (await response.json()) as ChatAttachment;
+                pendingAttachments = [...pendingAttachments, attachment];
+            } catch {
+                uploadError = t('Attachment upload failed. Please try again.');
+            } finally {
+                pendingUploadCount -= 1;
+            }
+        }
+    };
+
+    const onFileInputChange = (event: Event): void => {
+        const input = event.currentTarget as HTMLInputElement;
+        const files = Array.from(input.files ?? []);
+        input.value = '';
+        void uploadFiles(files);
+    };
+
+    const handleDrop = (event: DragEvent): void => {
+        event.preventDefault();
+        dragActive = false;
+        void uploadFiles(Array.from(event.dataTransfer?.files ?? []));
+    };
+
     const sendMessage = async (): Promise<void> => {
         const body = sendHttp.body.trim();
 
-        if (!body || isComposing || sendHttp.processing) {
+        if (!canSend || isComposing) {
             return;
         }
 
         sendError = '';
         sendHttp.body = body;
+        sendHttp.attachment_ids = pendingAttachments.map((file) => file.id);
 
         try {
             const response = await sendHttp.submit(
@@ -250,7 +445,11 @@
             if (response) {
                 mergeMessages([response.message]);
                 sendHttp.body = '';
+                sendHttp.attachment_ids = [];
+                pendingAttachments = [];
                 sendHttp.clearErrors();
+                await tick();
+                resizeMessageComposer();
                 await scrollToLatest();
             }
         } catch {
@@ -350,6 +549,44 @@
         }
     };
 
+    const resizeMessageComposer = (): void => {
+        if (!messageComposer) {
+            return;
+        }
+
+        if (!composerExpanded) {
+            messageComposer.style.height = '';
+            messageComposer.style.overflowY = 'hidden';
+
+            return;
+        }
+
+        messageComposer.style.height = 'auto';
+        messageComposer.style.height = `${Math.min(messageComposer.scrollHeight, 192)}px`;
+        messageComposer.style.overflowY =
+            messageComposer.scrollHeight > 192 ? 'auto' : 'hidden';
+    };
+
+    const expandComposer = (): void => {
+        composerExpanded = true;
+        void tick().then(resizeMessageComposer);
+    };
+
+    const collapseComposerIfIdle = (): void => {
+        requestAnimationFrame(() => {
+            if (
+                pendingAttachments.length > 0 ||
+                pendingUploadCount > 0 ||
+                composerShell?.contains(document.activeElement)
+            ) {
+                return;
+            }
+
+            composerExpanded = false;
+            requestAnimationFrame(resizeMessageComposer);
+        });
+    };
+
     const handleReplyKeydown = (event: KeyboardEvent): void => {
         if (
             event.key === 'Enter' &&
@@ -372,6 +609,11 @@
                 query: { channel: channelId },
             }),
         );
+    };
+
+    const openContextSheet = (section: ContextSection): void => {
+        contextSection = section;
+        contextSheetOpen = true;
     };
 
     onMount(() => {
@@ -404,7 +646,11 @@
                     } else {
                         handleReplyCreated(event.message);
                     }
-                });
+                })
+                .listen(
+                    '.chat.message.reaction.updated',
+                    handleReactionBroadcast,
+                );
 
             return () => {
                 stopWatchingConnection();
@@ -419,7 +665,7 @@
 <AppHead title={`${currentTeam.menuNames.chat} — ${project.name}`} />
 
 <div
-    class="relative grid min-h-0 flex-1 overflow-hidden bg-background lg:grid-cols-[15rem_minmax(0,1fr)]"
+    class="relative grid min-h-0 flex-1 overflow-hidden bg-background lg:grid-cols-[15rem_minmax(0,1fr)] xl:grid-cols-[15rem_minmax(0,1fr)_20rem]"
 >
     <aside
         class="hidden min-h-0 flex-col border-r bg-sidebar text-sidebar-foreground lg:flex"
@@ -454,8 +700,10 @@
                     currentTeam.slug,
                     project.id,
                 ])}
+                options={{ preserveState: 'errors' }}
                 resetOnSuccess
-                class="mx-3 mb-3 space-y-2 rounded-lg border border-sidebar-border bg-sidebar-accent/40 p-3"
+                onSuccess={() => (showChannelForm = false)}
+                class="mx-3 mb-3 flex flex-col gap-2 rounded-lg border border-sidebar-border bg-sidebar-accent/40 p-3"
             >
                 {#snippet children({ errors, processing })}
                     <Input
@@ -486,40 +734,61 @@
 
         <nav class="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
             {#each channels as channel (channel.id)}
-                <Link
-                    href={ChatController.show([currentTeam.slug, project.id], {
-                        query: { channel: channel.id },
-                    })}
-                    class="flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition {channel.id ===
-                    selectedChannel.id
-                        ? 'bg-sidebar-primary text-sidebar-primary-foreground'
-                        : 'text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'}"
-                    prefetch
-                >
-                    <Hash class="size-4 shrink-0" />
-                    <span class="min-w-0 flex-1 truncate">{channel.name}</span>
-                    <span class="text-[11px] opacity-60"
-                        >{channel.messageCount}</span
+                <div class="group/channel relative">
+                    <Link
+                        href={ChatController.show(
+                            [currentTeam.slug, project.id],
+                            {
+                                query: { channel: channel.id },
+                            },
+                        )}
+                        class="flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition {channel.canManage
+                            ? 'pr-10'
+                            : ''} {channel.id === selectedChannel.id
+                            ? 'bg-sidebar-primary text-sidebar-primary-foreground'
+                            : 'text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'}"
+                        prefetch
                     >
-                </Link>
+                        <Hash class="size-4 shrink-0" />
+                        <span class="min-w-0 flex-1 truncate">
+                            {channel.name}
+                        </span>
+                        <span
+                            class="text-[11px] opacity-60 {channel.canManage
+                                ? 'group-focus-within/channel:opacity-0 group-hover/channel:opacity-0'
+                                : ''}"
+                        >
+                            {channel.messageCount}
+                        </span>
+                    </Link>
+                    {#if channel.canManage}
+                        <ChatChannelActions
+                            {currentTeam}
+                            {project}
+                            {channel}
+                            selectedChannelId={selectedChannel.id}
+                            canDelete={channels.length > 1}
+                        />
+                    {/if}
+                </div>
             {/each}
         </nav>
     </aside>
 
     <section class="flex min-h-0 min-w-0 flex-col">
         <header
-            class="flex shrink-0 items-center justify-between gap-4 border-b bg-card px-4 py-3 sm:px-6"
+            class="flex shrink-0 items-center gap-2 border-b bg-card px-3 py-2.5 sm:px-4"
         >
             <div class="min-w-0 flex-1">
                 <div class="hidden items-center gap-2 lg:flex">
                     <Hash class="size-5 text-muted-foreground" />
-                    <h1 class="truncate text-lg font-bold">
+                    <h1 class="truncate text-base font-bold">
                         {selectedChannel.name}
                     </h1>
                 </div>
-                <label class="sr-only" for="mobile-chat-channel"
-                    >{t('Channels')}</label
-                >
+                <label class="sr-only" for="mobile-chat-channel">
+                    {t('Channels')}
+                </label>
                 <select
                     id="mobile-chat-channel"
                     value={selectedChannel.id}
@@ -537,28 +806,54 @@
                 {/if}
             </div>
 
-            <div
-                class="flex shrink-0 items-center gap-2 text-xs text-muted-foreground"
-                aria-live="polite"
-            >
+            <Badge variant="outline" class="hidden gap-1.5 sm:flex">
                 {#if connectionStatus === 'connecting' || connectionStatus === 'reconnecting'}
-                    <LoaderCircle class="size-3.5 animate-spin" />
+                    <LoaderCircle class="animate-spin" />
                 {:else}
-                    <Circle
-                        class="size-2.5 {connectionStatus === 'connected'
-                            ? 'fill-emerald-500 text-emerald-500'
-                            : 'fill-amber-500 text-amber-500'}"
-                    />
+                    <Circle class="fill-current" />
                 {/if}
-                <span class="hidden sm:inline">{connectionLabel}</span>
-            </div>
+                {connectionLabel}
+            </Badge>
+
+            <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                class="xl:hidden"
+                onclick={() => openContextSheet('todos')}
+            >
+                <ListTodo data-icon="inline-start" />
+                <span class="hidden sm:inline">{t('To-dos')}</span>
+                <Badge variant="secondary">{incompleteTodoCount}</Badge>
+            </Button>
+            <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                class="xl:hidden"
+                onclick={() => openContextSheet('files')}
+            >
+                <FileText data-icon="inline-start" />
+                <span class="hidden sm:inline">{t('Files')}</span>
+                <Badge variant="secondary">{channelFiles.length}</Badge>
+            </Button>
         </header>
 
         <div
             bind:this={messageList}
+            class:ring-2={dragActive}
+            class:ring-inset={dragActive}
+            class:ring-primary={dragActive}
             class="min-h-0 flex-1 overflow-y-auto py-3"
+            role="region"
             aria-live="polite"
             aria-label={t('Chat messages')}
+            ondragover={(event) => {
+                event.preventDefault();
+                dragActive = true;
+            }}
+            ondragleave={() => (dragActive = false)}
+            ondrop={handleDrop}
         >
             {#if historyCursor}
                 <div class="mb-3 text-center">
@@ -591,83 +886,187 @@
                 </div>
             {/if}
 
-            <div class="mx-auto max-w-5xl">
+            <div class="mx-auto flex max-w-5xl flex-col gap-0.5 px-1">
                 {#each messages as message (message.id)}
-                    <article
-                        class="group flex gap-3 px-4 py-2.5 hover:bg-muted/35 sm:px-6"
-                    >
-                        <span
-                            class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-sm font-bold text-primary"
-                        >
-                            {userInitial(message)}
-                        </span>
-                        <div class="min-w-0 flex-1">
-                            <div class="flex flex-wrap items-baseline gap-x-2">
-                                <span class="font-bold">
-                                    {message.user?.name ?? t('Deleted user')}
-                                </span>
-                                <time class="text-xs text-muted-foreground">
-                                    {messageTime(message.createdAt)}
-                                </time>
-                            </div>
-                            <p
-                                class="mt-0.5 whitespace-pre-wrap break-words text-sm leading-6"
-                            >
-                                {message.body}
-                            </p>
-                            <button
-                                type="button"
-                                class="mt-1 inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs font-semibold text-primary opacity-80 transition hover:bg-primary/10 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                onclick={() => void openThread(message)}
-                            >
-                                <MessageSquareText class="size-3.5" />
-                                {message.replyCount > 0
-                                    ? t(':count replies', {
-                                          count: String(message.replyCount),
-                                      })
-                                    : t('Reply in thread')}
-                            </button>
-                        </div>
-                    </article>
+                    <ChatMessageItem
+                        {currentTeam}
+                        {project}
+                        {message}
+                        onToggleReaction={toggleMessageReaction}
+                        onOpenThread={() => void openThread(message)}
+                    />
                 {/each}
             </div>
         </div>
 
         <footer
-            class="shrink-0 border-t bg-card px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6"
+            class="shrink-0 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-5"
         >
             <div class="mx-auto max-w-5xl">
+                <input
+                    bind:this={fileInput}
+                    type="file"
+                    multiple
+                    class="hidden"
+                    onchange={onFileInputChange}
+                />
                 <div
-                    class="flex items-end gap-2 rounded-xl border border-input bg-background p-1.5 shadow-sm focus-within:ring-2 focus-within:ring-ring"
+                    bind:this={composerShell}
+                    data-expanded={composerExpanded}
+                    role="group"
+                    aria-label={t('Write a message')}
+                    class:ring-2={dragActive}
+                    class:ring-ring={dragActive}
+                    class="overflow-hidden rounded-xl border border-input bg-card shadow-sm transition focus-within:border-ring focus-within:ring-2 focus-within:ring-ring"
+                    ondragover={(event) => {
+                        event.preventDefault();
+                        dragActive = true;
+                    }}
+                    ondragleave={() => (dragActive = false)}
+                    ondrop={handleDrop}
+                    onfocusout={collapseComposerIfIdle}
                 >
-                    <textarea
-                        bind:value={sendHttp.body}
-                        rows="1"
-                        maxlength="2000"
-                        placeholder={t('Message #:channel', {
-                            channel: selectedChannel.name,
-                        })}
-                        aria-label={t('Write a message')}
-                        class="min-h-10 max-h-32 flex-1 resize-y bg-transparent px-2 py-2 text-base outline-none placeholder:text-muted-foreground sm:text-sm"
-                        onkeydown={handleMessageKeydown}
-                        oncompositionstart={() => (isComposing = true)}
-                        oncompositionend={() => (isComposing = false)}
-                    ></textarea>
-                    <Button
-                        size="icon"
-                        class="size-10 shrink-0 rounded-lg"
-                        disabled={!sendHttp.body.trim() || sendHttp.processing}
-                        aria-label={t('Send message')}
-                        onclick={() => void sendMessage()}
+                    {#if pendingAttachments.length > 0 || pendingUploadCount > 0}
+                        <div class="flex flex-wrap gap-2 px-3 pt-3">
+                            {#each pendingAttachments as file (file.id)}
+                                <Badge variant="secondary" class="gap-1.5 py-1">
+                                    <Paperclip />
+                                    <span class="max-w-44 truncate"
+                                        >{file.name}</span
+                                    >
+                                    <button
+                                        type="button"
+                                        class="rounded-full p-0.5 hover:bg-background/70"
+                                        aria-label={t('Remove')}
+                                        onclick={() =>
+                                            (pendingAttachments =
+                                                pendingAttachments.filter(
+                                                    (item) =>
+                                                        item.id !== file.id,
+                                                ))}
+                                    >
+                                        <X class="size-3" />
+                                    </button>
+                                </Badge>
+                            {/each}
+                            {#if pendingUploadCount > 0}
+                                <Badge variant="outline" class="gap-1.5 py-1">
+                                    <LoaderCircle class="animate-spin" />
+                                    {t('Uploading')}
+                                </Badge>
+                            {/if}
+                        </div>
+                    {/if}
+
+                    <div
+                        class={cn(
+                            !composerExpanded &&
+                                'flex h-12 items-center gap-1.5 px-2',
+                        )}
                     >
-                        {#if sendHttp.processing}
-                            <LoaderCircle class="size-4 animate-spin" />
-                        {:else}
-                            <Send class="size-4" />
+                        {#if !composerExpanded}
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                class="size-8 shrink-0 rounded-full"
+                                aria-label={t('Attach file')}
+                                title={t('Attach file')}
+                                disabled={pendingUploadCount > 0 ||
+                                    pendingAttachments.length >=
+                                        maxChatAttachments}
+                                onclick={() => fileInput?.click()}
+                            >
+                                <Paperclip />
+                            </Button>
                         {/if}
-                    </Button>
+
+                        <textarea
+                            bind:this={messageComposer}
+                            bind:value={sendHttp.body}
+                            rows={composerExpanded ? 3 : 1}
+                            maxlength="2000"
+                            placeholder={t('Message #:channel', {
+                                channel: selectedChannel.name,
+                            })}
+                            aria-label={t('Write a message')}
+                            class={cn(
+                                'resize-none overflow-hidden bg-transparent text-base leading-5 outline-none placeholder:text-muted-foreground sm:text-sm',
+                                composerExpanded
+                                    ? 'block min-h-20 max-h-48 w-full px-3 py-2.5'
+                                    : 'h-9 min-h-9 min-w-0 flex-1 px-1 py-2',
+                            )}
+                            onfocus={expandComposer}
+                            oninput={resizeMessageComposer}
+                            onkeydown={handleMessageKeydown}
+                            oncompositionstart={() => (isComposing = true)}
+                            oncompositionend={() => (isComposing = false)}
+                        ></textarea>
+
+                        {#if !composerExpanded}
+                            <Button
+                                type="button"
+                                size="icon"
+                                class="size-8 shrink-0 rounded-full"
+                                disabled={!canSend}
+                                aria-label={t('Send message')}
+                                onclick={() => void sendMessage()}
+                            >
+                                {#if sendHttp.processing}
+                                    <LoaderCircle class="animate-spin" />
+                                {:else}
+                                    <Send />
+                                {/if}
+                            </Button>
+                        {/if}
+                    </div>
+
+                    {#if composerExpanded}
+                        <div class="flex items-center gap-1 px-2 py-1.5">
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                class="size-8 shrink-0 rounded-full"
+                                aria-label={t('Attach file')}
+                                title={t('Attach file')}
+                                disabled={pendingUploadCount > 0 ||
+                                    pendingAttachments.length >=
+                                        maxChatAttachments}
+                                onclick={() => fileInput?.click()}
+                            >
+                                <Paperclip />
+                            </Button>
+                            <span
+                                class="ml-auto hidden text-xs text-muted-foreground sm:inline"
+                            >
+                                {t('Drop files to attach')}
+                            </span>
+                            <Button
+                                type="button"
+                                size="icon"
+                                class="size-8 shrink-0 rounded-full"
+                                disabled={!canSend}
+                                aria-label={t('Send message')}
+                                onclick={() => void sendMessage()}
+                            >
+                                {#if sendHttp.processing}
+                                    <LoaderCircle class="animate-spin" />
+                                {:else}
+                                    <Send />
+                                {/if}
+                            </Button>
+                        </div>
+                    {/if}
                 </div>
-                <InputError class="mt-1" message={sendHttp.errors.body} />
+                <InputError
+                    class="mt-1"
+                    message={sendHttp.errors.body ||
+                        sendHttp.errors.attachment_ids}
+                />
+                {#if uploadError}
+                    <p class="mt-1 text-sm text-destructive">{uploadError}</p>
+                {/if}
                 {#if sendError}
                     <p class="mt-1 text-sm text-destructive">{sendError}</p>
                 {/if}
@@ -675,9 +1074,22 @@
         </footer>
     </section>
 
+    <aside class="hidden min-h-0 border-l xl:flex" aria-label={t('To-dos')}>
+        <ChatContextPanel
+            {currentTeam}
+            {project}
+            {selectedChannel}
+            {todoLists}
+            {relatedTodos}
+            {linkableTodos}
+            {channelFiles}
+            {members}
+        />
+    </aside>
+
     {#if activeThread}
         <aside
-            class="absolute inset-0 z-20 flex min-h-0 flex-col border-l bg-card shadow-2xl lg:right-0 lg:left-auto lg:w-96"
+            class="absolute inset-0 flex min-h-0 flex-col border-l bg-card shadow-2xl lg:right-0 lg:left-auto lg:w-96"
             aria-label={t('Thread')}
         >
             <header
@@ -695,33 +1107,20 @@
                     aria-label={t('Close')}
                     onclick={() => (activeThread = null)}
                 >
-                    <X class="size-4" />
+                    <X />
                 </Button>
             </header>
 
-            <div bind:this={threadList} class="min-h-0 flex-1 overflow-y-auto">
-                <article class="flex gap-3 border-b bg-muted/20 px-4 py-4">
-                    <span
-                        class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-sm font-bold text-primary"
-                    >
-                        {userInitial(activeThread)}
-                    </span>
-                    <div class="min-w-0">
-                        <div class="flex flex-wrap items-baseline gap-x-2">
-                            <span class="font-bold">
-                                {activeThread.user?.name ?? t('Deleted user')}
-                            </span>
-                            <time class="text-xs text-muted-foreground">
-                                {messageTime(activeThread.createdAt)}
-                            </time>
-                        </div>
-                        <p
-                            class="mt-1 whitespace-pre-wrap break-words text-sm leading-6"
-                        >
-                            {activeThread.body}
-                        </p>
-                    </div>
-                </article>
+            <div
+                bind:this={threadList}
+                class="min-h-0 flex-1 overflow-y-auto p-2"
+            >
+                <ChatMessageItem
+                    {currentTeam}
+                    {project}
+                    message={activeThread}
+                    onToggleReaction={toggleMessageReaction}
+                />
 
                 {#if threadCursor}
                     <div class="py-2 text-center">
@@ -744,30 +1143,16 @@
                     </div>
                 {/if}
 
-                {#each threadMessages as reply (reply.id)}
-                    <article class="flex gap-3 px-4 py-3 hover:bg-muted/30">
-                        <span
-                            class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-secondary text-xs font-bold"
-                        >
-                            {userInitial(reply)}
-                        </span>
-                        <div class="min-w-0 flex-1">
-                            <div class="flex flex-wrap items-baseline gap-x-2">
-                                <span class="text-sm font-bold">
-                                    {reply.user?.name ?? t('Deleted user')}
-                                </span>
-                                <time class="text-xs text-muted-foreground">
-                                    {messageTime(reply.createdAt)}
-                                </time>
-                            </div>
-                            <p
-                                class="mt-0.5 whitespace-pre-wrap break-words text-sm leading-6"
-                            >
-                                {reply.body}
-                            </p>
-                        </div>
-                    </article>
-                {/each}
+                <div class="mt-2 flex flex-col gap-0.5 border-t pt-2">
+                    {#each threadMessages as reply (reply.id)}
+                        <ChatMessageItem
+                            {currentTeam}
+                            {project}
+                            message={reply}
+                            onToggleReaction={toggleMessageReaction}
+                        />
+                    {/each}
+                </div>
             </div>
 
             <footer
@@ -782,23 +1167,22 @@
                         maxlength="2000"
                         placeholder={t('Reply')}
                         aria-label={t('Reply')}
-                        class="min-h-10 max-h-32 flex-1 resize-y bg-transparent px-2 py-2 text-base outline-none placeholder:text-muted-foreground sm:text-sm"
+                        class="max-h-32 min-h-10 flex-1 resize-y bg-transparent px-2 py-2 text-base outline-none placeholder:text-muted-foreground sm:text-sm"
                         onkeydown={handleReplyKeydown}
                         oncompositionstart={() => (isComposing = true)}
                         oncompositionend={() => (isComposing = false)}
                     ></textarea>
                     <Button
                         size="icon"
-                        class="size-10 shrink-0 rounded-lg"
                         disabled={!replyHttp.body.trim() ||
                             replyHttp.processing}
                         aria-label={t('Send reply')}
                         onclick={() => void sendReply()}
                     >
                         {#if replyHttp.processing}
-                            <LoaderCircle class="size-4 animate-spin" />
+                            <LoaderCircle class="animate-spin" />
                         {:else}
-                            <Send class="size-4" />
+                            <Send />
                         {/if}
                     </Button>
                 </div>
@@ -810,3 +1194,25 @@
         </aside>
     {/if}
 </div>
+
+<Sheet bind:open={contextSheetOpen}>
+    <SheetContent side="right" class="w-full max-w-sm gap-0 p-0">
+        <SheetHeader class="border-b p-4 text-left">
+            <SheetTitle>
+                {contextSection === 'todos' ? t('To-dos') : t('Files')}
+            </SheetTitle>
+            <SheetDescription>#{selectedChannel.name}</SheetDescription>
+        </SheetHeader>
+        <ChatContextPanel
+            {currentTeam}
+            {project}
+            {selectedChannel}
+            {todoLists}
+            {relatedTodos}
+            {linkableTodos}
+            {channelFiles}
+            {members}
+            show={contextSection}
+        />
+    </SheetContent>
+</Sheet>

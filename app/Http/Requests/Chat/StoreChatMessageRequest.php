@@ -5,6 +5,7 @@ namespace App\Http\Requests\Chat;
 use App\Models\ChatChannel;
 use App\Models\ChatMessage;
 use App\Models\Project;
+use App\Models\StoredFile;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Foundation\Http\FormRequest;
@@ -33,6 +34,7 @@ class StoreChatMessageRequest extends FormRequest
         $project = $this->route('project');
         $projectId = $project instanceof Project ? $project->id : 0;
         $channelId = $this->integer('channel_id');
+        $userId = $this->user()->id;
 
         return [
             'channel_id' => [
@@ -53,7 +55,23 @@ class StoreChatMessageRequest extends FormRequest
                         }
                     }),
             ],
-            'body' => ['required', 'string', 'max:2000'],
+            'body' => ['nullable', 'string', 'max:2000', 'required_without:attachment_ids'],
+            'attachment_ids' => [
+                'nullable',
+                'array',
+                'max:'.(int) config('uploads.max_files_per_request'),
+            ],
+            'attachment_ids.*' => [
+                'integer',
+                'distinct',
+                Rule::exists(StoredFile::class, 'id')
+                    ->where(fn (Builder $query): Builder => $query
+                        ->where('project_id', $projectId)
+                        ->where('uploaded_by', $userId)
+                        ->where('is_inline', true)
+                        ->whereNull('attachable_type')
+                        ->whereNull('attachable_id')),
+            ],
         ];
     }
 }

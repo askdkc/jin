@@ -1,32 +1,37 @@
 <script module lang="ts">
     import ProjectMaterialController from '@/actions/App/Http/Controllers/ProjectMaterialController';
-    import { show } from '@/routes/projects';
-    import type { ProjectTool, Team } from '@/types';
+    import { buildMaterialBreadcrumbs } from '@/lib/materialBreadcrumbs';
+    import type {
+        MaterialFilters as MaterialLayoutFilters,
+        MaterialFolder as MaterialLayoutFolder,
+        ProjectTool,
+        Team,
+    } from '@/types';
 
     export const layout = (props: {
         currentTeam: Team;
         project: ProjectTool;
-    }) => ({
-        breadcrumbs: [
-            {
-                title: props.project.name,
-                href: show([props.currentTeam.slug, props.project.id]),
-            },
-            {
-                translationKey: 'Materials',
-                href: ProjectMaterialController.index([
-                    props.currentTeam.slug,
-                    props.project.id,
-                ]),
-            },
-        ],
-    });
+        folders: MaterialLayoutFolder[];
+        filters: MaterialLayoutFilters;
+    }) => {
+        const activeFolder =
+            props.folders.find(
+                (folder) => folder.id === props.filters.folder,
+            ) ?? null;
+
+        return {
+            breadcrumbs: buildMaterialBreadcrumbs({
+                teamSlug: props.currentTeam.slug,
+                project: props.project,
+                folder: activeFolder,
+            }),
+        };
+    };
 </script>
 
 <script lang="ts">
     import { Form, Link, useForm } from '@inertiajs/svelte';
     import ChevronDown from 'lucide-svelte/icons/chevron-down';
-    import ChevronLeft from 'lucide-svelte/icons/chevron-left';
     import Ellipsis from 'lucide-svelte/icons/ellipsis';
     import ExternalLinkIcon from 'lucide-svelte/icons/external-link';
     import FilePlus from 'lucide-svelte/icons/file-plus';
@@ -42,6 +47,7 @@
     import ProjectDocumentController from '@/actions/App/Http/Controllers/ProjectDocumentController';
     import ProjectFileController from '@/actions/App/Http/Controllers/ProjectFileController';
     import AppHead from '@/components/AppHead.svelte';
+    import Breadcrumbs from '@/components/Breadcrumbs.svelte';
     import InputError from '@/components/InputError.svelte';
     import ProjectFileThumbnail from '@/components/ProjectFileThumbnail.svelte';
     import { Button } from '@/components/ui/button';
@@ -91,6 +97,13 @@
     ]);
     const activeFolder = $derived(
         folders.find((folder) => folder.id === filters.folder) ?? null,
+    );
+    const materialBreadcrumbs = $derived(
+        buildMaterialBreadcrumbs({
+            teamSlug: currentTeam.slug,
+            project,
+            folder: activeFolder,
+        }),
     );
     const uploadForm = useForm(
         () => ProjectFileController.store(routeArguments),
@@ -407,26 +420,11 @@
             onchange={handleFolderPick}
         />
 
-        <div class="flex min-h-10 items-center border-b px-5 sm:px-8">
-            <Link
-                href={show([currentTeam.slug, project.id])}
-                class="text-sm font-bold hover:underline"
-            >
-                {project.name}
-            </Link>
+        <div class="flex min-h-10 items-center border-b px-5 py-2 sm:px-8">
+            <Breadcrumbs breadcrumbs={materialBreadcrumbs} />
         </div>
 
         <div class="px-5 py-6 sm:px-9 sm:py-8 lg:px-10">
-            {#if activeFolder}
-                <Link
-                    href={ProjectMaterialController.index(routeArguments)}
-                    class="mb-2 inline-flex items-center gap-1 text-sm font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                >
-                    <ChevronLeft class="size-4" aria-hidden="true" />
-                    {t('Materials')}
-                </Link>
-            {/if}
-
             <h1
                 class="flex items-center gap-2 text-3xl font-bold tracking-tight"
             >

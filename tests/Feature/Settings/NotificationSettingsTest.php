@@ -71,12 +71,12 @@ test('notification channels respect scope delivery method and work hours', funct
     ]);
 
     expect($user->notificationChannels('activity'))->toBe([])
-        ->and($user->notificationChannels('mention'))->toBe(['database', 'mail']);
+        ->and($user->notificationChannels('mention'))->toBe(['database', 'broadcast', 'mail']);
 
     CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-07-20 20:00:00', 'Asia/Tokyo'));
 
     // Database notifications remain available; email is suppressed.
-    expect($user->notificationChannels('mention'))->toBe(['database']);
+    expect($user->notificationChannels('mention'))->toBe(['database', 'broadcast']);
 
     CarbonImmutable::setTestNow();
 });

@@ -51,6 +51,9 @@ class AttachmentController extends Controller
             'id' => $storedFile->id,
             'name' => $storedFile->original_name,
             'mimeType' => $storedFile->mime_type,
+            'size' => $storedFile->size,
+            'uploaderName' => $request->user()->name,
+            'createdAt' => $storedFile->created_at?->toISOString(),
             'previewUrl' => route('projects.files.preview', [$currentTeam, $project, $storedFile], absolute: false),
             'inline' => InlineAttachmentPolicy::isInline($storedFile->mime_type),
         ], 201);

@@ -5,6 +5,7 @@ use App\Enums\TeamRole;
 use App\Models\Project;
 use App\Models\Team;
 use App\Models\User;
+use Illuminate\Support\Facades\Broadcast;
 
 test('project chat private channel follows project visibility', function () {
     $owner = User::factory()->create();
@@ -28,4 +29,14 @@ test('project chat private channel follows project visibility', function () {
         ->and($channel->join($participant, $project))->toBeTrue()
         ->and($channel->join($nonParticipant, $project))->toBeFalse()
         ->and($channel->join($outsider, $project))->toBeFalse();
+});
+
+test('users can only authorize their own notification channel', function () {
+    $user = User::factory()->create();
+    $otherUser = User::factory()->create();
+    $authorize = Broadcast::getChannels()->get('App.Models.User.{id}');
+
+    expect($authorize)->toBeCallable()
+        ->and($authorize($user, $user->id))->toBeTrue()
+        ->and($authorize($user, $otherUser->id))->toBeFalse();
 });

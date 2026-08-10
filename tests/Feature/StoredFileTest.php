@@ -381,6 +381,33 @@ test('deleting a stored file removes its blobs and comments without breaking act
             ->where('activities.0.subjectId', null));
 });
 
+test('deleting a file from its detail page redirects to the materials library', function () {
+    Storage::fake('local');
+
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    Storage::disk('local')->put('projects/test/report.docx', 'raw docx content');
+    $storedFile = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'path' => 'projects/test/report.docx',
+        'original_name' => '月次報告.docx',
+    ]);
+    $destroyUrl = route('projects.files.destroy', [
+        'current_team' => $team,
+        'project' => $project,
+        'stored_file' => $storedFile,
+        'return_to' => 'materials',
+    ]);
+
+    $this->actingAs($owner)
+        ->delete($destroyUrl)
+        ->assertRedirect(route('projects.materials.index', [$team, $project]));
+
+    Storage::disk('local')->assertMissing('projects/test/report.docx');
+    expect($storedFile->fresh())->toBeNull();
+});
+
 test('a deletion interrupted after removing the blob is completed after its lease expires', function () {
     Storage::fake('local');
 
@@ -835,6 +862,9 @@ test('a project member can open a file detail page with its comments while outsi
     $team->members()->attach($outsider, ['role' => TeamRole::Member->value]);
     $project = Project::factory()->for($team)->for($owner, 'creator')->create();
     $project->members()->attach([$owner->id, $member->id]);
+    $folder = MaterialFolder::factory()->for($project)->for($owner, 'creator')->create([
+        'name' => '確認資料',
+    ]);
     $file = StoredFile::withoutEvents(fn (): StoredFile => StoredFile::factory()
         ->for($project)
         ->for($owner, 'uploader')
@@ -843,6 +873,7 @@ test('a project member can open a file detail page with its comments while outsi
             'original_name' => '仕様書.pdf',
             'mime_type' => 'application/pdf',
             'size' => 4096,
+            'material_folder_id' => $folder->id,
             'preview_path' => "projects/{$project->id}/previews/specification.webp",
             'preview_status' => 'ready',
         ]));
@@ -863,6 +894,8 @@ test('a project member can open a file detail page with its comments while outsi
             ->where('file.name', '仕様書.pdf')
             ->where('file.size', 4096)
             ->where('file.uploaderName', $owner->name)
+            ->where('file.folder.id', $folder->id)
+            ->where('file.folder.name', '確認資料')
             ->where('reactions.0.reaction', '🚀')
             ->where('reactions.0.count', 1)
             ->where('reactions.0.reacted', true)

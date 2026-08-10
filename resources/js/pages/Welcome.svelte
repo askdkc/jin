@@ -13,16 +13,19 @@
     import LanguageSwitcher from '@/components/LanguageSwitcher.svelte';
     import { t } from '@/lib/i18n';
     import { toUrl } from '@/lib/utils';
-    import { dashboard, login } from '@/routes';
+    import { dashboard, login, register } from '@/routes';
     import type { Team } from '@/types';
 
     const auth = $derived(page.props.auth);
     const currentTeam = $derived(page.props.currentTeam as Team | null);
+    const isGuest = $derived(!auth.user);
     const canOpenJin = $derived(Boolean(auth.user && currentTeam));
-    const primaryHref = $derived(
+    const authenticatedHref = $derived(
         canOpenJin && currentTeam ? dashboard(currentTeam.slug) : login(),
     );
-    const primaryLabel = $derived(canOpenJin ? t('Open JIN') : t('Log in'));
+    const authenticatedLabel = $derived(
+        canOpenJin ? t('Open JIN') : t('Log in'),
+    );
 
     const features = [
         {
@@ -153,7 +156,7 @@
                 aria-label={t('JIN home')}
             >
                 <AppLogoIcon class="size-11 shrink-0" />
-                <span class="leading-none">
+                <span class="hidden leading-none sm:block">
                     <span
                         class="block text-lg font-black tracking-[0.16em] text-white"
                         >陣（JIN）</span
@@ -188,15 +191,35 @@
 
             <div class="flex shrink-0 items-center gap-2">
                 <LanguageSwitcher dark compact />
-                <Link
-                    href={toUrl(primaryHref)}
-                    prefetch
-                    data-test="welcome-primary-action"
-                    class="inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-amber-300/50 bg-amber-200 px-5 text-sm font-bold text-[#142029] shadow-[0_8px_24px_rgba(218,176,77,0.16)] outline-none transition hover:-translate-y-0.5 hover:bg-amber-100 focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#071017] motion-safe:duration-200"
-                >
-                    {primaryLabel}
-                    <ArrowRight class="size-4" aria-hidden="true" />
-                </Link>
+                {#if isGuest}
+                    <Link
+                        href={toUrl(login())}
+                        prefetch
+                        data-test="welcome-login-link"
+                        class="inline-flex min-h-11 items-center justify-center rounded-full px-2 text-sm font-bold text-slate-200 outline-none transition hover:text-white focus-visible:ring-2 focus-visible:ring-amber-300 sm:px-4 motion-safe:duration-200"
+                    >
+                        {t('Log in')}
+                    </Link>
+                    <Link
+                        href={toUrl(register())}
+                        prefetch
+                        data-test="welcome-register-button"
+                        class="inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-amber-300/50 bg-amber-200 px-3 text-sm font-bold text-[#142029] shadow-[0_8px_24px_rgba(218,176,77,0.16)] outline-none transition hover:-translate-y-0.5 hover:bg-amber-100 focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#071017] sm:px-5 motion-safe:duration-200"
+                    >
+                        {t('Register')}
+                        <ArrowRight class="size-4" aria-hidden="true" />
+                    </Link>
+                {:else}
+                    <Link
+                        href={toUrl(authenticatedHref)}
+                        prefetch
+                        data-test="welcome-primary-action"
+                        class="inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-amber-300/50 bg-amber-200 px-3 text-sm font-bold text-[#142029] shadow-[0_8px_24px_rgba(218,176,77,0.16)] outline-none transition hover:-translate-y-0.5 hover:bg-amber-100 focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#071017] sm:px-5 motion-safe:duration-200"
+                    >
+                        {authenticatedLabel}
+                        <ArrowRight class="size-4" aria-hidden="true" />
+                    </Link>
+                {/if}
             </div>
         </div>
     </header>
@@ -236,20 +259,41 @@
                         )}
                     </p>
                     <div class="mt-9 flex flex-col gap-3 sm:flex-row">
-                        <Link
-                            href={toUrl(primaryHref)}
-                            prefetch
-                            class="inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-[#b44332] px-6 text-sm font-bold text-white shadow-[0_14px_40px_rgba(180,67,50,0.28)] outline-none transition hover:-translate-y-0.5 hover:bg-[#c24f3a] focus-visible:ring-2 focus-visible:ring-[#e07b69] focus-visible:ring-offset-2 focus-visible:ring-offset-[#071017] motion-safe:duration-200"
-                        >
-                            {primaryLabel}
-                            <ArrowRight class="size-4" aria-hidden="true" />
-                        </Link>
-                        <a
-                            href="#features"
-                            class="inline-flex min-h-12 items-center justify-center rounded-full border border-white/15 bg-white/5 px-6 text-sm font-bold text-slate-100 outline-none transition hover:border-white/30 hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-amber-300 motion-safe:duration-200"
-                        >
-                            {t('See what you can do')}
-                        </a>
+                        {#if isGuest}
+                            <Link
+                                href={toUrl(register())}
+                                prefetch
+                                data-test="welcome-hero-register-button"
+                                class="inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-[#b44332] px-6 text-sm font-bold text-white shadow-[0_14px_40px_rgba(180,67,50,0.28)] outline-none transition hover:-translate-y-0.5 hover:bg-[#c24f3a] focus-visible:ring-2 focus-visible:ring-[#e07b69] focus-visible:ring-offset-2 focus-visible:ring-offset-[#071017] motion-safe:duration-200"
+                            >
+                                {t('Create account')}
+                                <ArrowRight class="size-4" aria-hidden="true" />
+                            </Link>
+                            <Link
+                                href={toUrl(login())}
+                                prefetch
+                                data-test="welcome-hero-login-link"
+                                class="inline-flex min-h-12 items-center justify-center rounded-full border border-white/15 bg-white/5 px-6 text-sm font-bold text-slate-100 outline-none transition hover:border-white/30 hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-amber-300 motion-safe:duration-200"
+                            >
+                                {t('Log in')}
+                            </Link>
+                        {:else}
+                            <Link
+                                href={toUrl(authenticatedHref)}
+                                prefetch
+                                data-test="welcome-hero-primary-action"
+                                class="inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-[#b44332] px-6 text-sm font-bold text-white shadow-[0_14px_40px_rgba(180,67,50,0.28)] outline-none transition hover:-translate-y-0.5 hover:bg-[#c24f3a] focus-visible:ring-2 focus-visible:ring-[#e07b69] focus-visible:ring-offset-2 focus-visible:ring-offset-[#071017] motion-safe:duration-200"
+                            >
+                                {authenticatedLabel}
+                                <ArrowRight class="size-4" aria-hidden="true" />
+                            </Link>
+                            <a
+                                href="#features"
+                                class="inline-flex min-h-12 items-center justify-center rounded-full border border-white/15 bg-white/5 px-6 text-sm font-bold text-slate-100 outline-none transition hover:border-white/30 hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-amber-300 motion-safe:duration-200"
+                            >
+                                {t('See what you can do')}
+                            </a>
+                        {/if}
                     </div>
                     <dl
                         class="mt-11 grid max-w-xl grid-cols-1 gap-5 border-t border-white/10 pt-6 text-sm sm:grid-cols-3"
@@ -611,20 +655,38 @@
                 >
                     <div>
                         <p class="text-2xl font-black text-white">
-                            {t('Ready when you are? Open JIN')}
+                            {isGuest
+                                ? t('Create an account')
+                                : t('Ready when you are? Open JIN')}
                         </p>
                         <p class="mt-2 text-sm text-slate-400">
-                            {t('Log in with your usual account.')}
+                            {isGuest
+                                ? t(
+                                      'Enter your details below to create your account',
+                                  )
+                                : t('Log in with your usual account.')}
                         </p>
                     </div>
-                    <Link
-                        href={toUrl(primaryHref)}
-                        prefetch
-                        class="inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-[#b44332] px-7 text-sm font-bold text-white outline-none transition hover:-translate-y-0.5 hover:bg-[#c24f3a] focus-visible:ring-2 focus-visible:ring-[#e07b69] focus-visible:ring-offset-2 focus-visible:ring-offset-[#071017] motion-safe:duration-200"
-                    >
-                        {primaryLabel}
-                        <ArrowRight class="size-4" aria-hidden="true" />
-                    </Link>
+                    {#if isGuest}
+                        <Link
+                            href={toUrl(register())}
+                            prefetch
+                            data-test="welcome-footer-register-button"
+                            class="inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-[#b44332] px-7 text-sm font-bold text-white outline-none transition hover:-translate-y-0.5 hover:bg-[#c24f3a] focus-visible:ring-2 focus-visible:ring-[#e07b69] focus-visible:ring-offset-2 focus-visible:ring-offset-[#071017] motion-safe:duration-200"
+                        >
+                            {t('Create account')}
+                            <ArrowRight class="size-4" aria-hidden="true" />
+                        </Link>
+                    {:else}
+                        <Link
+                            href={toUrl(authenticatedHref)}
+                            prefetch
+                            class="inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-[#b44332] px-7 text-sm font-bold text-white outline-none transition hover:-translate-y-0.5 hover:bg-[#c24f3a] focus-visible:ring-2 focus-visible:ring-[#e07b69] focus-visible:ring-offset-2 focus-visible:ring-offset-[#071017] motion-safe:duration-200"
+                        >
+                            {authenticatedLabel}
+                            <ArrowRight class="size-4" aria-hidden="true" />
+                        </Link>
+                    {/if}
                 </div>
             </div>
         </section>

@@ -72,4 +72,9 @@ class NewMessageCommentNotification extends Notification implements ShouldQueue
             'actorName' => $this->actor->name,
         ];
     }
+
+    public function broadcastType(): string
+    {
+        return 'message_comment';
+    }
 }

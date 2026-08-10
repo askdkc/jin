@@ -140,6 +140,13 @@ jobs:
             set -Eeuo pipefail
             export DEBIAN_FRONTEND=noninteractive
             export JIN_SETUP_DIAGNOSTICS=1
+
+            apt-get update
+            apt-get -y upgrade
+            apt-get install -y sudo
+            useradd --create-home --shell /bin/bash jindeploy
+            printf 'jindeploy ALL=(ALL:ALL) NOPASSWD: ALL\n' >/etc/sudoers.d/jindeploy
+            chmod 0440 /etc/sudoers.d/jindeploy
             cd /workspace/jin
             git_config_global="$(mktemp)"
             printf "%s\n" \
@@ -147,13 +154,17 @@ jobs:
               "directory = /workspace/jin" \
               "directory = /workspace/jin/.git" \
               >"$git_config_global"
-            export GIT_CONFIG_GLOBAL="$git_config_global"
-            ./setup.sh \
+            chmod 0644 "$git_config_global"
+            runuser -u jindeploy -- env \
+              DEBIAN_FRONTEND=noninteractive \
+              GIT_CONFIG_GLOBAL="$git_config_global" \
+              ./setup.sh \
               --domain jin.test \
               --db-name jin \
               --db-user jin \
               --app-dir /var/www/jin \
               --repo file:///workspace/jin \
+              --sudo-nopasswd \
               --no-ssl
             jwt_first="$(sed -n "s/^ONLYOFFICE_JWT_SECRET=//p" /var/www/jin/.env)"
             reverb_key_first="$(sed -n "s/^REVERB_APP_KEY=//p" /var/www/jin/.env)"
@@ -178,6 +189,11 @@ jobs:
             actual_pg_major="$(pg_lsclusters --no-header | awk 'NR == 1 { print $1 }')"
             [[ "$actual_pg_major" == "$expected_pg_major" ]]
             dpkg-query -W -f='${db:Status-Status}' "$expected_pgroonga" | grep -qx installed
+            [[ "$(runuser -u jindeploy -- psql --no-password -d postgres -Atqc 'SELECT current_user')" == jindeploy ]]
+            deploy_role_is_superuser="$(runuser -u postgres -- psql -d postgres -Atqc \
+              "SELECT rolsuper FROM pg_roles WHERE rolname = 'jindeploy'")"
+            [[ "$deploy_role_is_superuser" == t ]]
+            [[ "$(stat -c '%U:%G:%a' /etc/jin/database-password)" == root:root:600 ]]
             test -x /var/www/jin/.venv-file-content/bin/markitdown
             systemctl is-active --quiet rabbitmq-server
             for rabbit_port in 5672 25672 4369; do
@@ -193,12 +209,16 @@ jobs:
             curl --fail --silent --show-error \
               -H "Host: jin.test" \
               "http://127.0.0.1/onlyoffice/web-apps/apps/api/documents/api.js" >/dev/null
-            ./setup.sh \
+            runuser -u jindeploy -- env \
+              DEBIAN_FRONTEND=noninteractive \
+              GIT_CONFIG_GLOBAL="$git_config_global" \
+              ./setup.sh \
               --domain jin.test \
               --db-name jin \
               --db-user jin \
               --app-dir /var/www/jin \
               --repo file:///workspace/jin \
+              --sudo-nopasswd \
               --no-ssl
             jwt_second="$(sed -n "s/^ONLYOFFICE_JWT_SECRET=//p" /var/www/jin/.env)"
             reverb_key_second="$(sed -n "s/^REVERB_APP_KEY=//p" /var/www/jin/.env)"

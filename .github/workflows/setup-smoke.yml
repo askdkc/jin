@@ -57,6 +57,37 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Reclaim hosted runner tool directories
+        run: |
+          set -Eeuo pipefail
+
+          runner_tool_directories=(
+            /opt/hostedtoolcache
+            /opt/ghc
+            /usr/local/lib/android
+            /usr/local/share/powershell
+            /usr/local/share/chromium
+            /usr/local/share/phantomjs
+            /usr/share/dotnet
+          )
+          for directory in "${runner_tool_directories[@]}"; do
+            if [[ -e "$directory" || -L "$directory" ]]; then
+              sudo rm -rf -- "$directory"
+            fi
+          done
+
+          docker_root_dir="$(docker info --format '{{.DockerRootDir}}')"
+          free_mb="$(df -Pm -- "$docker_root_dir" | awk 'NR == 2 { print $4 }')"
+          if [[ ! "$free_mb" =~ ^[0-9]+$ ]]; then
+            printf 'Could not determine free space on Docker backing filesystem: %s\n' "$docker_root_dir" >&2
+            exit 1
+          fi
+          if (( free_mb < 30720 )); then
+            printf 'Docker backing filesystem has only %s MB free; setup-smoke requires at least 30720 MB.\n' "$free_mb" >&2
+            exit 1
+          fi
+          printf 'Docker backing filesystem has %s MB free (minimum: 30720 MB).\n' "$free_mb"
+
       - name: Build Ubuntu systemd image
         run: |
           docker build --pull \
@@ -108,8 +139,6 @@ jobs:
           docker exec --interactive "$container_name" bash -s <<'CONTAINER'
             set -Eeuo pipefail
             export DEBIAN_FRONTEND=noninteractive
-            apt-get update
-            apt-get -y upgrade
             cd /workspace/jin
             git_config_global="$(mktemp)"
             printf "%s\n" \

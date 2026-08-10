@@ -592,3 +592,51 @@ it('requires PHP 8.5 across Composer CI and deployment documentation', function 
         ->and($readme)->toContain('PHP 8.5')
         ->and($readme)->not->toContain('PHP 8.4', 'php8.4', 'php@8.4');
 });
+
+it('reclaims hosted runner tool directories before checking Docker disk capacity', function () {
+    $workflow = (string) file_get_contents(base_path('.github/workflows/setup-smoke.yml'));
+    $cleanupPosition = strpos($workflow, 'name: Reclaim hosted runner tool directories');
+    $buildPosition = strpos($workflow, 'name: Build Ubuntu systemd image');
+
+    expect($cleanupPosition)->not->toBeFalse()
+        ->and($buildPosition)->not->toBeFalse()
+        ->and($cleanupPosition)->toBeLessThan($buildPosition)
+        ->and($workflow)->toContain(
+            '/opt/hostedtoolcache',
+            '/opt/ghc',
+            '/usr/local/lib/android',
+            '/usr/local/share/powershell',
+            '/usr/local/share/chromium',
+            '/usr/local/share/phantomjs',
+            '/usr/share/dotnet',
+            'if [[ -e "$directory" || -L "$directory" ]]; then',
+            'sudo rm -rf -- "$directory"',
+            'docker_root_dir="$(docker info --format',
+            'Docker backing filesystem has only',
+            'free_mb < 30720',
+            'at least 30720 MB',
+        );
+});
+
+it('upgrades the disposable image before systemd boots and never upgrades the running container', function () {
+    $dockerfile = (string) file_get_contents(base_path('.github/setup-systemd.Dockerfile'));
+    $workflow = (string) file_get_contents(base_path('.github/workflows/setup-smoke.yml'));
+    $containerScriptStart = strpos($workflow, 'docker exec --interactive "$container_name" bash -s <<\'CONTAINER\'');
+    $containerScriptEnd = strpos($workflow, '          CONTAINER', $containerScriptStart);
+    $containerScript = substr($workflow, $containerScriptStart, $containerScriptEnd - $containerScriptStart);
+    $upgradePosition = strpos($dockerfile, 'full-upgrade');
+    $installPosition = strpos($dockerfile, 'apt-get install');
+
+    expect($upgradePosition)->not->toBeFalse()
+        ->and($installPosition)->not->toBeFalse()
+        ->and($upgradePosition)->toBeLessThan($installPosition)
+        ->and($dockerfile)->toContain(
+            'RUN apt-get update',
+            'DEBIAN_FRONTEND=noninteractive apt-get -y full-upgrade',
+            'ca-certificates',
+            'dbus',
+            'systemd',
+            'systemd-sysv',
+        )
+        ->and($containerScript)->not->toContain('apt-get update', 'apt-get upgrade', 'apt-get full-upgrade');
+});

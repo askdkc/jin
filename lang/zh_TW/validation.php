@@ -11,7 +11,9 @@ return [
     'alpha_num' => ':attribute 只能以字母及數字組成。',
     'any_of' => ':attribute個欄位無效。',
     'array' => ':attribute 必須是陣列。',
+    'array_keys' => ':attribute 只能包含以下鍵：:values。',
     'ascii' => ':attribute 必須僅包含單字節字母數字字符和符號。',
+    'base64' => ':attribute 必須是有效的 Base64 字串。',
     'before' => ':attribute 必須要早於 :date。',
     'before_or_equal' => ':attribute 必須要等於 :date 或更早。',
     'between' => [

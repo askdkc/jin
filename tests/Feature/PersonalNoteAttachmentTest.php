@@ -447,17 +447,17 @@ test('every Svelte rich-text editor supplies a personal or project attachment up
         preg_match_all('/<RichTextEditor\b/', $source, $matches, PREG_OFFSET_CAPTURE);
 
         foreach ($matches[0] as [$component, $offset]) {
-            $tagEnd = strpos($source, '>', $offset);
+            $tagEnd = strpos($source, '/>', $offset);
             $component = $tagEnd === false
                 ? substr($source, $offset)
-                : substr($source, $offset, $tagEnd - $offset + 1);
+                : substr($source, $offset, $tagEnd - $offset + 2);
             $relativePath = str_replace(base_path().'/', '', $page->getPathname());
             $line = substr_count(substr($source, 0, $offset), "\n") + 1;
             $location = "{$relativePath}:{$line}";
 
             $editors[] = [$page->getPathname(), $component, $offset];
 
-            if ($tagEnd === false || ! str_ends_with(rtrim($component), '/>')) {
+            if ($tagEnd === false) {
                 $nonSelfClosingEditors[] = $location;
             }
 

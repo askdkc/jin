@@ -44,7 +44,7 @@ Basecampの情報設計を参考にしていますが、名称、画面、配色
 ## 動作環境
 
 - PHP 8.5以上とComposer 2
-- Node.js 22.12以上とnpm
+- Node.js 24以上とnpm
 - PHPのSQLite拡張（ローカル開発と通常テストで使用）
 - Python 3.10以上とMarkItDown（ファイル本文検索を有効にする場合）
 - ImageMagickとPoppler（PDFの先頭ページサムネイル生成用）
@@ -61,9 +61,9 @@ Basecampの情報設計を参考にしていますが、名称、画面、配色
 
 ```bash
 xcode-select --install
-brew install php composer node@22 python imagemagick poppler
+brew install php composer node@24 python imagemagick poppler
 
-export PATH="$(brew --prefix php)/bin:$(brew --prefix node@22)/bin:$PATH"
+export PATH="$(brew --prefix php)/bin:$(brew --prefix node@24)/bin:$PATH"
 php --version
 composer --version
 node --version

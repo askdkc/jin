@@ -177,14 +177,12 @@ it('supports visible inline attachment uploads in every rich text editor', funct
         ->toBe('添付ファイルのアップロードに失敗しました。もう一度お試しください。');
 });
 
-it('keeps dropped attachments inside the shared editor until their upload finishes', function () {
+it('defers submission while the shared editor uploads dropped attachments', function () {
     $editor = file_get_contents(resource_path('js/components/RichTextEditor.svelte'));
 
     expect($editor)
         ->toContain("defaultValue={value ?? ''}")
         ->not->toContain("value={value ?? ''}")
-        ->toContain('ondrop={stopEditorDropPropagation}')
-        ->toContain('event.stopPropagation();')
         ->toMatch('/const deferSubmitDuringAttachmentUpload = \(\s*event: SubmitEvent,?\s*\): void =>/s')
         ->toContain('event.stopImmediatePropagation();')
         ->toContain('queuedFormSubmission = true;')

@@ -593,6 +593,29 @@ BASH, base_path('setup.sh'));
     expect($process->isSuccessful())->toBeTrue($process->getErrorOutput());
 });
 
+it('restarts Nginx after narrowing the OnlyOffice listener', function () {
+    $setup = (string) file_get_contents(base_path('setup.sh'));
+    $start = strpos($setup, 'configure_ubuntu_onlyoffice_deployment() {');
+    $end = strpos($setup, "\n}\n\nconfigure_jin_tls()", $start);
+
+    expect($start)->not->toBeFalse()
+        ->and($end)->not->toBeFalse();
+
+    $configureOnlyOffice = substr($setup, $start, $end - $start);
+    $restrictPosition = strpos($configureOnlyOffice, 'restrict_ubuntu_onlyoffice_listener');
+    $testPosition = strpos($configureOnlyOffice, 'sudo nginx -t');
+    $restartPosition = strpos($configureOnlyOffice, 'sudo systemctl restart nginx');
+    $servicesPosition = strpos($configureOnlyOffice, 'restart_ubuntu_onlyoffice');
+
+    expect($restrictPosition)->not->toBeFalse()
+        ->and($testPosition)->not->toBeFalse()
+        ->and($restartPosition)->not->toBeFalse()
+        ->and($servicesPosition)->not->toBeFalse()
+        ->and($restrictPosition)->toBeLessThan($testPosition)
+        ->and($testPosition)->toBeLessThan($restartPosition)
+        ->and($restartPosition)->toBeLessThan($servicesPosition);
+});
+
 it('enables JWT for an existing Ubuntu configuration', function () {
     $configFile = tempnam(sys_get_temp_dir(), 'jin-onlyoffice-');
     file_put_contents($configFile, '{"services":{"CoAuthoring":{}}}');

@@ -1998,6 +1998,11 @@ configure_ubuntu_onlyoffice_deployment() {
     configure_ubuntu_max_download_bytes "$local_json"
     restrict_ubuntu_onlyoffice_listener
     sudo nginx -t
+    # A graceful reload cannot narrow an existing wildcard 8081 listener because
+    # the old workers retain that socket. Restart Nginx to release it first.
+    sudo systemctl restart nginx
+    sudo systemctl is-active --quiet nginx \
+        || die "Nginx did not restart after restricting ONLYOFFICE to loopback"
     restart_ubuntu_onlyoffice
     wait_for_document_server "http://127.0.0.1:${ONLYOFFICE_PORT}" 90 2 \
         || die "ONLYOFFICE readiness failed on 127.0.0.1:${ONLYOFFICE_PORT}"

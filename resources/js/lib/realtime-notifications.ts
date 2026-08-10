@@ -6,6 +6,9 @@ export type RealtimeNotificationPayload = {
     projectName?: string;
     actorName?: string | null;
     messageTitle?: string | null;
+    chatChannelId?: number | null;
+    chatChannelName?: string | null;
+    chatMessageExcerpt?: string | null;
     todoTitle?: string | null;
     checkInQuestion?: string | null;
     teamName?: string;
@@ -17,7 +20,51 @@ export type RealtimeNotificationToast = {
     description: string;
 };
 
+type RealtimeNotificationPageState<
+    TWorkspaceBar extends { notifications: { id: string }[] },
+> = {
+    currentTeam: { id: number } | null;
+    notificationSummary: { unreadCount: number };
+    workspaceBar: TWorkspaceBar;
+};
+
+type RealtimeNotificationPageUpdate<
+    TWorkspaceBar extends { notifications: { id: string }[] },
+> = {
+    notificationSummary?: { unreadCount: number };
+    workspaceBar?: TWorkspaceBar;
+};
+
 type Translate = (key: string, replacements?: Record<string, string>) => string;
+
+export function removeRealtimeNotificationOptimistically<
+    TWorkspaceBar extends { notifications: { id: string }[] },
+>(
+    state: RealtimeNotificationPageState<TWorkspaceBar>,
+    notification: RealtimeNotificationPayload,
+): RealtimeNotificationPageUpdate<TWorkspaceBar> {
+    if (notification.teamId !== state.currentTeam?.id) {
+        return {};
+    }
+
+    const notifications = state.workspaceBar.notifications.filter(
+        ({ id }) => id !== notification.id,
+    );
+
+    if (notifications.length === state.workspaceBar.notifications.length) {
+        return {};
+    }
+
+    return {
+        notificationSummary: {
+            unreadCount: Math.max(0, state.notificationSummary.unreadCount - 1),
+        },
+        workspaceBar: {
+            ...state.workspaceBar,
+            notifications,
+        },
+    };
+}
 
 export function realtimeNotificationToast(
     notification: RealtimeNotificationPayload,
@@ -54,6 +101,24 @@ export function realtimeNotificationToast(
                 }),
                 description: itemTitle,
             };
+        case 'mention_chat':
+            return {
+                title: translate(':actorName mentioned you in chat', {
+                    actorName,
+                }),
+                description: notification.chatMessageExcerpt || itemTitle,
+            };
+        case 'chat_message': {
+            const channel = notification.chatChannelName ?? itemTitle;
+
+            return {
+                title: translate(':actorName posted in #:channel', {
+                    actorName,
+                    channel: channel.replace(/^#/, ''),
+                }),
+                description: notification.chatMessageExcerpt || projectName,
+            };
+        }
         case 'mention_todo':
             return {
                 title: translate(':actorName mentioned you in a to-do', {

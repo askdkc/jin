@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\ActivityType;
+use App\Events\ProjectActivityRecorded;
 use Database\Factories\ActivityFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -38,13 +39,17 @@ class Activity extends Model
         Model $subject,
         string $label,
     ): self {
-        return $project->activities()->create([
+        $activity = $project->activities()->create([
             'actor_id' => $actor->id,
             'type' => $type,
             'subject_type' => $subject->getMorphClass(),
             'subject_id' => (int) $subject->getKey(),
             'metadata' => ['label' => Str::limit($label, 160)],
         ]);
+
+        ProjectActivityRecorded::dispatch($project->id, $activity->id);
+
+        return $activity;
     }
 
     /** @return BelongsTo<Project, $this> */

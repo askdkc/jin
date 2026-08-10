@@ -3,16 +3,19 @@
 namespace App\Http\Middleware;
 
 use App\Models\BubbleUp;
+use App\Models\ChatMessage;
 use App\Models\DirectMessage;
 use App\Models\Project;
 use App\Models\ScheduleEvent;
 use App\Models\Team;
 use App\Models\Todo;
 use App\Models\User;
+use App\Support\RichText;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Notifications\DatabaseNotification;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Middleware;
 use Throwable;
@@ -292,28 +295,63 @@ class HandleInertiaRequests extends Middleware
     /** @return array<int, array<string, mixed>> */
     private function workspaceNotifications(User $user, Team $team): array
     {
-        return $user->notifications()
+        $notifications = $user->unreadNotifications()
             ->where('data->teamId', $team->id)
             ->whereIn('data->projectId', $this->notificationProjectIds($user, $team))
             ->latest()
             ->limit(10)
-            ->get()
-            ->map(fn (DatabaseNotification $notification): array => [
-                'id' => $notification->id,
-                'type' => $notification->data['type'],
-                'projectId' => $notification->data['projectId'],
-                'projectName' => $notification->data['projectName'],
-                'title' => $notification->data['messageTitle']
-                    ?? $notification->data['todoTitle']
-                    ?? $notification->data['checkInQuestion']
-                    ?? null,
-                'replyable' => isset($notification->data['messageBoardPostId'])
-                    || isset($notification->data['todoId'])
-                    || isset($notification->data['promptId']),
-                'actorName' => $notification->data['actorName'] ?? null,
-                'read' => $notification->read_at !== null,
-                'createdAt' => $notification->created_at?->toISOString(),
-            ])
+            ->get();
+        $chatMessageIds = $notifications
+            ->filter(fn (DatabaseNotification $notification): bool => empty($notification->data['chatMessageExcerpt']))
+            ->map(fn (DatabaseNotification $notification): ?int => isset($notification->data['chatMessageId'])
+                    ? (int) $notification->data['chatMessageId']
+                    : null)
+            ->filter()
+            ->values();
+        $chatMessageExcerpts = $chatMessageIds->isEmpty()
+            ? collect()
+            : ChatMessage::query()
+                ->whereKey($chatMessageIds)
+                ->get(['id', 'body'])
+                ->mapWithKeys(fn (ChatMessage $message): array => [
+                    $message->id => Str::limit(RichText::plainText($message->body), 120),
+                ]);
+
+        return $notifications
+            ->map(function (DatabaseNotification $notification) use ($chatMessageExcerpts): array {
+                $messageTitle = $notification->data['messageTitle'] ?? null;
+                $chatMessageId = isset($notification->data['chatMessageId'])
+                    ? (int) $notification->data['chatMessageId']
+                    : null;
+                $chatChannelName = $notification->data['chatChannelName']
+                    ?? (in_array($notification->data['type'], ['mention_chat', 'chat_message'], true)
+                        && is_string($messageTitle)
+                            ? Str::after($messageTitle, '#')
+                            : null);
+
+                return [
+                    'id' => $notification->id,
+                    'type' => $notification->data['type'],
+                    'projectId' => $notification->data['projectId'],
+                    'projectName' => $notification->data['projectName'],
+                    'title' => $messageTitle
+                        ?? $notification->data['todoTitle']
+                        ?? $notification->data['checkInQuestion']
+                        ?? null,
+                    'messageTitle' => $messageTitle,
+                    'todoTitle' => $notification->data['todoTitle'] ?? null,
+                    'checkInQuestion' => $notification->data['checkInQuestion'] ?? null,
+                    'chatChannelName' => $chatChannelName,
+                    'chatMessageExcerpt' => $notification->data['chatMessageExcerpt']
+                        ?? ($chatMessageId !== null ? $chatMessageExcerpts->get($chatMessageId) : null),
+                    'replyable' => isset($notification->data['messageBoardPostId'])
+                        || isset($notification->data['todoId'])
+                        || isset($notification->data['promptId']),
+                    'actorName' => $notification->data['actorName'] ?? null,
+                    'read' => $notification->read_at !== null,
+                    'createdAt' => $notification->created_at?->toISOString(),
+                ];
+            })
             ->all();
     }
 

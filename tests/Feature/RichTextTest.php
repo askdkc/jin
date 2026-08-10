@@ -49,6 +49,12 @@ it('keeps a relative image thumbnail but strips a remote one', function () {
     expect($withRemoteImage)->not->toContain('evil.example');
 });
 
+it('keeps semantic project mention links', function () {
+    expect(RichText::sanitize('<p><a href="/mentions/42">@田中太郎</a></p>'))
+        ->toContain('href="/mentions/42"')
+        ->toContain('&#64;田中太郎');
+});
+
 it('does not treat an image-only body as blank', function () {
     expect(RichText::sanitize('<p><img src="/projects/1/files/2/preview" alt="cat.png"></p>'))
         ->not->toBe('');
@@ -102,7 +108,7 @@ it('sanitizes message HTML before validation and storage', function () {
         ->assertSessionHasErrors('body');
 });
 
-it('supports visible inline attachment uploads in every project rich text editor', function () {
+it('supports visible inline attachment uploads in every rich text editor', function () {
     $editor = file_get_contents(resource_path('js/components/RichTextEditor.svelte'));
 
     expect($editor)
@@ -126,28 +132,28 @@ it('supports visible inline attachment uploads in every project rich text editor
     $missingUploadUrls = [];
     $nonSelfClosingEditors = [];
     $editorCount = 0;
-    $projectPages = new RecursiveIteratorIterator(
-        new RecursiveDirectoryIterator(resource_path('js/pages/projects')),
+    $svelteSources = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator(resource_path('js')),
     );
 
-    foreach ($projectPages as $page) {
-        if (! $page->isFile() || $page->getExtension() !== 'svelte') {
+    foreach ($svelteSources as $sourceFile) {
+        if (! $sourceFile->isFile() || $sourceFile->getExtension() !== 'svelte') {
             continue;
         }
 
-        $source = file_get_contents($page->getPathname());
+        $source = file_get_contents($sourceFile->getPathname());
         preg_match_all('/<RichTextEditor\b/', $source, $editors, PREG_OFFSET_CAPTURE);
 
         foreach ($editors[0] as [$start, $offset]) {
             $editorCount++;
-            $tagEnd = strpos($source, '>', $offset);
+            $tagEnd = strpos($source, '/>', $offset);
             $component = $tagEnd === false
                 ? substr($source, $offset)
-                : substr($source, $offset, $tagEnd - $offset + 1);
-            $relativePath = str_replace(base_path().'/', '', $page->getPathname());
+                : substr($source, $offset, $tagEnd - $offset + 2);
+            $relativePath = str_replace(base_path().'/', '', $sourceFile->getPathname());
             $line = substr_count(substr($source, 0, $offset), "\n") + 1;
 
-            if ($tagEnd === false || ! str_ends_with(rtrim($component), '/>')) {
+            if ($tagEnd === false) {
                 $nonSelfClosingEditors[] = "{$relativePath}:{$line}";
             }
 
@@ -169,6 +175,22 @@ it('supports visible inline attachment uploads in every project rich text editor
         ->and($translations['Insert file'] ?? null)->toBe('ファイルを挿入')
         ->and($translations['Attachment upload failed. Please try again.'] ?? null)
         ->toBe('添付ファイルのアップロードに失敗しました。もう一度お試しください。');
+});
+
+it('keeps dropped attachments inside the shared editor until their upload finishes', function () {
+    $editor = file_get_contents(resource_path('js/components/RichTextEditor.svelte'));
+
+    expect($editor)
+        ->toContain("defaultValue={value ?? ''}")
+        ->not->toContain("value={value ?? ''}")
+        ->toContain('ondrop={stopEditorDropPropagation}')
+        ->toContain('event.stopPropagation();')
+        ->toMatch('/const deferSubmitDuringAttachmentUpload = \(\s*event: SubmitEvent,?\s*\): void =>/s')
+        ->toContain('event.stopImmediatePropagation();')
+        ->toContain('queuedFormSubmission = true;')
+        ->toMatch("/form\?\.addEventListener\(\s*'submit',\s*deferSubmitDuringAttachmentUpload,\s*true,?\s*\)/s")
+        ->toMatch("/form\?\.removeEventListener\(\s*'submit',\s*deferSubmitDuringAttachmentUpload,\s*true,?\s*\)/s")
+        ->toContain('queueMicrotask(() => ownerForm?.requestSubmit());');
 });
 
 it('expands the message comment editor only when requested', function () {

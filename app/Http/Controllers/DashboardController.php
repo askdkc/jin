@@ -150,7 +150,7 @@ class DashboardController extends Controller
                     )
                     ->whereNull('archived_at'))
                 ->latest('id')
-                ->limit(5)
+                ->limit(30)
                 ->get()
                 ->map(fn (Activity $activity): array => [
                     'id' => $activity->id,

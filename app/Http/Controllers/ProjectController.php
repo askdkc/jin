@@ -140,12 +140,13 @@ class ProjectController extends Controller
     {
         Gate::authorize('view', $project);
 
-        $project->load(['creator:id,name', 'members:id,name,email', 'folder:id,name', 'lead:id,name']);
+        $project->load(['creator:id,name', 'members:id,name,email,avatar_path', 'folder:id,name', 'lead:id,name']);
         $project->setAttribute('is_favorite', $project->favoritedBy()->whereKey($request->user()->id)->exists());
 
         return Inertia::render('projects/Show', [
             'project' => $this->projectDetails($project),
-            'home' => $this->projectHome($project, $currentTeam),
+            'home' => fn (): array => $this->projectHome($project, $currentTeam),
+            'activity' => fn (): array => $this->projectActivity($project),
             'permissions' => [
                 'canUpdateProject' => Gate::allows('update', $project),
                 'canArchiveProject' => Gate::allows('archive', $project),
@@ -252,7 +253,7 @@ class ProjectController extends Controller
      */
     private function projectDetails(Project $project): array
     {
-        $project->loadMissing(['creator:id,name', 'members:id,name,email', 'folder:id,name', 'lead:id,name']);
+        $project->loadMissing(['creator:id,name', 'members:id,name,email,avatar_path', 'folder:id,name', 'lead:id,name']);
 
         return [
             ...$this->projectSummary($project),
@@ -260,6 +261,7 @@ class ProjectController extends Controller
                 'id' => $member->id,
                 'name' => $member->name,
                 'email' => $member->email,
+                'avatar' => $member->avatar,
             ]),
         ];
     }
@@ -280,7 +282,7 @@ class ProjectController extends Controller
             )
             ->first();
         $recentChatMessages = $project->chatMessages()
-            ->with('user:id,name')
+            ->with('user:id,name,avatar_path')
             ->latest('id')
             ->limit(5)
             ->get()
@@ -377,7 +379,7 @@ class ProjectController extends Controller
             'messages' => [
                 'count' => $project->messageBoardPosts()->count(),
                 'latest' => $project->messageBoardPosts()
-                    ->with('user:id,name')
+                    ->with('user:id,name,avatar_path')
                     ->latest('published_at')
                     ->limit(3)
                     ->get()
@@ -386,6 +388,7 @@ class ProjectController extends Controller
                         'title' => $post->title,
                         'body' => Str::limit(RichText::plainText($post->body), 180),
                         'authorName' => $post->user?->name,
+                        'authorAvatar' => $post->user?->avatar,
                         'publishedAt' => $post->published_at->toISOString(),
                     ]),
             ],
@@ -446,45 +449,19 @@ class ProjectController extends Controller
                     ->take(6)
                     ->values(),
             ],
-            'activity' => [
-                'activeLastSevenDays' => $project->activities()
-                    ->where('created_at', '>=', now()->subDays(7))
-                    ->whereNotNull('actor_id')
-                    ->distinct('actor_id')
-                    ->count('actor_id'),
-                'latest' => $project->activities()
-                    ->with('actor:id,name')
-                    ->latest('id')
-                    ->limit(5)
-                    ->get()
-                    ->map(fn (Activity $activity): array => [
-                        'id' => $activity->id,
-                        'type' => $activity->type->value,
-                        'target' => $activity->type->target(),
-                        'actorId' => $activity->actor_id,
-                        'actorName' => $activity->actor?->name,
-                        'subjectLabel' => $activity->metadata['label'],
-                        'subjectId' => ($activity->metadata['subjectDeleted'] ?? false)
-                            ? null
-                            : $activity->subject_id,
-                        'createdAt' => $activity->created_at?->toISOString(),
-                        'project' => [
-                            'id' => $project->id,
-                            'name' => $project->name,
-                        ],
-                    ]),
-            ],
             'chat' => [
                 'recent' => $recentChatMessages->map(fn (ChatMessage $message): array => [
                     'id' => $message->id,
-                    'body' => Str::limit($message->body, 240),
+                    'body' => Str::limit(RichText::plainText($message->body), 240),
                     'authorName' => $message->user?->name,
+                    'authorAvatar' => $message->user?->avatar,
                     'createdAt' => $message->created_at?->toISOString(),
                 ]),
                 'latest' => $latestChatMessage instanceof ChatMessage ? [
                     'id' => $latestChatMessage->id,
-                    'body' => $latestChatMessage->body,
+                    'body' => RichText::plainText($latestChatMessage->body),
                     'authorName' => $latestChatMessage->user?->name,
+                    'authorAvatar' => $latestChatMessage->user?->avatar,
                     'createdAt' => $latestChatMessage->created_at?->toISOString(),
                 ] : null,
             ],
@@ -503,6 +480,40 @@ class ProjectController extends Controller
                         'userName' => $entry->user->name,
                     ]),
             ],
+        ];
+    }
+
+    /** @return array{activeLastSevenDays: int, latest: mixed} */
+    private function projectActivity(Project $project): array
+    {
+        return [
+            'activeLastSevenDays' => $project->activities()
+                ->where('created_at', '>=', now()->subDays(7))
+                ->whereNotNull('actor_id')
+                ->distinct('actor_id')
+                ->count('actor_id'),
+            'latest' => $project->activities()
+                ->with('actor:id,name,avatar_path')
+                ->latest('id')
+                ->limit(5)
+                ->get()
+                ->map(fn (Activity $activity): array => [
+                    'id' => $activity->id,
+                    'type' => $activity->type->value,
+                    'target' => $activity->type->target(),
+                    'actorId' => $activity->actor_id,
+                    'actorName' => $activity->actor?->name,
+                    'actorAvatar' => $activity->actor?->avatar,
+                    'subjectLabel' => $activity->metadata['label'],
+                    'subjectId' => ($activity->metadata['subjectDeleted'] ?? false)
+                        ? null
+                        : $activity->subject_id,
+                    'createdAt' => $activity->created_at?->toISOString(),
+                    'project' => [
+                        'id' => $project->id,
+                        'name' => $project->name,
+                    ],
+                ]),
         ];
     }
 
@@ -537,13 +548,13 @@ class ProjectController extends Controller
     /**
      * Get selectable members for a project.
      *
-     * @return array<int, array{id: int, name: string, email: string, role: string, roleLabel: string}>
+     * @return array<int, array{id: int, name: string, email: string, avatar: string|null, role: string, roleLabel: string}>
      */
     private function teamMembers(Team $team): array
     {
         return $team->members()
             ->orderBy('name')
-            ->get(['users.id', 'users.name', 'users.email'])
+            ->get(['users.id', 'users.name', 'users.email', 'users.avatar_path'])
             ->map(function (User $member): array {
                 /** @var Membership $membership */
                 $membership = $member->getRelation('pivot');
@@ -552,6 +563,7 @@ class ProjectController extends Controller
                     'id' => $member->id,
                     'name' => $member->name,
                     'email' => $member->email,
+                    'avatar' => $member->avatar,
                     'role' => $membership->role->value,
                     'roleLabel' => $membership->role->label(),
                 ];

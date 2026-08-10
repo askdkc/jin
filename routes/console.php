@@ -207,7 +207,7 @@ Schedule::command('todos:dispatch-pending-reminders')
     ->description('Queue pending to-do reminder deliveries');
 
 Schedule::command('check-ins:dispatch')
-    ->everyFiveMinutes()
+    ->everyMinute()
     ->withoutOverlapping()
     ->description('Create due check-in prompts and queue notifications');
 

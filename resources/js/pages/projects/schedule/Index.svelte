@@ -24,9 +24,9 @@
 </script>
 
 <script lang="ts">
-    import { Form, Link } from '@inertiajs/svelte';
+    import { Form, InfiniteScroll, Link, useHttp } from '@inertiajs/svelte';
     import Video from 'lucide-svelte/icons/video';
-    import { onMount } from 'svelte';
+    import { onMount, tick } from 'svelte';
     import AttachmentController from '@/actions/App/Http/Controllers/AttachmentController';
     import AppHead from '@/components/AppHead.svelte';
     import InputError from '@/components/InputError.svelte';
@@ -54,6 +54,21 @@
     import type { ProjectScheduleEvent, ScheduleGridDay } from '@/types';
 
     type ScheduleView = 'day' | 'week' | 'month' | 'gantt';
+    type CalendarPeriod = {
+        key: string;
+        startDate: string;
+        endDate: string;
+        weeks: ScheduleGridDay[][];
+    };
+    type CalendarPeriodPaginator = {
+        data: CalendarPeriod[];
+    };
+    type GanttLoadDirection = 'previous' | 'next';
+    type GanttWindowResponse = {
+        rangeStart: string;
+        rangeEnd: string;
+        events: ProjectScheduleEvent[];
+    };
 
     let {
         currentTeam,
@@ -68,7 +83,7 @@
         ganttUsesProjectDates,
         month,
         events,
-        weeks,
+        calendarPeriods,
     }: {
         currentTeam: Team;
         project: ProjectTool;
@@ -82,13 +97,45 @@
         ganttUsesProjectDates: boolean;
         month: string;
         events: ProjectScheduleEvent[];
-        weeks: ScheduleGridDay[][] | null;
+        calendarPeriods: CalendarPeriodPaginator | null;
     } = $props();
 
     const routeArguments = $derived([currentTeam.slug, project.id] as [
         string,
         number,
     ]);
+    const ganttWindowHttp = useHttp<Record<string, never>, GanttWindowResponse>(
+        {},
+    );
+    const ganttScrollBuffer = 240;
+    const initialGanttRangeStart = (): string => rangeStart;
+    const initialGanttRangeEnd = (): string => rangeEnd;
+    const initialGanttEvents = (): ProjectScheduleEvent[] => [...events];
+    let ganttRangeStart = $state(initialGanttRangeStart());
+    let ganttRangeEnd = $state(initialGanttRangeEnd());
+    let ganttEvents = $state<ProjectScheduleEvent[]>(initialGanttEvents());
+    let ganttSourceRangeKey = $state('');
+    let ganttScrollNode = $state<HTMLDivElement>();
+    let ganttLoadingDirection = $state<GanttLoadDirection | null>(null);
+    let ganttFailedDirection = $state<GanttLoadDirection | null>(null);
+
+    $effect(() => {
+        if (view !== 'gantt') {
+            return;
+        }
+
+        const nextRangeKey = `${rangeStart}:${rangeEnd}`;
+
+        if (nextRangeKey === ganttSourceRangeKey) {
+            return;
+        }
+
+        ganttSourceRangeKey = nextRangeKey;
+        ganttRangeStart = rangeStart;
+        ganttRangeEnd = rangeEnd;
+        ganttEvents = [...events];
+        ganttFailedDirection = null;
+    });
     const weekdayLabels = [
         t('Sun'),
         t('Mon'),
@@ -160,7 +207,7 @@
         view === 'day' ? [{ date, events: eventsForDate(date) }] : weekDays,
     );
     const ganttDayCount = $derived(
-        epochDay(rangeEnd) - epochDay(rangeStart) + 1,
+        epochDay(ganttRangeEnd) - epochDay(ganttRangeStart) + 1,
     );
     const startOfNextMonth = (value: string): string => {
         const [year, monthNumber] = value.split('-').map(Number);
@@ -172,33 +219,31 @@
     const ganttTicks = $derived.by(() => {
         if (ganttDayCount <= 14) {
             return Array.from({ length: ganttDayCount }, (_, index) =>
-                addDays(rangeStart, index),
+                addDays(ganttRangeStart, index),
             );
         }
 
         if (ganttDayCount <= 120) {
             return Array.from(
                 { length: Math.ceil(ganttDayCount / 7) },
-                (_, index) => addDays(rangeStart, index * 7),
+                (_, index) => addDays(ganttRangeStart, index * 7),
             );
         }
 
-        const ticks = [rangeStart];
-        let cursor = startOfNextMonth(rangeStart);
+        const ticks = [ganttRangeStart];
+        let cursor = startOfNextMonth(ganttRangeStart);
 
-        while (cursor <= rangeEnd) {
+        while (cursor <= ganttRangeEnd) {
             ticks.push(cursor);
             cursor = startOfNextMonth(cursor);
         }
 
         return ticks;
     });
-    const ganttMinWidthRem = $derived(
-        Math.max(48, Math.min(120, ganttDayCount)),
-    );
+    const ganttMinWidthRem = $derived(Math.max(48, ganttDayCount * 1.5));
     const ganttGridStepDays = $derived(ganttDayCount > 180 ? 7 : 1);
     const ganttTickOffset = (value: string): number =>
-        ((epochDay(value) - epochDay(rangeStart)) / ganttDayCount) * 100;
+        ((epochDay(value) - epochDay(ganttRangeStart)) / ganttDayCount) * 100;
     const ganttMonthFormatter = new Intl.DateTimeFormat(currentLocale(), {
         year: 'numeric',
         month: 'short',
@@ -208,20 +253,21 @@
             ? ganttMonthFormatter.format(new Date(`${value}T00:00:00`))
             : formatShortDate(value);
     const todayInGanttRange = $derived(
-        today >= rangeStart && today <= rangeEnd,
+        today >= ganttRangeStart && today <= ganttRangeEnd,
     );
     const todayOffset = $derived(
-        ((epochDay(today) - epochDay(rangeStart) + 0.5) / ganttDayCount) * 100,
+        ((epochDay(today) - epochDay(ganttRangeStart) + 0.5) / ganttDayCount) *
+            100,
     );
     const ganttGridColumn = (startsAt: string, endsAt: string): string => {
         const firstDay = Math.max(
             0,
-            epochDay(startsAt.slice(0, 10)) - epochDay(rangeStart),
+            epochDay(startsAt.slice(0, 10)) - epochDay(ganttRangeStart),
         );
         const lastDay = Math.min(
             ganttDayCount - 1,
             epochDay(scheduleEventLastDisplayDate(endsAt)) -
-                epochDay(rangeStart),
+                epochDay(ganttRangeStart),
         );
 
         return `${firstDay + 1} / ${lastDay + 2}`;
@@ -411,6 +457,136 @@
         };
     };
 
+    const mergeGanttEvents = (incomingEvents: ProjectScheduleEvent[]): void => {
+        const mergedEvents = [...ganttEvents];
+
+        incomingEvents.forEach((event) => {
+            const existingIndex = mergedEvents.findIndex(
+                (existingEvent) => existingEvent.id === event.id,
+            );
+
+            if (existingIndex >= 0) {
+                mergedEvents[existingIndex] = event;
+            } else {
+                mergedEvents.push(event);
+            }
+        });
+        ganttEvents = mergedEvents.sort((first, second) =>
+            first.startsAt.localeCompare(second.startsAt),
+        );
+    };
+    const loadGanttWindow = async (
+        direction: GanttLoadDirection,
+    ): Promise<void> => {
+        const node = ganttScrollNode;
+
+        if (view !== 'gantt' || ganttLoadingDirection !== null || !node) {
+            return;
+        }
+
+        const previousScrollWidth = node.scrollWidth;
+        const boundary =
+            direction === 'previous' ? ganttRangeStart : ganttRangeEnd;
+        ganttLoadingDirection = direction;
+        ganttFailedDirection = null;
+
+        try {
+            const response = await ganttWindowHttp.submit(
+                ScheduleEventController.ganttWindow(routeArguments, {
+                    query: { direction, boundary },
+                }),
+            );
+
+            mergeGanttEvents(response.events);
+
+            if (direction === 'previous') {
+                ganttRangeStart = response.rangeStart;
+            } else {
+                ganttRangeEnd = response.rangeEnd;
+            }
+
+            await tick();
+
+            if (direction === 'previous' && ganttScrollNode === node) {
+                node.scrollLeft += node.scrollWidth - previousScrollWidth;
+            }
+        } catch {
+            ganttFailedDirection = direction;
+        } finally {
+            ganttLoadingDirection = null;
+        }
+    };
+    const handleGanttScroll = (event: Event): void => {
+        const node = event.currentTarget as HTMLDivElement;
+        const remainingScroll =
+            node.scrollWidth - node.clientWidth - node.scrollLeft;
+
+        if (node.scrollLeft <= ganttScrollBuffer) {
+            void loadGanttWindow('previous');
+        } else if (remainingScroll <= ganttScrollBuffer) {
+            void loadGanttWindow('next');
+        }
+    };
+    const initializeGanttScroll = (node: HTMLDivElement) => {
+        ganttScrollNode = node;
+
+        requestAnimationFrame(() => {
+            const focusDate =
+                today >= ganttRangeStart && today <= ganttRangeEnd
+                    ? today
+                    : date;
+            const focusDay = Math.min(
+                epochDay(ganttRangeEnd),
+                Math.max(epochDay(ganttRangeStart), epochDay(focusDate)),
+            );
+            const focusOffset =
+                (focusDay - epochDay(ganttRangeStart) + 0.5) / ganttDayCount;
+
+            node.scrollLeft =
+                node.scrollWidth * focusOffset - node.clientWidth / 2;
+
+            if (node.scrollWidth <= node.clientWidth) {
+                void loadGanttWindow('next');
+            }
+        });
+
+        return {
+            destroy(): void {
+                if (ganttScrollNode === node) {
+                    ganttScrollNode = undefined;
+                }
+            },
+        };
+    };
+    const observeGanttEdge = (
+        node: HTMLElement,
+        direction: GanttLoadDirection,
+    ) => {
+        let activeDirection = direction;
+        const observer = new IntersectionObserver(
+            (entries) => {
+                if (entries.some((entry) => entry.isIntersecting)) {
+                    void loadGanttWindow(activeDirection);
+                }
+            },
+            {
+                root: ganttScrollNode,
+                rootMargin: `0px ${ganttScrollBuffer}px`,
+            },
+        );
+
+        observer.observe(node);
+
+        return {
+            update(nextDirection: GanttLoadDirection): void {
+                activeDirection = nextDirection;
+            },
+            destroy(): void {
+                observer.disconnect();
+            },
+        };
+    };
+
     onMount(() => {
         const timer = window.setInterval(() => {
             currentNow = new Date();
@@ -425,23 +601,29 @@
     const periodTitle = $derived(
         view === 'day'
             ? formatLongDate(date)
-            : view === 'week' || view === 'gantt'
+            : view === 'week'
               ? `${formatShortDate(rangeStart)} – ${formatShortDate(rangeEnd)}`
-              : monthTitle,
+              : view === 'gantt'
+                ? `${formatShortDate(ganttRangeStart)} – ${formatShortDate(ganttRangeEnd)}`
+                : monthTitle,
     );
 </script>
 
 <AppHead title={currentTeam.menuNames.calendar} />
 
-<div class="mx-auto w-full max-w-5xl space-y-6 p-4 sm:p-6">
-    <div class="space-y-4">
+<div
+    class="mx-auto w-full max-w-5xl space-y-3 px-4 pt-2 pb-4 sm:px-6 sm:pt-3 sm:pb-6"
+>
+    <div class="space-y-2">
         <div>
             <h1 class="text-2xl font-semibold tracking-tight">
                 {currentTeam.menuNames.calendar}
             </h1>
             <p class="text-sm text-muted-foreground">{project.name}</p>
         </div>
-        <div class="flex flex-wrap items-center justify-between gap-2">
+        <div
+            class="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-center"
+        >
             <div class="flex flex-wrap items-center gap-2">
                 <div class="flex overflow-hidden rounded-md border">
                     {#each views as scheduleView, index (scheduleView.value)}
@@ -723,8 +905,15 @@
                     </DialogContent>
                 </Dialog>
             </div>
+            <h2
+                class="text-center text-base font-bold lg:col-start-2 lg:row-start-1 lg:justify-self-center sm:text-lg"
+            >
+                {periodTitle}
+            </h2>
             {#if view !== 'gantt' || !ganttUsesProjectDates}
-                <div class="flex flex-wrap items-center gap-2">
+                <div
+                    class="flex flex-wrap items-center gap-2 lg:col-start-3 lg:row-start-1 lg:justify-self-end"
+                >
                     <Link
                         href={viewHref(view, previousDate)}
                         aria-label={t('Previous')}
@@ -765,14 +954,16 @@
                 </div>
             {/if}
         </div>
-        <h2 class="text-center text-base font-bold sm:text-lg">
-            {periodTitle}
-        </h2>
     </div>
 
-    {#if view === 'month' && weeks}
-        <div class="overflow-hidden rounded-lg border">
-            <div class="grid grid-cols-7 border-b bg-muted/40">
+    {#if view === 'month' && calendarPeriods}
+        <div
+            class="min-h-[38rem] w-full rounded-lg border sm:min-h-[50rem]"
+            data-test="schedule-view-frame"
+        >
+            <div
+                class="sticky top-12 z-30 grid grid-cols-7 border-b bg-background/95 shadow-sm backdrop-blur-sm"
+            >
                 {#each weekdayLabels as label (label)}
                     <div
                         class="p-2 text-center text-xs font-medium text-muted-foreground"
@@ -781,88 +972,131 @@
                     </div>
                 {/each}
             </div>
-            {#each weeks as week, weekIndex (weekIndex)}
-                <div class="grid grid-cols-7 {weekIndex > 0 ? 'border-t' : ''}">
-                    {#each week as day (day.date)}
-                        <div
-                            class="relative min-h-24 border-l p-1.5 first:border-l-0 sm:min-h-32 sm:p-2 {day.inCurrentMonth
-                                ? ''
-                                : 'bg-muted/20 text-muted-foreground'}"
-                        >
-                            <button
-                                type="button"
-                                onclick={() => openNewEventForDate(day.date)}
-                                class="absolute inset-0 z-0 cursor-pointer text-left outline-none hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset"
-                                aria-label={`${formatLongDate(day.date)} ${t('New event')}`}
-                            ></button>
-                            <p
-                                class="pointer-events-none relative z-10 text-xs"
-                            >
-                                {#if day.monthLabel}<span
-                                        class="mr-1 rounded bg-muted px-1 py-0.5 font-medium"
-                                        >{day.monthLabel}</span
-                                    >{/if}<span
-                                    class={day.isToday
-                                        ? 'rounded-full bg-primary px-1.5 py-0.5 font-semibold text-primary-foreground'
-                                        : ''}>{day.day}</span
-                                >
-                            </p>
+            <InfiniteScroll
+                data="calendarPeriods"
+                buffer={800}
+                preserveUrl
+                onlyNext
+            >
+                {#each calendarPeriods.data as period, periodIndex (period.key)}
+                    <section
+                        aria-label={`${formatShortDate(period.startDate)} – ${formatShortDate(period.endDate)}`}
+                    >
+                        {#each period.weeks as week, weekIndex (`${period.key}-${weekIndex}`)}
                             <div
-                                class="pointer-events-none relative z-10 mt-1 space-y-1"
+                                class="grid grid-cols-7 {periodIndex > 0 ||
+                                weekIndex > 0
+                                    ? 'border-t'
+                                    : ''}"
                             >
-                                {#each day.events.slice(0, 3) as event (event.id)}
-                                    {@const segment = scheduleEventDaySegment(
-                                        event.startsAt,
-                                        event.endsAt,
-                                        day.date,
-                                    )}
-                                    <Link
-                                        href={ScheduleEventController.show([
-                                            currentTeam.slug,
-                                            project.id,
-                                            event.id,
-                                        ])}
-                                        class="pointer-events-auto block w-full truncate rounded bg-primary/10 px-1 py-0.5 text-left text-xs hover:bg-primary/20"
-                                        title={event.title}
+                                {#each week as day (day.date)}
+                                    <div
+                                        class="relative min-h-24 border-l p-1.5 first:border-l-0 sm:min-h-32 sm:p-2 {day.inCurrentMonth
+                                            ? ''
+                                            : 'bg-muted/20 text-muted-foreground'}"
                                     >
-                                        <span class="font-semibold"
-                                            >{event.title}</span
+                                        <button
+                                            type="button"
+                                            onclick={() =>
+                                                openNewEventForDate(day.date)}
+                                            class="absolute inset-0 z-0 cursor-pointer text-left outline-none hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset"
+                                            aria-label={`${formatLongDate(day.date)} ${t('New event')}`}
+                                        ></button>
+                                        <p
+                                            class="pointer-events-none relative z-10 text-xs"
                                         >
-                                        {#if !event.allDay && segment?.startsOnDate}<br
-                                            /><span
-                                                class="text-muted-foreground"
-                                                >{new Intl.DateTimeFormat(
-                                                    currentLocale(),
-                                                    { timeStyle: 'short' },
-                                                ).format(
-                                                    new Date(event.startsAt),
-                                                )}</span
-                                            >{/if}
-                                    </Link>
+                                            <span
+                                                class={day.isToday
+                                                    ? 'rounded-full bg-primary px-1.5 py-0.5 font-semibold text-primary-foreground'
+                                                    : day.monthLabel
+                                                      ? 'rounded bg-muted px-1 py-0.5 font-medium'
+                                                      : ''}
+                                            >
+                                                {day.monthLabel ?? day.day}
+                                            </span>
+                                        </p>
+                                        <div
+                                            class="pointer-events-none relative z-10 mt-1 space-y-1"
+                                        >
+                                            {#each day.events.slice(0, 3) as event (event.id)}
+                                                {@const segment =
+                                                    scheduleEventDaySegment(
+                                                        event.startsAt,
+                                                        event.endsAt,
+                                                        day.date,
+                                                    )}
+                                                <Link
+                                                    href={ScheduleEventController.show(
+                                                        [
+                                                            currentTeam.slug,
+                                                            project.id,
+                                                            event.id,
+                                                        ],
+                                                    )}
+                                                    class="pointer-events-auto block w-full truncate rounded bg-primary/10 px-1 py-0.5 text-left text-xs hover:bg-primary/20"
+                                                    title={event.title}
+                                                >
+                                                    <span class="font-semibold"
+                                                        >{event.title}</span
+                                                    >
+                                                    {#if !event.allDay && segment?.startsOnDate}<br
+                                                        /><span
+                                                            class="text-muted-foreground"
+                                                            >{new Intl.DateTimeFormat(
+                                                                currentLocale(),
+                                                                {
+                                                                    timeStyle:
+                                                                        'short',
+                                                                },
+                                                            ).format(
+                                                                new Date(
+                                                                    event.startsAt,
+                                                                ),
+                                                            )}</span
+                                                        >{/if}
+                                                </Link>
+                                            {/each}
+                                            {#if day.events.length > 3}
+                                                <Link
+                                                    href={viewHref(
+                                                        'day',
+                                                        day.date,
+                                                    )}
+                                                    class="pointer-events-auto block text-xs text-muted-foreground hover:underline"
+                                                >
+                                                    {t('+:count more', {
+                                                        count: String(
+                                                            day.events.length -
+                                                                3,
+                                                        ),
+                                                    })}
+                                                </Link>
+                                            {/if}
+                                        </div>
+                                    </div>
                                 {/each}
-                                {#if day.events.length > 3}
-                                    <Link
-                                        href={viewHref('day', day.date)}
-                                        class="pointer-events-auto block text-xs text-muted-foreground hover:underline"
-                                    >
-                                        {t('+:count more', {
-                                            count: String(
-                                                day.events.length - 3,
-                                            ),
-                                        })}
-                                    </Link>
-                                {/if}
                             </div>
-                        </div>
-                    {/each}
-                </div>
-            {/each}
+                        {/each}
+                    </section>
+                {/each}
+                {#snippet loading()}
+                    <div
+                        class="flex items-center justify-center border-t px-4 py-6 text-sm text-muted-foreground"
+                        role="status"
+                    >
+                        <span class="animate-pulse">{t('Loading')}…</span>
+                    </div>
+                {/snippet}
+            </InfiniteScroll>
         </div>
     {:else if view === 'day' || view === 'week'}
-        <div class="overflow-hidden rounded-lg border">
+        <div
+            class="h-[38rem] w-full overflow-hidden rounded-lg border sm:h-[50rem]"
+            data-test="schedule-view-frame"
+        >
             <div
                 use:scrollTimelineToCurrentTime={`${view}:${rangeStart}:${rangeEnd}`}
-                class="h-[calc(100vh-18rem)] min-h-96 max-h-[42rem] overflow-auto overscroll-contain"
+                class="h-full overflow-auto overscroll-contain"
             >
                 <div class={view === 'week' ? 'min-w-4xl' : 'min-w-md'}>
                     <div
@@ -996,84 +1230,145 @@
             </div>
         </div>
     {:else if view === 'gantt'}
-        <div class="overflow-x-auto overscroll-x-contain rounded-lg border">
-            <div style={`min-width: ${ganttMinWidthRem}rem;`}>
+        <div
+            class="relative h-[38rem] w-full overflow-hidden rounded-lg border bg-background sm:h-[50rem]"
+            data-test="schedule-view-frame"
+            aria-label={t('Gantt')}
+        >
+            <div
+                use:initializeGanttScroll
+                onscroll={handleGanttScroll}
+                class="h-full w-full overflow-x-auto overscroll-x-contain"
+                data-test="schedule-gantt-scroll"
+                aria-busy={ganttLoadingDirection !== null}
+            >
                 <div
-                    class="relative h-11 overflow-hidden border-b bg-muted/40 text-xs font-semibold text-muted-foreground"
+                    class="relative flex min-h-full flex-1 flex-col"
+                    style={`min-width: ${ganttMinWidthRem}rem;`}
                 >
-                    {#each ganttTicks as tick (tick)}
-                        <time
-                            datetime={tick}
-                            class="absolute inset-y-0 border-l px-2 py-3 whitespace-nowrap"
-                            style={`left: ${ganttTickOffset(tick)}%;`}
-                        >
-                            {formatGanttTick(tick)}
-                        </time>
-                    {/each}
-                </div>
-                <div class="relative">
+                    <span
+                        use:observeGanttEdge={'previous'}
+                        class="pointer-events-none absolute inset-y-0 left-0 w-px"
+                        aria-hidden="true"
+                    ></span>
+                    <span
+                        use:observeGanttEdge={'next'}
+                        class="pointer-events-none absolute inset-y-0 right-0 w-px"
+                        aria-hidden="true"
+                    ></span>
                     {#if todayInGanttRange}
                         <div
-                            class="pointer-events-none absolute inset-y-0 z-20 border-l-2 border-primary"
+                            class="pointer-events-none absolute inset-y-0 z-30 border-l-2 border-primary"
                             style={`left: ${todayOffset}%;`}
+                            aria-label={t('Today')}
                         >
-                            <span
-                                class="absolute top-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-primary px-2 py-1 text-xs font-bold text-primary-foreground shadow-sm"
+                            <div
+                                class="absolute -left-px top-1 flex -translate-x-1/2 flex-col items-center gap-1"
                             >
-                                {t('Today')} · {formatShortDate(today)}
-                            </span>
+                                <span
+                                    class="whitespace-nowrap rounded-md border border-primary bg-background px-2 py-0.5 text-xs font-bold text-primary shadow-sm"
+                                >
+                                    {t('Today')}
+                                </span>
+                                <time
+                                    datetime={today}
+                                    class="whitespace-nowrap bg-background px-1 text-sm font-bold text-primary"
+                                >
+                                    {formatShortDate(today)}
+                                </time>
+                            </div>
                         </div>
                     {/if}
                     <div
-                        class={`space-y-2 p-4 ${todayInGanttRange ? 'pt-12' : ''}`}
+                        class="relative h-16 shrink-0 overflow-hidden border-b bg-muted/40 text-xs font-semibold text-muted-foreground"
                     >
-                        {#each events as event (event.id)}
-                            <div
-                                class="relative grid min-h-14 overflow-hidden border-y first:border-t-0 last:border-b-0"
-                                style={`grid-template-columns: repeat(${ganttDayCount}, minmax(0, 1fr));`}
-                            >
-                                <div
-                                    class="pointer-events-none absolute inset-0"
-                                    aria-hidden="true"
+                        {#each ganttTicks as tick (tick)}
+                            {#if tick !== today}
+                                <time
+                                    datetime={tick}
+                                    class="absolute inset-y-0 border-l px-2 pt-10 whitespace-nowrap"
+                                    style={`left: ${ganttTickOffset(tick)}%;`}
                                 >
-                                    {#each ganttTicks as tick (tick)}
-                                        <span
-                                            class="absolute inset-y-0 border-l"
-                                            style={`left: ${ganttTickOffset(tick)}%;`}
-                                        ></span>
-                                    {/each}
-                                </div>
-                                <div
-                                    class="pointer-events-none absolute inset-0 opacity-30"
-                                    style={`background-image: linear-gradient(to right, var(--color-border) 1px, transparent 1px); background-size: calc(100% / ${ganttDayCount} * ${ganttGridStepDays}) 100%;`}
-                                    aria-hidden="true"
-                                ></div>
-                                <Link
-                                    href={ScheduleEventController.show([
-                                        currentTeam.slug,
-                                        project.id,
-                                        event.id,
-                                    ])}
-                                    class="relative z-10 mx-px my-1 flex min-w-0 items-center overflow-visible rounded-lg border bg-primary/10 px-2 py-2 text-left text-sm font-bold shadow-sm transition hover:bg-primary/20"
-                                    style={`grid-column: ${ganttGridColumn(event.startsAt, event.endsAt)};`}
-                                    title={event.title}
-                                >
-                                    <span class="whitespace-nowrap"
-                                        >{event.title}</span
-                                    >
-                                </Link>
-                            </div>
+                                    {formatGanttTick(tick)}
+                                </time>
+                            {/if}
                         {/each}
-                        {#if events.length === 0}
-                            <div
-                                class="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground"
-                            >
-                                {t('No scheduled events in this period')}
-                            </div>
-                        {/if}
+                    </div>
+                    <div class="relative flex-1">
+                        <div
+                            class="pointer-events-none absolute inset-0"
+                            aria-hidden="true"
+                        >
+                            {#each ganttTicks as tick (tick)}
+                                <span
+                                    class="absolute inset-y-0 border-l"
+                                    style={`left: ${ganttTickOffset(tick)}%;`}
+                                ></span>
+                            {/each}
+                        </div>
+                        <div
+                            class="pointer-events-none absolute inset-0 opacity-30"
+                            style={`background-image: linear-gradient(to right, var(--color-border) 1px, transparent 1px); background-size: calc(100% / ${ganttDayCount} * ${ganttGridStepDays}) 100%;`}
+                            aria-hidden="true"
+                        ></div>
+                        <div class="relative z-10 space-y-2 p-4">
+                            {#each ganttEvents as event (event.id)}
+                                <div
+                                    class="relative grid min-h-14 overflow-hidden border-y bg-background/70 first:border-t-0 last:border-b-0"
+                                    style={`grid-template-columns: repeat(${ganttDayCount}, minmax(0, 1fr));`}
+                                >
+                                    <Link
+                                        href={ScheduleEventController.show([
+                                            currentTeam.slug,
+                                            project.id,
+                                            event.id,
+                                        ])}
+                                        class="relative z-10 mx-px my-1 flex min-w-0 items-center overflow-visible rounded-lg border bg-primary/10 px-2 py-2 text-left text-sm font-bold shadow-sm transition hover:bg-primary/20"
+                                        style={`grid-column: ${ganttGridColumn(event.startsAt, event.endsAt)};`}
+                                        title={event.title}
+                                    >
+                                        <span class="whitespace-nowrap"
+                                            >{event.title}</span
+                                        >
+                                    </Link>
+                                </div>
+                            {/each}
+                            {#if ganttEvents.length === 0}
+                                <div
+                                    class="rounded-lg border border-dashed bg-background/70 py-8 text-center text-sm text-muted-foreground"
+                                >
+                                    {t('No scheduled events in this period')}
+                                </div>
+                            {/if}
+                        </div>
                     </div>
                 </div>
             </div>
+            {#if ganttLoadingDirection}
+                <div
+                    class="pointer-events-none absolute top-2 z-40 rounded-md border bg-background/95 px-2 py-1 text-xs font-medium shadow-sm {ganttLoadingDirection ===
+                    'previous'
+                        ? 'left-2'
+                        : 'right-2'}"
+                    role="status"
+                >
+                    <span class="animate-pulse">{t('Loading')}…</span>
+                </div>
+            {:else if ganttFailedDirection}
+                <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    class="absolute top-2 z-40 {ganttFailedDirection ===
+                    'previous'
+                        ? 'left-2'
+                        : 'right-2'}"
+                    onclick={() => loadGanttWindow(ganttFailedDirection!)}
+                >
+                    {t('Something went wrong.')}
+                    {t('Retry')}
+                </Button>
+            {/if}
         </div>
     {/if}
 

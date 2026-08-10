@@ -108,6 +108,7 @@
     const typeLabel = (type: EverythingType): string =>
         ({
             message: t('Message'),
+            chat: t('Chat'),
             todo: currentTeam.menuNames.todos,
             document: t('Document'),
             file: t('File'),
@@ -263,6 +264,12 @@
                                         selected={filters.type === 'message'}
                                     >
                                         {t('Messages')}
+                                    </option>
+                                    <option
+                                        value="chat"
+                                        selected={filters.type === 'chat'}
+                                    >
+                                        {t('Chat')}
                                     </option>
                                     <option
                                         value="todo"
@@ -615,7 +622,7 @@
                                         <span
                                             class="flex size-8 items-center justify-center rounded-full bg-muted text-muted-foreground"
                                         >
-                                            {#if item.type === 'message' || item.type === 'comment'}
+                                            {#if item.type === 'message' || item.type === 'chat' || item.type === 'comment'}
                                                 <MessageSquare
                                                     class="size-4"
                                                     aria-hidden="true"

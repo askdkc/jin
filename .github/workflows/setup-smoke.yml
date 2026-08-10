@@ -172,6 +172,9 @@ jobs:
             instance_first="$(sed -n "s/^ONLYOFFICE_INSTANCE_ID=//p" /var/www/jin/.env)"
             db_password_first="$(sed -n "s/^DB_PASSWORD=//p" /var/www/jin/.env)"
             grep -qx "APP_ENV=production" /var/www/jin/.env
+            grep -qx "IP_RESTRICTION_ENABLED=false" /var/www/jin/.env
+            grep -qx "ALLOWED_IPS=" /var/www/jin/.env
+            grep -qx "APP_LOCALE=ja" /var/www/jin/.env
             grep -qx "DB_CONNECTION=pgsql" /var/www/jin/.env
             grep -qx "ONLYOFFICE_DOCUMENT_SERVER_URL=http://127.0.0.1:8081" /var/www/jin/.env
             grep -qx "ONLYOFFICE_PUBLIC_URL=http://jin.test/onlyoffice" /var/www/jin/.env

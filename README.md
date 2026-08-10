@@ -269,6 +269,21 @@ Let's Encryptの登録/期限通知先を指定する場合は`--email admin@exa
   --app-dir "$JIN_PATH"
 ```
 
+初回の対話実行では、Jinへのアクセス元IPを制限するか確認します。何も入力せずEnterを押した場合は`IP_RESTRICTION_ENABLED=false`となり、すべてのIPアドレスからのアクセスを許可します。制限を有効にした場合は、IPアドレスまたはCIDRをカンマ区切りで入力します。複数のローカルネットワークを許可する入力例は`192.168.1.0/24, 10.0.0.0/8`です。空白は除去され、setupのhealthcheckとONLYOFFICEの内部通信に必要な`127.0.0.1,::1`を先頭へ自動追加して`.env`の`ALLOWED_IPS`へ保存します。
+
+続いて既定言語を、表示される10言語（日本語、英語、フランス語、ドイツ語、簡体字中国語、繁体字中国語、スペイン語、ブラジルポルトガル語、ポルトガル語、韓国語）から番号またはlocale codeで選択します。何も入力しない場合は日本語です。選択値は`.env`の`APP_LOCALE`へ保存されます。
+
+TTYのない自動実行ではIP制限なし・日本語が既定です。自動実行で指定する場合は次の環境変数を渡します。`ALLOWED_IPS`だけを指定した場合もIP制限は有効になります。
+
+```bash
+IP_RESTRICTION_ENABLED=true \
+ALLOWED_IPS='192.168.1.0/24, 10.0.0.0/8' \
+APP_LOCALE=ja \
+./setup.sh --platform ubuntu --domain jin.example.com --app-dir /var/www/jin
+```
+
+再実行時は既存`.env`の`IP_RESTRICTION_ENABLED`、`ALLOWED_IPS`、`APP_LOCALE`を保持し、同じ質問を繰り返しません。
+
 database passwordやONLYOFFICE JWT secretは、既存`.env`の有効な値を優先し、未設定またはplaceholderの場合は安全なランダム値を生成して保持します。初回実行前に値を指定する場合は、コマンド引数ではなく環境変数を使用してください。
 
 ```bash

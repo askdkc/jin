@@ -6,6 +6,7 @@
     import { Marked, Renderer } from 'marked';
     import { onMount } from 'svelte';
     import Trix from 'trix';
+    import { isFormSubmitShortcut } from '@/lib/form-submit';
     import { t } from '@/lib/i18n';
 
     for (let level = 2; level <= 6; level++) {
@@ -18,10 +19,22 @@
     }
 
     type TrixAttachment = object;
+    type TrixAttachmentAttributes = {
+        content?: string;
+        url?: string;
+        href?: string;
+        filename?: string;
+        filesize?: number;
+        contentType?: string;
+        previewable?: boolean;
+    };
     type TrixRect = { left: number; top: number; bottom: number };
     type TrixLocation = { index: number; offset: number };
     type TrixDocumentApi = {
         getStringAtRange: (range: [number, number]) => string;
+        getRangeOfAttachment: (
+            attachment: TrixAttachment,
+        ) => [number, number] | undefined;
         locationFromPosition: (position: number) => TrixLocation;
         positionFromLocation: (location: TrixLocation) => number;
         getBlockAtIndex: (index: number) => { toString: () => string };
@@ -30,6 +43,7 @@
         loadHTML: (html: string) => void;
         insertHTML: (html: string) => void;
         insertAttachment: (attachment: TrixAttachment) => void;
+        insertLineBreak: () => void;
         insertString: (text: string) => void;
         getSelectedRange: () => [number, number];
         setSelectedRange: (range: [number, number] | number) => void;
@@ -39,12 +53,16 @@
     };
     type TrixEditorElement = HTMLElement & {
         editor?: TrixEditorApi;
+        toolbarElement?: HTMLElement;
         value: string;
     };
     type TrixConstructor = {
-        Attachment: new (attributes: { content: string }) => TrixAttachment;
+        Attachment: new (
+            attributes: TrixAttachmentAttributes,
+        ) => TrixAttachment;
     };
     type EditorMode = 'rich' | 'markdown';
+    const trix = Trix as unknown as TrixConstructor;
 
     let {
         id,
@@ -55,6 +73,10 @@
         ariaLabel,
         mentionables = [],
         attachmentUploadUrl,
+        showFileInsert = true,
+        onContentChange,
+        onAttachmentUploadChange,
+        onSubmitShortcut,
     }: {
         id: string;
         name: string;
@@ -64,18 +86,58 @@
         ariaLabel?: string;
         mentionables?: { id: number; name: string }[];
         attachmentUploadUrl?: string;
+        showFileInsert?: boolean;
+        onContentChange?: (hasContent: boolean) => void;
+        onAttachmentUploadChange?: (uploading: boolean) => void;
+        onSubmitShortcut?: () => void;
     } = $props();
 
     let editor: TrixEditorElement;
     let hiddenInput: HTMLInputElement;
     let imageInput = $state<HTMLInputElement>();
     let fileInput = $state<HTMLInputElement>();
+    let markdownEditor = $state<HTMLTextAreaElement>();
+    let codeLanguageSelect: HTMLSelectElement;
     const inputId = $derived(`${id}-input`);
     let mode = $state<EditorMode>('rich');
     let markdownValue = $state('');
     let markdownDirty = false;
-    let uploadingAttachment = $state(false);
+    let pendingAttachmentUploads = $state(0);
+    const uploadingAttachment = $derived(pendingAttachmentUploads > 0);
     let attachmentUploadError = $state('');
+    let ownerForm: HTMLFormElement | null = null;
+    let queuedFormSubmission = false;
+    let attachmentUploadBatchFailed = false;
+
+    const changePendingAttachmentUploads = (
+        change: number,
+        successful = true,
+    ): void => {
+        if (change > 0 && pendingAttachmentUploads === 0) {
+            attachmentUploadBatchFailed = false;
+        }
+
+        if (change < 0 && !successful) {
+            attachmentUploadBatchFailed = true;
+        }
+
+        pendingAttachmentUploads = Math.max(
+            0,
+            pendingAttachmentUploads + change,
+        );
+        onAttachmentUploadChange?.(pendingAttachmentUploads > 0);
+
+        if (pendingAttachmentUploads !== 0 || !queuedFormSubmission) {
+            return;
+        }
+
+        const shouldSubmit = !attachmentUploadBatchFailed;
+        queuedFormSubmission = false;
+
+        if (shouldSubmit) {
+            queueMicrotask(() => ownerForm?.requestSubmit());
+        }
+    };
 
     // ponytail: curated to shiki/bundle/web — anything outside it would render unhighlighted anyway.
     const codeLanguages = [
@@ -148,6 +210,14 @@
         editor.focus();
     };
 
+    const positionCodeLanguageSelect = (): void => {
+        const codeButton = editor.toolbarElement?.querySelector<HTMLElement>(
+            '[data-trix-attribute="code"]',
+        );
+
+        codeButton?.after(codeLanguageSelect);
+    };
+
     let mentionQuery = $state<string | null>(null);
     let mentionMatchStart = $state(0);
     let mentionPosition = $state({ left: 0, top: 0 });
@@ -170,16 +240,60 @@
         mentionQuery = null;
     };
 
+    const positionMentions = (rect: TrixRect): void => {
+        const menuWidth = 224;
+        const menuHeight = Math.min(mentionables.length, 5) * 40 + 8;
+        const preferredTop = rect.bottom + 4;
+
+        mentionPosition = {
+            left: Math.max(
+                8,
+                Math.min(rect.left, window.innerWidth - menuWidth - 8),
+            ),
+            top:
+                preferredTop + menuHeight <= window.innerHeight - 8
+                    ? preferredTop
+                    : Math.max(8, rect.top - menuHeight - 4),
+        };
+    };
+
+    const mentionMatch = (text: string): RegExpMatchArray | null =>
+        text.match(/@([^\s@]*(?:\s[^\s@]*){0,3})$/);
+
     const selectMention = (user: { id: number; name: string }): void => {
+        if (mode === 'markdown') {
+            if (!markdownEditor) {
+                return;
+            }
+
+            const position = markdownEditor.selectionStart;
+            const mention = `[@${user.name}](/mentions/${user.id}) `;
+            markdownValue = `${markdownValue.slice(0, mentionMatchStart)}${mention}${markdownValue.slice(position)}`;
+            markdownDirty = true;
+            closeMentions();
+            onContentChange?.(markdownValue.trim() !== '');
+
+            requestAnimationFrame(() => {
+                const nextPosition = mentionMatchStart + mention.length;
+                markdownEditor?.focus();
+                markdownEditor?.setSelectionRange(nextPosition, nextPosition);
+            });
+
+            return;
+        }
+
         if (!editor.editor) {
             return;
         }
 
         const [position] = editor.editor.getSelectedRange();
         editor.editor.setSelectedRange([mentionMatchStart, position]);
-        editor.editor.insertString(`@${user.name} `);
+        editor.editor.insertHTML(
+            `<a href="/mentions/${user.id}">@${escapeHtml(user.name)}</a>&nbsp;`,
+        );
         closeMentions();
         editor.focus();
+        queueMicrotask(reportContentState);
     };
 
     const updateMentionState = (): void => {
@@ -204,7 +318,7 @@
         });
         // A mention cannot cross a block boundary, so avoid copying the whole document per keystroke.
         const text = trixDocument.getStringAtRange([blockStart, position]);
-        const match = text.match(/@([^\s@]*(?:\s[^\s@]*){0,3})$/);
+        const match = mentionMatch(text);
 
         if (!match) {
             closeMentions();
@@ -216,12 +330,42 @@
         mentionMatchStart = position - match[0].length;
         mentionActiveIndex = 0;
 
-        const rect = editor.editor.getClientRectAtPosition(mentionMatchStart);
-        const editorRect = editor.getBoundingClientRect();
-        mentionPosition = {
-            left: rect.left - editorRect.left,
-            top: rect.bottom - editorRect.top,
-        };
+        positionMentions(
+            editor.editor.getClientRectAtPosition(mentionMatchStart),
+        );
+    };
+
+    const updateMarkdownMentionState = (): void => {
+        if (!markdownEditor || mentionables.length === 0) {
+            closeMentions();
+
+            return;
+        }
+
+        if (markdownEditor.selectionStart !== markdownEditor.selectionEnd) {
+            closeMentions();
+
+            return;
+        }
+
+        const position = markdownEditor.selectionStart;
+        const match = mentionMatch(markdownValue.slice(0, position));
+
+        if (!match) {
+            closeMentions();
+
+            return;
+        }
+
+        mentionQuery = match[1];
+        mentionMatchStart = position - match[0].length;
+        mentionActiveIndex = 0;
+        const rect = markdownEditor.getBoundingClientRect();
+        positionMentions({
+            left: rect.left + 12,
+            top: rect.top + 12,
+            bottom: rect.bottom,
+        });
     };
 
     const onMentionKeydown = (event: KeyboardEvent): void => {
@@ -246,6 +390,21 @@
         }
     };
 
+    const handleEditorKeydown = (event: KeyboardEvent): void => {
+        onMentionKeydown(event);
+
+        if (
+            !onSubmitShortcut ||
+            event.defaultPrevented ||
+            !isFormSubmitShortcut(event)
+        ) {
+            return;
+        }
+
+        event.preventDefault();
+        onSubmitShortcut?.();
+    };
+
     const escapeHtml = (text: string): string =>
         text
             .replaceAll('&', '&amp;')
@@ -253,6 +412,68 @@
             .replaceAll('>', '&gt;')
             .replaceAll('"', '&quot;')
             .replaceAll("'", '&#039;');
+
+    const richTextHasContent = (): boolean => {
+        const html = hiddenInput?.value ?? '';
+
+        if (/<(?:img|figure|table|hr)\b/i.test(html)) {
+            return true;
+        }
+
+        return (
+            html
+                .replace(/<br\s*\/?\s*>/gi, '')
+                .replace(/<[^>]+>/g, '')
+                .replace(/&nbsp;|&#160;/gi, ' ')
+                .trim() !== ''
+        );
+    };
+
+    const reportContentState = (): void => {
+        onContentChange?.(
+            mode === 'markdown'
+                ? markdownValue.trim() !== ''
+                : richTextHasContent(),
+        );
+    };
+
+    export function insertText(text: string): void {
+        if (mode === 'markdown') {
+            if (!markdownEditor) {
+                return;
+            }
+
+            const start = markdownEditor.selectionStart;
+            const end = markdownEditor.selectionEnd;
+            markdownValue = `${markdownValue.slice(0, start)}${text}${markdownValue.slice(end)}`;
+            markdownDirty = true;
+
+            requestAnimationFrame(() => {
+                const nextPosition = start + text.length;
+                markdownEditor?.focus();
+                markdownEditor?.setSelectionRange(nextPosition, nextPosition);
+                updateMarkdownMentionState();
+            });
+            reportContentState();
+
+            return;
+        }
+
+        editor.editor?.insertString(text);
+        editor.focus();
+        queueMicrotask(() => {
+            updateMentionState();
+            reportContentState();
+        });
+    }
+
+    export function openMentionPicker(): void {
+        if (mentionables.length === 0) {
+            return;
+        }
+
+        insertText('@');
+    }
 
     const safeLink = (url: string): boolean =>
         !/^[a-z][a-z\d+.-]*:/i.test(url) || /^(https?:|mailto:)/i.test(url);
@@ -501,17 +722,49 @@
 
         mode = nextMode;
         closeMentions();
+        queueMicrotask(reportContentState);
     };
 
     const updateMarkdown = (event: Event): void => {
         markdownValue = (event.currentTarget as HTMLTextAreaElement).value;
         markdownDirty = true;
+        updateMarkdownMentionState();
+        reportContentState();
     };
 
     const looksLikeMarkdown = (text: string): boolean =>
         /(^|\n)(#{1,3}\s|[-*]\s|\d+\.\s|>\s|```)|\*\*[^*]+\*\*|\|.+\|/.test(
             text,
         );
+
+    const insertAttachmentWithFollowingParagraph = (
+        attachment: TrixAttachment,
+    ): void => {
+        const editorApi = editor.editor;
+
+        if (!editorApi) {
+            return;
+        }
+
+        editorApi.insertAttachment(attachment);
+
+        requestAnimationFrame(() => {
+            const attachmentRange = editorApi
+                .getDocument()
+                .getRangeOfAttachment(attachment);
+
+            if (!attachmentRange) {
+                editor.focus();
+
+                return;
+            }
+
+            editorApi.setSelectedRange(attachmentRange[1]);
+            editorApi.insertLineBreak();
+            editorApi.setSelectedRange(attachmentRange[1] + 1);
+            editor.focus();
+        });
+    };
 
     const insertTable = (html?: string): void => {
         const content =
@@ -525,13 +778,10 @@
                 '</td><td>' +
                 t('Content') +
                 '</td></tr></tbody></table></div>';
-        const trix = (window as typeof window & { Trix?: TrixConstructor })
-            .Trix;
 
-        if (trix && editor.editor) {
-            editor.editor.insertAttachment(new trix.Attachment({ content }));
-            editor.focus();
-        }
+        insertAttachmentWithFollowingParagraph(
+            new trix.Attachment({ content }),
+        );
     };
 
     const uploadAttachment = async (file: File): Promise<void> => {
@@ -539,8 +789,9 @@
             return;
         }
 
-        uploadingAttachment = true;
+        changePendingAttachmentUploads(1);
         attachmentUploadError = '';
+        let successful = false;
 
         try {
             const formData = new FormData();
@@ -565,23 +816,39 @@
             const payload = (await response.json()) as {
                 name: string;
                 mimeType: string | null;
+                size: number;
                 previewUrl: string;
                 inline: boolean;
             };
-            const url = escapeHtml(payload.previewUrl);
-            const name = escapeHtml(payload.name);
-            const html =
-                payload.inline === true
-                    ? `<p><a href="${url}"><img src="${url}" alt="${name}"></a></p>`
-                    : `<p><a href="${url}">📎 ${name}</a></p>`;
-            editor.editor?.insertHTML(html);
+
+            if (payload.inline === true && editor.editor) {
+                const attachment = new trix.Attachment({
+                    url: payload.previewUrl,
+                    href: payload.previewUrl,
+                    filename: payload.name,
+                    filesize: payload.size,
+                    contentType: (payload.mimeType ?? file.type) || 'image',
+                    previewable: true,
+                });
+
+                insertAttachmentWithFollowingParagraph(attachment);
+            } else {
+                const url = escapeHtml(payload.previewUrl);
+                const name = escapeHtml(payload.name);
+
+                editor.editor?.insertHTML(
+                    `<p><a href="${url}">📎 ${name}</a></p>`,
+                );
+            }
+
             editor.focus();
+            successful = true;
         } catch {
             attachmentUploadError = t(
                 'Attachment upload failed. Please try again.',
             );
         } finally {
-            uploadingAttachment = false;
+            changePendingAttachmentUploads(-1, successful);
         }
     };
 
@@ -605,6 +872,18 @@
 
     onMount(() => {
         const form = hiddenInput.form;
+        ownerForm = form;
+        const deferSubmitDuringAttachmentUpload = (
+            event: SubmitEvent,
+        ): void => {
+            if (pendingAttachmentUploads === 0) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            queuedFormSubmission = true;
+        };
         const syncMarkdownBeforeSubmit = (): void => {
             if (mode === 'markdown') {
                 syncMarkdownToInput();
@@ -618,6 +897,7 @@
                 markdownDirty = false;
                 editor.editor?.loadHTML(resetValue);
                 closeMentions();
+                reportContentState();
             });
         };
         const hideBrokenImage = (image: HTMLImageElement): void => {
@@ -660,34 +940,59 @@
         };
 
         form?.addEventListener('reset', resetEditor);
+        form?.addEventListener(
+            'submit',
+            deferSubmitDuringAttachmentUpload,
+            true,
+        );
         form?.addEventListener('submit', syncMarkdownBeforeSubmit, true);
+        editor.addEventListener('trix-initialize', positionCodeLanguageSelect);
         editor.addEventListener('trix-file-accept', handleFileAccept);
         editor.addEventListener('error', handleImageError, true);
         editor.addEventListener('paste', formatMarkdownPaste);
         editor.addEventListener('trix-change', updateMentionState);
         editor.addEventListener('trix-change', updateCodeBlockState);
+        editor.addEventListener('trix-change', reportContentState);
         editor.addEventListener('trix-selection-change', updateCodeBlockState);
-        editor.addEventListener('keydown', onMentionKeydown);
+        editor.addEventListener('keydown', handleEditorKeydown);
         editor.addEventListener('blur', closeMentions);
         editor.querySelectorAll<HTMLImageElement>('img').forEach((image) => {
             if (image.complete && image.naturalWidth === 0) {
                 hideBrokenImage(image);
             }
         });
+        positionCodeLanguageSelect();
+        queueMicrotask(reportContentState);
 
         return () => {
             form?.removeEventListener('reset', resetEditor);
+            form?.removeEventListener(
+                'submit',
+                deferSubmitDuringAttachmentUpload,
+                true,
+            );
             form?.removeEventListener('submit', syncMarkdownBeforeSubmit, true);
+            queuedFormSubmission = false;
+
+            if (ownerForm === form) {
+                ownerForm = null;
+            }
+
+            editor.removeEventListener(
+                'trix-initialize',
+                positionCodeLanguageSelect,
+            );
             editor.removeEventListener('trix-file-accept', handleFileAccept);
             editor.removeEventListener('error', handleImageError, true);
             editor.removeEventListener('paste', formatMarkdownPaste);
             editor.removeEventListener('trix-change', updateMentionState);
             editor.removeEventListener('trix-change', updateCodeBlockState);
+            editor.removeEventListener('trix-change', reportContentState);
             editor.removeEventListener(
                 'trix-selection-change',
                 updateCodeBlockState,
             );
-            editor.removeEventListener('keydown', onMentionKeydown);
+            editor.removeEventListener('keydown', handleEditorKeydown);
             editor.removeEventListener('blur', closeMentions);
         };
     });
@@ -698,7 +1003,7 @@
     id={inputId}
     type="hidden"
     {name}
-    value={value ?? ''}
+    defaultValue={value ?? ''}
 />
 <div class="rich-text-editor-shell relative" data-mode={mode}>
     <trix-editor
@@ -732,23 +1037,25 @@
                     <ImagePlus class="size-4" />
                     <span class="sr-only">{t('Insert image')}</span>
                 </button>
-                <input
-                    bind:this={fileInput}
-                    type="file"
-                    hidden
-                    disabled={uploadingAttachment}
-                    onchange={handleImageSelection}
-                />
-                <button
-                    type="button"
-                    aria-label={t('Insert file')}
-                    title={t('Insert file')}
-                    onclick={openFileChooser}
-                    disabled={uploadingAttachment}
-                >
-                    <Paperclip class="size-4" />
-                    <span class="sr-only">{t('Insert file')}</span>
-                </button>
+                {#if showFileInsert}
+                    <input
+                        bind:this={fileInput}
+                        type="file"
+                        hidden
+                        disabled={uploadingAttachment}
+                        onchange={handleImageSelection}
+                    />
+                    <button
+                        type="button"
+                        aria-label={t('Insert file')}
+                        title={t('Insert file')}
+                        onclick={openFileChooser}
+                        disabled={uploadingAttachment}
+                    >
+                        <Paperclip class="size-4" />
+                        <span class="sr-only">{t('Insert file')}</span>
+                    </button>
+                {/if}
             {/if}
         </div>
     {/if}
@@ -764,21 +1071,22 @@
                 <span class="sr-only">{t('Insert table')}</span>
             </button>
         {/if}
-        {#if mode === 'rich' && inCodeBlock}
-            <select
-                aria-label={t('Code block language')}
-                value={codeLanguage}
-                onchange={(event) => setCodeLanguage(event.currentTarget.value)}
-            >
-                <option value="">{t('Plain text')}</option>
-                {#if codeLanguage && !codeLanguages.includes(codeLanguage)}
-                    <option value={codeLanguage}>{codeLanguage}</option>
-                {/if}
-                {#each codeLanguages as language (language)}
-                    <option value={language}>{language}</option>
-                {/each}
-            </select>
-        {/if}
+        <select
+            bind:this={codeLanguageSelect}
+            class="rich-text-editor-code-language"
+            aria-label={t('Code block language')}
+            value={codeLanguage}
+            hidden={mode !== 'rich' || !inCodeBlock}
+            onchange={(event) => setCodeLanguage(event.currentTarget.value)}
+        >
+            <option value="">{t('Plain text')}</option>
+            {#if codeLanguage && !codeLanguages.includes(codeLanguage)}
+                <option value={codeLanguage}>{codeLanguage}</option>
+            {/if}
+            {#each codeLanguages as language (language)}
+                <option value={language}>{language}</option>
+            {/each}
+        </select>
         <ToggleGroup.Root
             type="single"
             value={mode}
@@ -805,18 +1113,22 @@
     </div>
     {#if mode === 'markdown'}
         <textarea
+            bind:this={markdownEditor}
             {id}
             value={markdownValue}
             {placeholder}
             {required}
             aria-label={ariaLabel}
             oninput={updateMarkdown}
+            onkeydown={handleEditorKeydown}
+            onkeyup={updateMarkdownMentionState}
+            onclick={updateMarkdownMentionState}
             class="rich-text-editor-markdown min-h-32 w-full resize-y bg-card px-3 py-3 font-mono text-sm text-foreground outline-none placeholder:text-muted-foreground"
         ></textarea>
     {/if}
-    {#if mode === 'rich' && mentionQuery !== null && mentionMatches.length > 0}
+    {#if mentionQuery !== null && mentionMatches.length > 0}
         <ul
-            class="absolute z-10 w-56 overflow-hidden rounded-md border bg-popover py-1 shadow-md"
+            class="fixed z-50 w-56 overflow-hidden rounded-md border bg-popover py-1 shadow-md"
             style={`left: ${mentionPosition.left}px; top: ${mentionPosition.top}px;`}
         >
             {#each mentionMatches as user, index (user.id)}

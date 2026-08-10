@@ -2,6 +2,7 @@
 
 use App\Enums\ActivityType;
 use App\Enums\TeamRole;
+use App\Events\ProjectActivityRecorded;
 use App\Models\Activity;
 use App\Models\MessageBoardPost;
 use App\Models\Project;
@@ -9,7 +10,14 @@ use App\Models\Team;
 use App\Models\Todo;
 use App\Models\TodoList;
 use App\Models\User;
+use Illuminate\Broadcasting\BroadcastEvent;
+use Illuminate\Broadcasting\PrivateChannel;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Contracts\Broadcasting\ShouldRescue;
+use Illuminate\Contracts\Events\ShouldDispatchAfterCommit;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia as Assert;
 
@@ -81,8 +89,56 @@ test('major project work records concise activity entries', function () {
         ->and($activities->firstWhere('type', ActivityType::FileUploaded)?->metadata['label'])->toBe('運用資料.pdf');
 });
 
+test('recording project activity dispatches its realtime update event', function () {
+    $actor = User::factory()->create();
+    $project = Project::factory()->for($actor, 'creator')->create();
+    $todoList = TodoList::factory()->for($project)->create();
+    $todo = Todo::factory()->for($todoList, 'todoList')->for($actor, 'creator')->create();
+    Event::fake([ProjectActivityRecorded::class]);
+
+    $activity = Activity::record(
+        $project,
+        $actor,
+        ActivityType::TodoCreated,
+        $todo,
+        $todo->title,
+    );
+
+    Event::assertDispatched(
+        ProjectActivityRecorded::class,
+        fn (ProjectActivityRecorded $event): bool => $event->projectId === $project->id
+            && $event->activityId === $activity->id,
+    );
+});
+
+test('project activity broadcast uses the private project channel and default queue', function () {
+    $event = new ProjectActivityRecorded(123, 456);
+
+    expect($event)->toBeInstanceOf(ShouldBroadcast::class)
+        ->and($event)->toBeInstanceOf(ShouldDispatchAfterCommit::class)
+        ->and($event)->toBeInstanceOf(ShouldRescue::class)
+        ->and($event->broadcastOn())->toHaveCount(1)
+        ->and($event->broadcastOn()[0])->toBeInstanceOf(PrivateChannel::class)
+        ->and($event->broadcastOn()[0]->name)->toBe('private-projects.123.chat')
+        ->and($event->broadcastAs())->toBe('project.activity.recorded')
+        ->and($event->broadcastWith())->toBe([
+            'projectId' => 123,
+            'activityId' => 456,
+        ])
+        ->and($event->tries)->toBe(3)
+        ->and($event->timeout)->toBe(60);
+
+    Queue::fake();
+    Event::dispatch($event);
+
+    Queue::assertPushed(BroadcastEvent::class, fn (BroadcastEvent $job): bool => $job->queue === null);
+});
+
 test('activity page only exposes active projects visible in the current team', function () {
-    $owner = User::factory()->create(['name' => 'オーナー']);
+    $owner = User::factory()->create([
+        'name' => 'オーナー',
+        'avatar_path' => 'avatars/activity-owner.webp',
+    ]);
     $member = User::factory()->create();
     $team = Team::factory()->create();
     $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
@@ -118,6 +174,7 @@ test('activity page only exposes active projects visible in the current team', f
             ->where('activities.0.target', 'todos')
             ->where('activities.0.actorId', $owner->id)
             ->where('activities.0.actorName', 'オーナー')
+            ->where('activities.0.actorAvatar', $owner->avatar)
             ->where('activities.0.subjectLabel', '表示するTo-do')
             ->where('activities.0.subjectId', $visibleActivity->subject_id)
             ->where('activities.0.project.id', $visibleProject->id)

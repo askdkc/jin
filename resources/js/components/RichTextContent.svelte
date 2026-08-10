@@ -22,11 +22,18 @@
     const filePattern = /\/projects\/(\d+)\/files\/(\d+)\/preview/;
 
     const handleClick = (event: MouseEvent): void => {
+        const anchor = (event.target as HTMLElement).closest('a');
+
+        if (anchor?.getAttribute('href')?.startsWith('/mentions/')) {
+            event.preventDefault();
+
+            return;
+        }
+
         if (!currentTeam) {
             return;
         }
 
-        const anchor = (event.target as HTMLElement).closest('a');
         const match = anchor?.getAttribute('href')?.match(filePattern);
 
         if (!anchor || !match) {

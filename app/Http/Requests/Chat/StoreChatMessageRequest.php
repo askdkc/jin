@@ -6,6 +6,7 @@ use App\Models\ChatChannel;
 use App\Models\ChatMessage;
 use App\Models\Project;
 use App\Models\StoredFile;
+use App\Support\RichText;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Foundation\Http\FormRequest;
@@ -14,6 +15,13 @@ use Illuminate\Validation\Rule;
 
 class StoreChatMessageRequest extends FormRequest
 {
+    protected function prepareForValidation(): void
+    {
+        $this->merge([
+            'body' => RichText::sanitizeInput($this->input('body')),
+        ]);
+    }
+
     /**
      * Determine if the user is authorized to make this request.
      */
@@ -55,7 +63,7 @@ class StoreChatMessageRequest extends FormRequest
                         }
                     }),
             ],
-            'body' => ['nullable', 'string', 'max:2000', 'required_without:attachment_ids'],
+            'body' => ['nullable', 'string', 'max:20000', 'required_without:attachment_ids'],
             'attachment_ids' => [
                 'nullable',
                 'array',

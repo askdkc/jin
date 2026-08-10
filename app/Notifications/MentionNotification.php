@@ -10,6 +10,7 @@ use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Notification as NotificationFacade;
+use Illuminate\Support\Str;
 
 class MentionNotification extends Notification implements ShouldQueue
 {
@@ -25,12 +26,16 @@ class MentionNotification extends Notification implements ShouldQueue
 
     public const File = 'mention_file';
 
+    public const Chat = 'mention_chat';
+
     public function __construct(
         public string $type,
         public User $actor,
         public Project $project,
         public string $title,
         public ?int $targetId = null,
+        public ?int $chatChannelId = null,
+        public ?string $chatMessageExcerpt = null,
     ) {
         $this->afterCommit();
     }
@@ -43,6 +48,8 @@ class MentionNotification extends Notification implements ShouldQueue
         string $type,
         string $title,
         ?int $targetId = null,
+        ?int $chatChannelId = null,
+        ?string $chatMessageExcerpt = null,
     ): void {
         $recipients = $recipients->reject(fn (User $user): bool => $user->id === $actor->id);
 
@@ -50,7 +57,15 @@ class MentionNotification extends Notification implements ShouldQueue
             return;
         }
 
-        NotificationFacade::send($recipients, new self($type, $actor, $project, $title, $targetId));
+        NotificationFacade::send($recipients, new self(
+            $type,
+            $actor,
+            $project,
+            $title,
+            $targetId,
+            $chatChannelId,
+            $chatMessageExcerpt,
+        ));
     }
 
     /** @return array<int, string> */
@@ -73,6 +88,11 @@ class MentionNotification extends Notification implements ShouldQueue
             self::File => $this->targetId !== null
                 ? route('projects.files.show', [$this->project->team, $this->project, $this->targetId])
                 : route('projects.materials.index', [$this->project->team, $this->project]),
+            self::Chat => route('projects.chat.show', [
+                'current_team' => $this->project->team,
+                'project' => $this->project,
+                'channel' => $this->chatChannelId,
+            ]),
             default => route('projects.todos.index', [$this->project->team, $this->project]),
         };
 
@@ -97,10 +117,14 @@ class MentionNotification extends Notification implements ShouldQueue
             'teamId' => $this->project->team_id,
             'projectId' => $this->project->id,
             'projectName' => $this->project->name,
-            'messageTitle' => $this->type === self::Message ? $this->title : null,
+            'messageTitle' => in_array($this->type, [self::Message, self::Chat], true) ? $this->title : null,
             'todoTitle' => in_array($this->type, [self::Todo, self::File], true) ? $this->title : null,
             'messageBoardPostId' => $this->type === self::Message ? $this->targetId : null,
             'storedFileId' => $this->type === self::File ? $this->targetId : null,
+            'chatMessageId' => $this->type === self::Chat ? $this->targetId : null,
+            'chatChannelId' => $this->type === self::Chat ? $this->chatChannelId : null,
+            'chatChannelName' => $this->type === self::Chat ? Str::after($this->title, '#') : null,
+            'chatMessageExcerpt' => $this->type === self::Chat ? $this->chatMessageExcerpt : null,
             'actorName' => $this->actor->name,
         ];
     }

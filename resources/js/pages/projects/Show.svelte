@@ -17,7 +17,7 @@
 </script>
 
 <script lang="ts">
-    import { Form, Link } from '@inertiajs/svelte';
+    import { Form, Link, router } from '@inertiajs/svelte';
     import Archive from 'lucide-svelte/icons/archive';
     import ArrowRight from 'lucide-svelte/icons/arrow-right';
     import BookOpen from 'lucide-svelte/icons/book-open';
@@ -31,6 +31,7 @@
     import Settings from 'lucide-svelte/icons/settings';
     import Star from 'lucide-svelte/icons/star';
     import Users from 'lucide-svelte/icons/users';
+    import { onMount } from 'svelte';
     import ActivityController from '@/actions/App/Http/Controllers/ActivityController';
     import CardTableController from '@/actions/App/Http/Controllers/CardTableController';
     import ChatController from '@/actions/App/Http/Controllers/ChatController';
@@ -44,20 +45,28 @@
     import AppHead from '@/components/AppHead.svelte';
     import ProjectFileThumbnail from '@/components/ProjectFileThumbnail.svelte';
     import { Button } from '@/components/ui/button';
+    import UserAvatar from '@/components/UserAvatar.svelte';
     import { activityAction, activityHref } from '@/lib/activity';
+    import { getEcho } from '@/lib/echo';
     import { currentLocale, t } from '@/lib/i18n';
     import { archive, edit } from '@/routes/projects';
-    import type { ProjectHome, ProjectPermissions } from '@/types';
+    import type {
+        ProjectActivity,
+        ProjectHome,
+        ProjectPermissions,
+    } from '@/types';
 
     let {
         currentTeam,
         project,
         home,
+        activity,
         permissions,
     }: {
         currentTeam: Team;
         project: Project;
         home: ProjectHome;
+        activity: ProjectActivity;
         permissions: ProjectPermissions;
     } = $props();
 
@@ -134,6 +143,13 @@
         'border-t-pink-400 bg-pink-50 dark:bg-pink-950/30',
         'border-t-emerald-400 bg-emerald-50 dark:bg-emerald-950/30',
     ];
+    const memberAvatarFallbackClasses = [
+        'bg-primary text-primary-foreground',
+        'bg-amber-500 text-white',
+        'bg-emerald-600 text-white',
+        'bg-sky-600 text-white',
+        'bg-fuchsia-600 text-white',
+    ];
     const formatDate = (value: string | null, includeTime = false): string => {
         if (!value) {
             return '';
@@ -155,11 +171,29 @@
         return `${(size / (1024 * 1024)).toFixed(1)} MB`;
     };
 
-    const memberInitial = (name: string): string =>
-        name.trim().slice(0, 1).toLocaleUpperCase(currentLocale()) || '?';
-
     const archiveProject = (): boolean =>
         window.confirm(t('Are you sure you want to archive this project?'));
+
+    onMount(() => {
+        try {
+            const echo = getEcho();
+            const channelName = `projects.${project.id}.chat`;
+
+            echo.private(channelName).listen(
+                '.project.activity.recorded',
+                () => {
+                    router.reload({
+                        only: ['activity'],
+                        preserveErrors: true,
+                    });
+                },
+            );
+
+            return () => echo.leave(channelName);
+        } catch {
+            return;
+        }
+    });
 </script>
 
 <AppHead title={`${currentTeam.menuNames.projectHome} — ${project.name}`} />
@@ -186,16 +220,12 @@
                 </span>
                 <div class="flex -space-x-2 overflow-hidden py-1">
                     {#each project.members.slice(0, 8) as member, index (member.id)}
-                        <span
-                            class="flex size-7 shrink-0 items-center justify-center rounded-full border-2 border-white bg-primary text-xs font-bold text-primary-foreground shadow-sm dark:border-card"
-                            class:bg-amber-500={index % 5 === 1}
-                            class:bg-emerald-600={index % 5 === 2}
-                            class:bg-sky-600={index % 5 === 3}
-                            class:bg-fuchsia-600={index % 5 === 4}
-                            title={member.name}
-                        >
-                            {memberInitial(member.name)}
-                        </span>
+                        <UserAvatar
+                            name={member.name}
+                            avatar={member.avatar}
+                            class="size-7 border-2 border-white shadow-sm dark:border-card"
+                            fallbackClass={`text-xs font-bold ${memberAvatarFallbackClasses[index % memberAvatarFallbackClasses.length]}`}
+                        />
                     {/each}
                     {#if project.members.length > 8}
                         <span
@@ -301,44 +331,44 @@
                             t('Not set')}
                     </p>
                 {/if}
-                {#if home.activity.latest.length > 0}
+                {#if activity.latest.length > 0}
                     <ol
                         class="mt-3 max-w-2xl space-y-1"
                         data-test="project-recent-activity"
                     >
-                        {#each home.activity.latest.slice(0, 3) as activity (activity.id)}
+                        {#each activity.latest.slice(0, 3) as activityItem (activityItem.id)}
                             <li
                                 class="flex min-w-0 items-center gap-2 text-base"
                             >
-                                <span
-                                    class="flex size-4 shrink-0 items-center justify-center rounded-full bg-violet-500 text-[8px] font-bold text-white"
-                                >
-                                    {memberInitial(
-                                        activity.actorName || t('Deleted user'),
-                                    )}
-                                </span>
+                                <UserAvatar
+                                    name={activityItem.actorName ||
+                                        t('Deleted user')}
+                                    avatar={activityItem.actorAvatar}
+                                    class="size-4"
+                                    fallbackClass="bg-violet-500 text-[8px] font-bold text-white"
+                                />
                                 <time
-                                    datetime={activity.createdAt || ''}
+                                    datetime={activityItem.createdAt || ''}
                                     class="shrink-0 text-sm font-bold text-slate-600 dark:text-slate-300"
                                 >
-                                    {formatDate(activity.createdAt)}
+                                    {formatDate(activityItem.createdAt)}
                                 </time>
                                 <Link
                                     href={activityHref(
                                         currentTeam.slug,
-                                        activity,
+                                        activityItem,
                                     )}
                                     class="min-w-0 truncate text-slate-700 hover:text-blue-600 dark:text-slate-200 dark:hover:text-blue-400"
                                 >
                                     <strong class="font-semibold">
-                                        {activity.actorName ||
+                                        {activityItem.actorName ||
                                             t('Deleted user')}
                                     </strong>
-                                    {activityAction(activity.type)}
+                                    {activityAction(activityItem.type)}
                                     <span
                                         class="font-medium text-blue-600 underline underline-offset-2 dark:text-blue-400"
                                     >
-                                        {activity.subjectLabel}
+                                        {activityItem.subjectLabel}
                                     </span>
                                 </Link>
                             </li>
@@ -350,9 +380,7 @@
                         <span class="size-2 rounded-full bg-[#d8c6af]"></span>
                         <span>
                             {t(':count people active in the last 7 days', {
-                                count: String(
-                                    home.activity.activeLastSevenDays,
-                                ),
+                                count: String(activity.activeLastSevenDays),
                             })}
                         </span>
                         <span aria-hidden="true">·</span>
@@ -394,14 +422,13 @@
                                                 <div
                                                     class="flex items-start gap-3"
                                                 >
-                                                    <span
-                                                        class="flex size-8 shrink-0 items-center justify-center rounded-full bg-[#26343d] text-sm font-bold text-white"
-                                                    >
-                                                        {memberInitial(
-                                                            message.authorName ||
-                                                                '?',
-                                                        )}
-                                                    </span>
+                                                    <UserAvatar
+                                                        name={message.authorName ||
+                                                            t('Deleted user')}
+                                                        avatar={message.authorAvatar}
+                                                        class="size-8"
+                                                        fallbackClass="bg-[#26343d] text-sm font-bold text-white"
+                                                    />
                                                     <div class="min-w-0">
                                                         <p
                                                             class="truncate text-base font-semibold"
@@ -436,14 +463,13 @@
                                             <article
                                                 class="flex min-w-0 items-center gap-3 border-b py-3 last:border-0"
                                             >
-                                                <span
-                                                    class="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-bold"
-                                                >
-                                                    {memberInitial(
-                                                        message.authorName ||
-                                                            '?',
-                                                    )}
-                                                </span>
+                                                <UserAvatar
+                                                    name={message.authorName ||
+                                                        t('Deleted user')}
+                                                    avatar={message.authorAvatar}
+                                                    class="size-8"
+                                                    fallbackClass="text-sm font-bold"
+                                                />
                                                 <div class="min-w-0">
                                                     <h3
                                                         class="truncate text-base font-semibold"
@@ -711,13 +737,13 @@
                                         <li
                                             class="flex min-w-0 items-start gap-3"
                                         >
-                                            <span
-                                                class="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-bold"
-                                            >
-                                                {memberInitial(
-                                                    message.authorName || '?',
-                                                )}
-                                            </span>
+                                            <UserAvatar
+                                                name={message.authorName ||
+                                                    t('Deleted user')}
+                                                avatar={message.authorAvatar}
+                                                class="size-9"
+                                                fallbackClass="text-sm font-bold"
+                                            />
                                             <div
                                                 class="min-w-0 flex-1 rounded-xl bg-[#f5f2ef] px-3 py-2 dark:bg-muted"
                                             >

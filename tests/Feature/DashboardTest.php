@@ -238,6 +238,28 @@ test('dashboard groups incomplete assigned todos by deadline and lists active pr
             ->missing('myTodos'));
 });
 
+test('dashboard includes the latest thirty visible activities', function () {
+    $user = User::factory()->create();
+    $team = $user->currentTeam;
+    $project = Project::factory()->for($team)->for($user, 'creator')->create();
+    $project->members()->attach($user);
+
+    $activities = Activity::factory()
+        ->count(31)
+        ->for($project)
+        ->for($user, 'actor')
+        ->create();
+
+    $this->actingAs($user)
+        ->get(route('dashboard', $team))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('Dashboard')
+            ->has('recentActivities', 30)
+            ->where('recentActivities.0.id', $activities->last()->id)
+            ->where('recentActivities.29.id', $activities->get(1)->id));
+});
+
 test('dashboard hides project work after a member leaves the project', function () {
     $owner = User::factory()->create();
     $member = User::factory()->create();

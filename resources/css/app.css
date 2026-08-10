@@ -133,6 +133,16 @@ trix-toolbar .trix-button-group--file-tools {
     border-radius: var(--radius-sm);
 }
 
+.rich-text-editor-shell trix-toolbar .trix-button--icon::before {
+    width: 1rem;
+    height: 1rem;
+    top: 50%;
+    right: auto;
+    bottom: auto;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
 .rich-text-editor-insert-tools,
 .rich-text-editor-mode-tools {
     display: flex;
@@ -165,6 +175,65 @@ trix-toolbar .trix-button-group--file-tools {
     color: var(--color-foreground);
 }
 
+.chat-composer .rich-text-editor-shell > trix-toolbar,
+.chat-composer .rich-text-editor-insert-tools,
+.chat-composer .rich-text-editor-mode-tools {
+    padding-block: 0.125rem;
+}
+
+.chat-composer .rich-text-editor-shell > trix-toolbar {
+    padding-inline: 0.25rem;
+}
+
+.chat-composer .rich-text-editor-shell trix-toolbar .trix-button,
+.chat-composer
+    .rich-text-editor-shell
+    trix-toolbar
+    .trix-button:not(:first-child),
+.chat-composer .rich-text-editor-insert-tools button,
+.chat-composer .rich-text-editor-mode-tools > button {
+    width: 1.75rem;
+    height: 1.75rem;
+}
+
+.chat-composer .rich-text-editor-insert-tools svg,
+.chat-composer .rich-text-editor-mode-tools > button svg {
+    width: 1rem;
+    height: 1rem;
+}
+
+.chat-composer[data-expanded='false'] .rich-text-editor-shell > trix-toolbar,
+.chat-composer[data-expanded='false'] .rich-text-editor-insert-tools,
+.chat-composer[data-expanded='false'] .rich-text-editor-mode-tools {
+    display: none;
+}
+
+.chat-composer[data-expanded='false'] trix-editor.rich-text-editor,
+.chat-composer[data-expanded='false'] .rich-text-editor-markdown {
+    grid-row: 1;
+}
+
+.chat-composer[data-expanded='false'] trix-editor.rich-text-editor {
+    display: grid;
+    place-items: center start;
+    padding-block: 0;
+    font-size: 1rem;
+    line-height: 1.5rem;
+    text-align: left;
+}
+
+.chat-composer[data-expanded='false'] trix-editor.rich-text-editor::before {
+    margin-left: 0.25rem;
+}
+
+.chat-composer[data-expanded='false'] .rich-text-editor-markdown {
+    padding-block: 0.75rem;
+    padding-left: 1rem;
+    font-size: 1rem;
+    line-height: 1.5rem;
+    text-align: left;
+}
+
 .rich-text-editor-insert-tools button:hover,
 .rich-text-editor-mode-tools > button:hover,
 .rich-text-editor-shell trix-toolbar .trix-button:hover {
@@ -183,9 +252,11 @@ trix-toolbar .trix-button-group--file-tools {
     opacity: 0.5;
 }
 
-.rich-text-editor-mode-tools select {
+.rich-text-editor-shell trix-toolbar .rich-text-editor-code-language {
+    flex: 0 0 auto;
     min-height: 1.5rem;
     max-width: 9rem;
+    margin-left: 0.125rem;
     border: 1px solid var(--color-input);
     border-radius: var(--radius-sm);
     background: var(--color-background);
@@ -336,6 +407,17 @@ trix-editor.rich-text-editor li + li {
     color: var(--color-primary);
     text-decoration: underline;
     text-underline-offset: 0.2em;
+}
+
+.rich-text-content a[href^='/mentions/'],
+trix-editor.rich-text-editor a[href^='/mentions/'] {
+    display: inline;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+    padding-inline: 0.25rem;
+    color: var(--color-primary);
+    font-weight: 650;
+    text-decoration: none;
 }
 
 .rich-text-content img,

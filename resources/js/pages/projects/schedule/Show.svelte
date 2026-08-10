@@ -44,6 +44,7 @@
     import RichTextEditor from '@/components/RichTextEditor.svelte';
     import { Button } from '@/components/ui/button';
     import { Label } from '@/components/ui/label';
+    import { submitFormById } from '@/lib/form-submit';
     import { currentLocale, t } from '@/lib/i18n';
     import type { ProjectScheduleEventDetail, TodoMember } from '@/types';
 
@@ -241,6 +242,11 @@
                                 attachmentUploadUrl={AttachmentController.uploadInline.url(
                                     [currentTeam.slug, project.id],
                                 )}
+                                onSubmitShortcut={() =>
+                                    !processing &&
+                                    submitFormById(
+                                        'schedule-event-comment-form',
+                                    )}
                             />
                             <InputError message={errors.body} />
                             <div class="flex gap-2">

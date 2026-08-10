@@ -12,6 +12,7 @@ function setupTestEnvironment(): array
             'APP_DIR',
             'APP_DOMAIN',
             'APP_INTERNAL_PORT',
+            'APP_LOCALE',
             'APP_ONLYOFFICE_INTERNAL_URL',
             'APP_URL',
             'DB_NAME',
@@ -22,9 +23,11 @@ function setupTestEnvironment(): array
             'EMAIL',
             'ENV_FILE',
             'INTERNAL_PORT_EXPLICIT',
+            'IP_RESTRICTION_ENABLED',
             'OFFICE_DOMAIN',
             'REPO_URL',
             'SUDO_NOPASSWD',
+            'ALLOWED_IPS',
             'UPLOAD_MAX_FILE_MB',
             'UPLOAD_MAX_FILES',
             'UPLOAD_MAX_REQUEST_MB',
@@ -276,6 +279,18 @@ it('canonicalizes Ubuntu paths and confines its environment file', function () {
 
     $process = runSetupBash(<<<'BASH'
 source "$1"
+if [[ "$(uname -s)" == Darwin ]]; then
+    realpath() {
+        local resolved
+
+        resolved="$(command realpath "$@")" || return 1
+        case "$resolved" in
+            /private/var/*) printf '/var/%s\n' "${resolved#/private/var/}" ;;
+            /System/Volumes/Data/home/*) printf '/home/%s\n' "${resolved#/System/Volumes/Data/home/}" ;;
+            *) printf '%s\n' "$resolved" ;;
+        esac
+    }
+fi
 APP_DIR="/home/ubuntu"
 if canonicalize_ubuntu_app_dir; then
     exit 1
@@ -455,6 +470,129 @@ BASH, base_path('setup.sh'), $directory);
         unlink($directory.'/.env');
         rmdir($directory);
     }
+});
+
+it('writes multiple IP ranges and a selected language from first-run prompts', function () {
+    $directory = sys_get_temp_dir().'/jin-setup-'.bin2hex(random_bytes(8));
+    mkdir($directory, 0700);
+    file_put_contents($directory.'/.env', "IP_RESTRICTION_ENABLED=false\nALLOWED_IPS=127.0.0.1\nAPP_LOCALE=ja\n");
+
+    $process = runSetupBash(<<<'BASH'
+source "$1"
+setup_input_is_interactive() { return 0; }
+ENV_FILE="$2/.env"
+IP_RESTRICTION_OVERRIDE=""
+ALLOWED_IPS_OVERRIDE=""
+APP_LOCALE_OVERRIDE=""
+resolve_ubuntu_access_and_locale 1 <<'INPUT'
+y
+192.168.1.0/24, 10.0.0.0/8
+2
+INPUT
+configure_access_and_locale_environment
+printf 'enabled=%s\nallowed=%s\nlocale=%s\n' \
+    "$TARGET_IP_RESTRICTION_ENABLED" "$TARGET_ALLOWED_IPS" "$TARGET_APP_LOCALE"
+BASH, base_path('setup.sh'), $directory);
+
+    try {
+        $environment = (string) file_get_contents($directory.'/.env');
+
+        expect($process->isSuccessful())->toBeTrue($process->getErrorOutput())
+            ->and($process->getOutput())->toContain(
+                'Example: 192.168.1.0/24, 10.0.0.0/8',
+                'enabled=true',
+                'allowed=127.0.0.1,::1,192.168.1.0/24,10.0.0.0/8',
+                'locale=en',
+            )
+            ->and($environment)->toContain(
+                'IP_RESTRICTION_ENABLED=true',
+                'ALLOWED_IPS=127.0.0.1,::1,192.168.1.0/24,10.0.0.0/8',
+                'APP_LOCALE=en',
+            );
+    } finally {
+        unlink($directory.'/.env');
+        rmdir($directory);
+    }
+});
+
+it('allows all IP addresses and selects Japanese when prompts are left blank', function () {
+    $directory = sys_get_temp_dir().'/jin-setup-'.bin2hex(random_bytes(8));
+    mkdir($directory, 0700);
+    file_put_contents($directory.'/.env', "IP_RESTRICTION_ENABLED=true\nALLOWED_IPS=127.0.0.1\nAPP_LOCALE=en\n");
+
+    $process = runSetupBash(<<<'BASH'
+source "$1"
+setup_input_is_interactive() { return 0; }
+ENV_FILE="$2/.env"
+IP_RESTRICTION_OVERRIDE=""
+ALLOWED_IPS_OVERRIDE=""
+APP_LOCALE_OVERRIDE=""
+resolve_ubuntu_access_and_locale 1 <<'INPUT'
+
+
+INPUT
+configure_access_and_locale_environment
+printf 'enabled=%s\nallowed=%s\nlocale=%s\n' \
+    "$TARGET_IP_RESTRICTION_ENABLED" "$TARGET_ALLOWED_IPS" "$TARGET_APP_LOCALE"
+BASH, base_path('setup.sh'), $directory);
+
+    try {
+        $environment = (string) file_get_contents($directory.'/.env');
+
+        expect($process->isSuccessful())->toBeTrue($process->getErrorOutput())
+            ->and($process->getOutput())->toContain('enabled=false', 'allowed=', 'locale=ja')
+            ->and($environment)->toContain(
+                'IP_RESTRICTION_ENABLED=false',
+                "ALLOWED_IPS=\n",
+                'APP_LOCALE=ja',
+            );
+    } finally {
+        unlink($directory.'/.env');
+        rmdir($directory);
+    }
+});
+
+it('preserves existing access and language settings on a non-first setup', function () {
+    $directory = sys_get_temp_dir().'/jin-setup-'.bin2hex(random_bytes(8));
+    mkdir($directory, 0700);
+    file_put_contents($directory.'/.env', "IP_RESTRICTION_ENABLED=true\nALLOWED_IPS=2001:db8::/32\nAPP_LOCALE=fr\n");
+
+    $process = runSetupBash(<<<'BASH'
+source "$1"
+setup_input_is_interactive() { return 0; }
+ENV_FILE="$2/.env"
+IP_RESTRICTION_OVERRIDE=""
+ALLOWED_IPS_OVERRIDE=""
+APP_LOCALE_OVERRIDE=""
+resolve_ubuntu_access_and_locale 0
+printf 'enabled=%s\nallowed=%s\nlocale=%s\n' \
+    "$TARGET_IP_RESTRICTION_ENABLED" "$TARGET_ALLOWED_IPS" "$TARGET_APP_LOCALE"
+BASH, base_path('setup.sh'), $directory);
+
+    try {
+        expect($process->isSuccessful())->toBeTrue($process->getErrorOutput())
+            ->and($process->getOutput())->toContain(
+                'enabled=true',
+                'allowed=127.0.0.1,::1,2001:db8::/32',
+                'locale=fr',
+            );
+    } finally {
+        unlink($directory.'/.env');
+        rmdir($directory);
+    }
+});
+
+it('rejects malformed or host-bit CIDR allowlists', function () {
+    $process = runSetupBash(<<<'BASH'
+source "$1"
+normalize_ip_allowlist '192.168.1.0/24, 10.0.0.0/8' >/dev/null
+normalize_ip_allowlist '192.168.1.5/24' >/dev/null && exit 1
+normalize_ip_allowlist '192.168.1.0/24,not-an-ip' >/dev/null && exit 1
+printf 'invalid_allowlists=rejected\n'
+BASH, base_path('setup.sh'));
+
+    expect($process->isSuccessful())->toBeTrue($process->getErrorOutput())
+        ->and($process->getOutput())->toContain('invalid_allowlists=rejected');
 });
 
 it('regenerates local placeholder secrets and identifiers but preserves production values', function () {

@@ -27,7 +27,7 @@ class ActivityController extends Controller
 
         $activities = Activity::query()
             ->select(['id', 'project_id', 'actor_id', 'type', 'subject_id', 'metadata', 'created_at'])
-            ->with(['actor:id,name', 'project:id,team_id,name'])
+            ->with(['actor:id,name,avatar_path', 'project:id,team_id,name'])
             ->whereIn('project_id', (clone $visibleProjects)->select('projects.id'))
             ->when($projectId !== null, fn (Builder $query) => $query->where('project_id', $projectId))
             ->when($actorId !== null, fn (Builder $query) => $query->where('actor_id', $actorId))
@@ -46,6 +46,7 @@ class ActivityController extends Controller
                 'target' => $activity->type->target(),
                 'actorId' => $activity->actor_id,
                 'actorName' => $activity->actor?->name,
+                'actorAvatar' => $activity->actor?->avatar,
                 'subjectLabel' => $activity->metadata['label'],
                 'subjectId' => ($activity->metadata['subjectDeleted'] ?? false)
                     ? null

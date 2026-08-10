@@ -9,7 +9,7 @@
         | 'destructive'
         | 'outline'
         | 'link';
-    type Size = 'default' | 'sm' | 'lg' | 'icon';
+    type Size = 'default' | 'sm' | 'xs' | 'lg' | 'icon' | 'icon-xs';
     type AsChildProps = {
         class?: string;
         onClick?: (event: MouseEvent) => void;
@@ -33,8 +33,10 @@
     const sizes: Record<Size, string> = {
         default: 'h-9 px-4 py-2',
         sm: 'h-8 rounded-md px-3 text-xs',
+        xs: 'h-6 gap-1 rounded-md px-2 text-xs [&_svg]:size-3',
         lg: 'h-10 rounded-md px-8',
         icon: 'h-9 w-9',
+        'icon-xs': 'size-6 rounded-md [&_svg]:size-3',
     };
 
     let {

@@ -5,7 +5,14 @@
     import NotificationController from '@/actions/App/Http/Controllers/NotificationController';
     import { getEcho } from '@/lib/echo';
     import { t } from '@/lib/i18n';
-    import { realtimeNotificationToast } from '@/lib/realtime-notifications';
+    import {
+        playNotificationSound,
+        prepareNotificationSound,
+    } from '@/lib/notification-sound';
+    import {
+        realtimeNotificationToast,
+        removeRealtimeNotificationOptimistically,
+    } from '@/lib/realtime-notifications';
     import type { RealtimeNotificationPayload } from '@/lib/realtime-notifications';
     import { dashboard } from '@/routes';
 
@@ -13,6 +20,8 @@
         notification: RealtimeNotificationPayload,
     ): void => {
         const currentTeam = page.props.currentTeam;
+
+        toast.dismiss(`notification:${notification.id}`);
 
         if (notification.type === 'team_invitation') {
             if (currentTeam) {
@@ -27,7 +36,19 @@
         );
 
         if (targetTeam) {
-            router.visit(NotificationController.index(targetTeam.slug));
+            router
+                .optimistic((props: typeof page.props) =>
+                    removeRealtimeNotificationOptimistically(
+                        props,
+                        notification,
+                    ),
+                )
+                .visit(
+                    NotificationController.open([
+                        targetTeam.slug,
+                        notification.id,
+                    ]),
+                );
 
             return;
         }
@@ -45,11 +66,13 @@
         const channelName = `App.Models.User.${currentUser.id}`;
         const echo = getEcho();
         const channel = echo.private(channelName);
+        const stopPreparingNotificationSound = prepareNotificationSound();
         const showNotification = (
             notification: RealtimeNotificationPayload,
         ): void => {
             const content = realtimeNotificationToast(notification, t);
 
+            void playNotificationSound();
             toast.info(content.title, {
                 id: `notification:${notification.id}`,
                 description: content.description,
@@ -76,6 +99,7 @@
         channel.notification(showNotification);
 
         return () => {
+            stopPreparingNotificationSound();
             channel.stopListeningForNotification(showNotification);
             echo.leave(channelName);
         };

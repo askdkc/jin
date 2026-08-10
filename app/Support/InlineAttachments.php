@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\Card;
+use App\Models\ChatMessage;
 use App\Models\CheckInPrompt;
 use App\Models\Comment;
 use App\Models\Document;
@@ -203,7 +204,7 @@ class InlineAttachments
             $attachable instanceof Card => 'description',
             $attachable instanceof CheckInPrompt => 'answer',
             $attachable instanceof Todo => 'details',
-            $attachable instanceof Comment, $attachable instanceof MessageBoardPost => 'body',
+            $attachable instanceof ChatMessage, $attachable instanceof Comment, $attachable instanceof MessageBoardPost => 'body',
             default => null,
         };
     }

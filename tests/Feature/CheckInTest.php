@@ -15,6 +15,7 @@ use App\Models\User;
 use App\Notifications\CheckInDueNotification;
 use App\Support\CheckInNotificationDispatcher;
 use Carbon\CarbonImmutable;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Support\Collection;
@@ -167,8 +168,46 @@ test('dispatcher creates prompts and advances to the next selected weekday in lo
         fn (CheckInDueNotification $notification, array $channels): bool => $notification instanceof ShouldQueue
             && $notification->prompt->check_in_id === $checkIn->id
             && $notification->queue === null
+            && in_array('database', $channels, true)
+            && in_array('broadcast', $channels, true)
             && in_array('mail', $channels, true),
     );
+});
+
+test('a due check-in appears in the persistent workspace notifications', function () {
+    $this->travelTo(CarbonImmutable::parse('2026-07-17 09:00', 'Asia/Tokyo'));
+
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create([
+        'name' => '週次プロジェクト',
+    ]);
+    $project->members()->attach($owner);
+    $checkIn = CheckIn::factory()->for($project)->for($owner, 'creator')->create([
+        'question' => '今週の進捗は？',
+        'next_run_at' => now(),
+    ]);
+    $checkIn->targets()->attach($owner);
+
+    $this->artisan('check-ins:dispatch')->assertSuccessful();
+
+    expect($owner->notifications()->sole()->data)
+        ->toMatchArray([
+            'type' => 'check_in_due',
+            'projectId' => $project->id,
+            'projectName' => '週次プロジェクト',
+            'checkInQuestion' => '今週の進捗は？',
+        ]);
+
+    $this->actingAs($owner)
+        ->get(route('dashboard', $team))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('workspaceBar.notifications.0.type', 'check_in_due')
+            ->where('workspaceBar.notifications.0.projectName', '週次プロジェクト')
+            ->where('workspaceBar.notifications.0.title', '今週の進捗は？')
+            ->where('workspaceBar.notifications.0.read', false));
 });
 
 test('dispatcher skips paused and future check-ins', function () {
@@ -528,6 +567,12 @@ test('check-in dispatcher is registered with the scheduler', function () {
     $this->artisan('schedule:list')
         ->expectsOutputToContain('check-ins:dispatch')
         ->assertSuccessful();
+
+    $event = collect(app(Schedule::class)->events())
+        ->first(fn ($event): bool => str_contains($event->command ?? '', 'check-ins:dispatch'));
+
+    expect($event)->not->toBeNull()
+        ->and($event->expression)->toBe('* * * * *');
 });
 
 test('check-in notification jobs reclaim stale processing without sending twice', function () {

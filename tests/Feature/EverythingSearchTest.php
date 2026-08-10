@@ -4,6 +4,8 @@ use App\Enums\StoredFileContentStatus;
 use App\Enums\TeamRole;
 use App\Models\CardColumn;
 use App\Models\CardTable;
+use App\Models\ChatChannel;
+use App\Models\ChatMessage;
 use App\Models\CheckIn;
 use App\Models\CheckInPrompt;
 use App\Models\Comment;
@@ -57,23 +59,34 @@ test('everything view combines the searchable project content types', function (
     $file = StoredFile::factory()->for($project)->for($member, 'uploader')->create(['original_name' => '仕様.pdf']);
     ExternalLink::factory()->for($project)->for($member, 'creator')->create(['title' => '参考リンク']);
     Comment::factory()->for($project)->for($member, 'user')->for($message, 'commentable')->create(['body' => '確認コメント']);
+    $chatChannel = ChatChannel::factory()->for($project)->for($member, 'creator')->create();
+    ChatMessage::factory()
+        ->for($project)
+        ->for($chatChannel, 'channel')
+        ->for($member, 'user')
+        ->create(['body' => 'チャットで確認']);
 
     $this->actingAs($member)
         ->get(route('everything.index', $team))
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
             ->component('everything/Index')
-            ->has('results.data', 6)
-            ->where('results.data', function (Collection $items) use ($file, $message, $project, $team, $todo, $todoList): bool {
+            ->has('results.data', 7)
+            ->where('results.data', function (Collection $items) use ($chatChannel, $file, $message, $project, $team, $todo, $todoList): bool {
                 $types = $items->pluck('type')->sort()->values()->all();
                 $byType = $items->keyBy('type');
 
-                return $types === ['comment', 'document', 'file', 'link', 'message', 'todo']
+                return $types === ['chat', 'comment', 'document', 'file', 'link', 'message', 'todo']
                     && $byType['message']['href'] === route(
                         'projects.messages.show',
                         [$team, $project, $message],
                         absolute: false,
                     )
+                    && $byType['chat']['href'] === route('projects.chat.show', [
+                        'current_team' => $team,
+                        'project' => $project,
+                        'channel' => $chatChannel->id,
+                    ], absolute: false)
                     && $byType['todo']['href'] === route(
                         'projects.todos.show',
                         [$team, $project, $todoList, $todo],
@@ -103,6 +116,112 @@ test('everything view combines the searchable project content types', function (
             })
             ->where('projects.0.id', $project->id)
             ->where('projects.0.name', '横断対象'));
+});
+
+test('everything search finds chat messages and links to their channel', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $channel = ChatChannel::factory()
+        ->for($project)
+        ->for($owner, 'creator')
+        ->create(['name' => 'release-planning']);
+    $message = ChatMessage::factory()
+        ->for($project)
+        ->for($channel, 'channel')
+        ->for($owner, 'user')
+        ->create(['body' => '<p>リリース判定は金曜日に実施します。</p>']);
+
+    $this->actingAs($owner)
+        ->get(route('everything.index', [
+            $team,
+            'q' => 'リリース判定',
+            'type' => 'chat',
+        ]))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('results.data', 1)
+            ->where('results.total', 1)
+            ->where('results.data.0.id', $message->id)
+            ->where('results.data.0.type', 'chat')
+            ->where('results.data.0.title', 'release-planning')
+            ->where('results.data.0.snippet', 'リリース判定は金曜日に実施します。')
+            ->where(
+                'results.data.0.href',
+                route('projects.chat.show', [
+                    'current_team' => $team,
+                    'project' => $project,
+                    'channel' => $channel->id,
+                ], absolute: false),
+            ));
+});
+
+test('everything chat search only exposes messages from accessible projects', function () {
+    $owner = User::factory()->create();
+    $member = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $visibleProject = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $hiddenProject = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $visibleProject->members()->attach($member);
+    $visibleChannel = ChatChannel::factory()->for($visibleProject)->for($owner, 'creator')->create();
+    $hiddenChannel = ChatChannel::factory()->for($hiddenProject)->for($owner, 'creator')->create();
+    $search = 'chat-project-isolation-term';
+    $visibleMessage = ChatMessage::factory()
+        ->for($visibleProject)
+        ->for($visibleChannel, 'channel')
+        ->for($owner, 'user')
+        ->create(['body' => "Visible {$search}"]);
+    ChatMessage::factory()
+        ->for($hiddenProject)
+        ->for($hiddenChannel, 'channel')
+        ->for($owner, 'user')
+        ->create(['body' => "Hidden {$search}"]);
+
+    $this->actingAs($member)
+        ->get(route('everything.index', [
+            $team,
+            'q' => $search,
+            'type' => 'chat',
+        ]))
+        ->assertOk()
+        ->assertDontSee('Hidden')
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('results.data', 1)
+            ->where('results.total', 1)
+            ->where('results.data.0.id', $visibleMessage->id)
+            ->where('results.data.0.project.id', $visibleProject->id));
+});
+
+test('everything chat results fall back to the project when chat is disabled', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create([
+        'enabled_tools' => [],
+    ]);
+    $channel = ChatChannel::factory()->for($project)->for($owner, 'creator')->create();
+    ChatMessage::factory()
+        ->for($project)
+        ->for($channel, 'channel')
+        ->for($owner, 'user')
+        ->create(['body' => '無効チャットの検索結果']);
+
+    $this->actingAs($owner)
+        ->get(route('everything.index', [
+            $team,
+            'q' => '無効チャット',
+            'type' => 'chat',
+        ]))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->has('results.data', 1)
+            ->where(
+                'results.data.0.href',
+                route('projects.show', [$team, $project], absolute: false),
+            ));
 });
 
 test('everything results fall back to the project when destination tools are disabled', function () {

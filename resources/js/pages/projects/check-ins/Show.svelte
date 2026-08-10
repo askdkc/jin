@@ -61,6 +61,7 @@
     } from '@/components/ui/dialog';
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
+    import { submitFormById } from '@/lib/form-submit';
     import { currentLocale, t } from '@/lib/i18n';
     import { getInitials } from '@/lib/initials';
     import type {
@@ -639,6 +640,11 @@
                                                                     project.id,
                                                                 ],
                                                             )}
+                                                            onSubmitShortcut={() =>
+                                                                !processing &&
+                                                                submitFormById(
+                                                                    `check-in-response-comment-form-${response.id}`,
+                                                                )}
                                                         />
                                                         <InputError
                                                             message={errors.body}

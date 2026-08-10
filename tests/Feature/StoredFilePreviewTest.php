@@ -9,10 +9,12 @@ use App\Models\User;
 use App\Support\StoredFilePreviewGenerator;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Bus\Dispatcher;
+use Illuminate\Http\Client\Request as HttpRequest;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Process\PendingProcess;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
@@ -33,10 +35,27 @@ function storedFilePreviewProject(): array
     return compact('owner', 'member', 'outsider', 'team', 'project');
 }
 
-test('stored file creation schedules previews only for supported extensions', function () {
-    Queue::fake();
+function configureOnlyOfficeThumbnails(): void
+{
+    config([
+        'onlyoffice.enabled' => true,
+        'onlyoffice.document_server_url' => 'http://onlyoffice-documentserver',
+        'onlyoffice.public_url' => 'https://office.example.com',
+        'onlyoffice.internal_url' => 'http://app.internal.test',
+        'onlyoffice.jwt_secret' => 'test-onlyoffice-secret-0123456789012345',
+        'onlyoffice.instance_id' => 'jin-thumbnail-test',
+        'onlyoffice.download_ttl' => 300,
+        'onlyoffice.healthcheck_timeout' => 3,
+        'onlyoffice.max_file_size' => 26214400,
+        'onlyoffice.document_server_max_download_bytes' => 26214400,
+    ]);
+}
 
-    ['owner' => $owner, 'project' => $project] = storedFilePreviewProject();
+test('stored file creation schedules previews for pdf and enabled office extensions', function () {
+    Queue::fake();
+    configureOnlyOfficeThumbnails();
+
+    ['project' => $project] = storedFilePreviewProject();
 
     $pdf = StoredFile::factory()->for($project)->create([
         'original_name' => 'source.pdf',
@@ -50,7 +69,7 @@ test('stored file creation schedules previews only for supported extensions', fu
             'original_name' => "source.{$extension}",
         ]);
 
-        expect($file->preview_status)->toBeNull()
+        expect($file->preview_status)->toBe('pending')
             ->and($file->preview_path)->toBeNull();
     }
 
@@ -63,7 +82,7 @@ test('stored file creation schedules previews only for supported extensions', fu
         ->and($unsupported->preview_path)->toBeNull();
 
     Queue::assertPushed(GenerateStoredFilePreview::class, fn (GenerateStoredFilePreview $job): bool => $job->queue === null);
-    Queue::assertPushed(GenerateStoredFilePreview::class, 1);
+    Queue::assertPushed(GenerateStoredFilePreview::class, 11);
 });
 
 test('legacy preview backfill claims supported rows once and leaves unsupported rows untouched', function () {
@@ -143,9 +162,32 @@ test('preview backfill retries failed rows without duplicating pending rows', fu
     );
 });
 
-test('office uploads do not enter the generated preview queue', function () {
+test('office uploads enter the generated preview queue when OnlyOffice is enabled', function () {
     Storage::fake('local');
     Queue::fake();
+    configureOnlyOfficeThumbnails();
+    ['owner' => $owner, 'team' => $team, 'project' => $project] = storedFilePreviewProject();
+
+    $this->actingAs($owner)
+        ->post(route('projects.files.store', [$team, $project]), [
+            'file' => UploadedFile::fake()->create('report.docx', 10, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+        ])
+        ->assertRedirect();
+
+    $storedFile = StoredFile::query()->sole();
+
+    expect($storedFile->preview_status)->toBe('pending');
+    Queue::assertPushed(
+        GenerateStoredFilePreview::class,
+        fn (GenerateStoredFilePreview $job): bool => $job->storedFileId === $storedFile->id
+            && $job->sourcePath === $storedFile->path,
+    );
+});
+
+test('office uploads stay out of the generated preview queue when OnlyOffice is disabled', function () {
+    Storage::fake('local');
+    Queue::fake();
+    config(['onlyoffice.enabled' => false]);
     ['owner' => $owner, 'team' => $team, 'project' => $project] = storedFilePreviewProject();
 
     $this->actingAs($owner)
@@ -162,6 +204,7 @@ test('office uploads do not enter the generated preview queue', function () {
 
 test('a post-commit queue failure keeps the committed row and original blob', function () {
     Storage::fake('local');
+    config(['stored-file-content.enabled' => false]);
     ['owner' => $owner, 'project' => $project] = storedFilePreviewProject();
     $sourcePath = 'projects/test/queue-down.pdf';
     Storage::disk('local')->put($sourcePath, 'original bytes');
@@ -259,22 +302,102 @@ test('the preview generator converts page one to a source-versioned webp and mar
     Process::assertRanTimes(fn (PendingProcess $process) => $process->command[0] === config('services.imagemagick.path'));
 });
 
-test('office files are excluded from local preview generation', function () {
+test('the preview generator converts an office first page to a source-versioned webp', function () {
     Storage::fake('local');
     Queue::fake();
+    Http::preventStrayRequests();
+    configureOnlyOfficeThumbnails();
     ['owner' => $owner, 'project' => $project] = storedFilePreviewProject();
     Storage::disk('local')->put('projects/test/report.docx', 'office bytes');
     $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
         'path' => 'projects/test/report.docx',
         'original_name' => 'report.docx',
+        'mime_type' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     ]);
 
+    Http::fake([
+        'http://onlyoffice-documentserver/converter*' => Http::response([
+            'endConvert' => true,
+            'fileType' => 'png',
+            'fileUrl' => 'http://onlyoffice-documentserver/cache/thumbnail.png',
+        ]),
+        'http://onlyoffice-documentserver/cache/thumbnail.png' => Http::response("\x89PNG\r\n\x1a\npng bytes", 200, [
+            'Content-Type' => 'image/png',
+        ]),
+    ]);
+    Process::fake(function (PendingProcess $process) {
+        if (($process->command[0] ?? null) === config('services.imagemagick.path')) {
+            file_put_contents($process->command[array_key_last($process->command)], 'webp bytes');
+        }
+
+        return Process::result();
+    });
+
+    (new GenerateStoredFilePreview($file->id, $file->path))->handle(app(StoredFilePreviewGenerator::class));
+
+    $file->refresh();
+
+    expect(StoredFilePreviewGenerator::supports($file->original_name))->toBeTrue()
+        ->and($file->preview_status)->toBe('ready')
+        ->and($file->preview_path)->toBe(StoredFilePreviewGenerator::webpPath($file->id, $file->path));
+    Storage::disk('local')->assertExists(StoredFilePreviewGenerator::webpPath($file->id, $file->path));
+    Http::assertSent(fn (HttpRequest $request): bool => $request->method() === 'POST'
+        && str_starts_with($request->url(), 'http://onlyoffice-documentserver/converter?shardkey=')
+        && $request['filetype'] === 'docx'
+        && $request['outputtype'] === 'png'
+        && $request['thumbnail'] === [
+            'aspect' => 1,
+            'first' => true,
+            'height' => 1600,
+            'width' => 1600,
+        ]
+        && is_string($request['token'])
+        && $request['token'] !== '');
+    Http::assertSent(fn (HttpRequest $request): bool => $request->method() === 'GET'
+        && $request->url() === 'http://onlyoffice-documentserver/cache/thumbnail.png');
+    Process::assertNotRan(fn (PendingProcess $process): bool => ($process->command[0] ?? null) === config('services.poppler.path'));
+    Process::assertRanTimes(fn (PendingProcess $process): bool => ($process->command[0] ?? null) === config('services.imagemagick.path')
+        && in_array('-trim', $process->command, true));
+});
+
+test('office thumbnail conversion rejects a cross-origin result URL', function () {
+    Storage::fake('local');
+    Queue::fake();
+    Http::preventStrayRequests();
+    configureOnlyOfficeThumbnails();
+    ['owner' => $owner, 'project' => $project] = storedFilePreviewProject();
+    Storage::disk('local')->put('projects/test/report.xlsx', 'office bytes');
+    $file = StoredFile::factory()->for($project)->for($owner, 'uploader')->create([
+        'path' => 'projects/test/report.xlsx',
+        'original_name' => 'report.xlsx',
+        'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ]);
+    Http::fake([
+        'http://onlyoffice-documentserver/converter*' => Http::response([
+            'endConvert' => true,
+            'fileType' => 'png',
+            'fileUrl' => 'https://attacker.example/thumbnail.png',
+        ]),
+    ]);
     Process::fake();
 
-    expect(StoredFilePreviewGenerator::supports($file))->toBeFalse()
-        ->and($file->preview_status)->toBeNull();
-    Queue::assertNotPushed(GenerateStoredFilePreview::class);
+    expect(fn () => (new GenerateStoredFilePreview($file->id, $file->path))
+        ->handle(app(StoredFilePreviewGenerator::class)))
+        ->toThrow(RuntimeException::class, 'OnlyOffice thumbnail conversion returned an invalid result.');
+
+    expect($file->refresh()->preview_status)->toBe('processing')
+        ->and($file->preview_path)->toBeNull();
+    Http::assertSentCount(1);
+    Http::assertNotSent(fn (HttpRequest $request): bool => str_contains($request->url(), 'attacker.example'));
     Process::assertNothingRan();
+});
+
+test('office files remain unsupported when OnlyOffice is disabled', function () {
+    config(['onlyoffice.enabled' => false]);
+
+    expect(StoredFilePreviewGenerator::supports('report.docx'))->toBeFalse()
+        ->and(StoredFilePreviewGenerator::supports('report.xlsx'))->toBeFalse()
+        ->and(StoredFilePreviewGenerator::supports('report.pdf'))->toBeTrue();
 });
 
 test('the legacy preview endpoint streams office originals without conversion', function (string $extension, string $mimeType) {

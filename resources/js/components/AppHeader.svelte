@@ -2,7 +2,6 @@
     import type { ReloadOptions } from '@inertiajs/core';
     import { Form, Link, page, router, WhenVisible } from '@inertiajs/svelte';
     import ArrowLeft from 'lucide-svelte/icons/arrow-left';
-    import Bell from 'lucide-svelte/icons/bell';
     import CalendarDays from 'lucide-svelte/icons/calendar-days';
     import ChartColumn from 'lucide-svelte/icons/chart-column';
     import ChartGantt from 'lucide-svelte/icons/chart-gantt';
@@ -64,7 +63,6 @@
 
     const user = $derived(page.props.auth.user);
     const currentTeam = $derived(page.props.currentTeam as Team | null);
-    const unreadCount = $derived(page.props.notificationSummary.unreadCount);
     const navigationProjects = $derived(page.props.navigationProjects);
     const navigationPeopleLoaded = $derived(
         page.props.navigationPeople !== undefined,
@@ -384,25 +382,6 @@
                     <kbd class="rounded border px-1.5 py-0.5 text-[10px]"
                         >⇧J</kbd
                     >
-                </Button>
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    class="relative"
-                    aria-label={`${t('New for you')} (${unreadCount})`}
-                    onclick={() =>
-                        window.dispatchEvent(
-                            new CustomEvent('jin:new-for-you'),
-                        )}
-                >
-                    <Bell class="size-5" />
-                    {#if unreadCount > 0}
-                        <span
-                            class="absolute -top-1 -right-1 min-w-5 rounded-full bg-red-500 px-1 text-center text-[10px] font-bold text-white"
-                        >
-                            {unreadCount > 99 ? '99+' : unreadCount}
-                        </span>
-                    {/if}
                 </Button>
             {/if}
 

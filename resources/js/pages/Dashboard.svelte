@@ -24,14 +24,14 @@
     import History from 'lucide-svelte/icons/history';
     import KeyRound from 'lucide-svelte/icons/key-round';
     import List from 'lucide-svelte/icons/list';
+    import PanelRightClose from 'lucide-svelte/icons/panel-right-close';
+    import PanelRightOpen from 'lucide-svelte/icons/panel-right-open';
     import Plus from 'lucide-svelte/icons/plus';
-    import Search from 'lucide-svelte/icons/search';
     import Star from 'lucide-svelte/icons/star';
     import UserPlus from 'lucide-svelte/icons/user-plus';
     import { onMount } from 'svelte';
     import ActivityController from '@/actions/App/Http/Controllers/ActivityController';
     import AdminlandController from '@/actions/App/Http/Controllers/AdminlandController';
-    import EverythingController from '@/actions/App/Http/Controllers/EverythingController';
     import ProjectFavoriteController from '@/actions/App/Http/Controllers/ProjectFavoriteController';
     import ProjectTodoController from '@/actions/App/Http/Controllers/ProjectTodoController';
     import AppHead from '@/components/AppHead.svelte';
@@ -160,6 +160,7 @@
     let projectView = $state<'grid' | 'list'>('list');
 
     onMount(() => {
+        dashboardActivityPanel.hide();
         projectView =
             window.localStorage.getItem('jin:dashboard-project-view') === 'grid'
                 ? 'grid'
@@ -187,32 +188,30 @@
 {/if}
 
 <div
-    class="min-h-[calc(100dvh-4rem)] bg-[#f5f7f3] pb-28 text-slate-800 dark:bg-[#07151d] dark:text-slate-100"
+    class="min-h-[calc(100dvh-6rem)] bg-[#f5f7f3] text-slate-800 dark:bg-[#07151d] dark:text-slate-100"
 >
     <main
-        class="mx-auto w-full max-w-[96rem] px-4 py-6 sm:px-6 sm:py-8 xl:py-10"
+        class="mx-auto w-full max-w-[96rem] px-4 py-6 sm:px-6 sm:py-8 lg:flex lg:min-h-[calc(100dvh-6rem)] lg:flex-col lg:gap-4 lg:pb-3 xl:pt-10"
     >
         <div
-            class={cn(
-                'grid min-w-0 gap-6 lg:items-start xl:gap-8',
-                dashboardActivityPanel.open
-                    ? 'lg:grid-cols-[15rem_minmax(0,44rem)_minmax(17rem,21rem)]'
-                    : 'lg:grid-cols-[15rem_minmax(0,1fr)]',
-            )}
+            class="grid min-w-0 gap-6 motion-reduce:transition-none lg:grid-cols-[15rem_minmax(0,1fr)_var(--dashboard-activity-width)] lg:items-start lg:transition-[grid-template-columns] lg:duration-300 lg:ease-in-out xl:gap-8"
+            style:--dashboard-activity-width={dashboardActivityPanel.open
+                ? 'clamp(13.6rem, 20.8vw, 16.8rem)'
+                : '3rem'}
         >
-            <aside class="space-y-4 lg:sticky lg:top-24">
+            <aside class="flex flex-col gap-3 lg:sticky lg:top-24 lg:gap-2">
                 <h1 class="text-xl font-bold tracking-tight">
                     {t('Welcome, :name', {
                         name: page.props.auth.user?.name ?? '',
                     })}
                 </h1>
 
-                <div class="grid gap-2.5">
+                <div class="grid gap-2 lg:gap-1.5">
                     {#if permissions.canCreateProject}
                         <Button
                             variant="outline"
                             asChild
-                            class="h-auto w-full justify-start rounded-xl bg-card px-4 py-3"
+                            class="h-auto w-full justify-start rounded-xl bg-card px-3 py-2"
                         >
                             {#snippet children(buttonProps)}
                                 <Link
@@ -231,7 +230,7 @@
                         <Button
                             type="button"
                             variant="outline"
-                            class="h-auto w-full justify-start rounded-xl bg-card px-4 py-3"
+                            class="h-auto w-full justify-start rounded-xl bg-card px-3 py-2"
                             onclick={() => (inviteDialogOpen = true)}
                             data-test="dashboard-invite-member-button"
                         >
@@ -244,7 +243,7 @@
                         <Button
                             variant="outline"
                             asChild
-                            class="h-auto w-full justify-start rounded-xl bg-card px-4 py-3"
+                            class="h-auto w-full justify-start rounded-xl bg-card px-3 py-2"
                         >
                             {#snippet children(buttonProps)}
                                 <Link
@@ -262,11 +261,11 @@
             </aside>
 
             <section
-                class="min-w-0 rounded-[1.75rem] border border-slate-200/80 bg-white/70 p-4 shadow-sm backdrop-blur sm:p-5 lg:min-h-[calc(100dvh-9rem)] dark:border-slate-700/80 dark:bg-[#101e26]"
+                class="min-w-0 rounded-[1.75rem] border border-slate-200/80 bg-white/70 p-3 shadow-sm backdrop-blur sm:p-4 dark:border-slate-700/80 dark:bg-[#101e26]"
                 aria-labelledby="dashboard-projects-heading"
             >
                 <div
-                    class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+                    class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
                 >
                     <div>
                         <p
@@ -307,34 +306,6 @@
                                 ><List class="size-4" /></button
                             >
                         </div>
-                        <Button variant="ghost" size="sm" asChild>
-                            {#snippet children(buttonProps)}
-                                <Link
-                                    {...buttonProps}
-                                    href={EverythingController(
-                                        currentTeam.slug,
-                                    )}
-                                    class={buttonProps.class}
-                                >
-                                    <Search class="size-4" />
-                                    {t('Find everything')}
-                                </Link>
-                            {/snippet}
-                        </Button>
-                        <Button
-                            type="button"
-                            variant={dashboardActivityPanel.open
-                                ? 'secondary'
-                                : 'outline'}
-                            size="sm"
-                            class="hidden lg:inline-flex"
-                            aria-pressed={dashboardActivityPanel.open}
-                            aria-controls="dashboard-recent-activity"
-                            onclick={() => dashboardActivityPanel.toggle()}
-                        >
-                            <History class="size-4" />
-                            {t('Recent activity list')}
-                        </Button>
                     </div>
                 </div>
 
@@ -348,11 +319,11 @@
                         <p class="font-semibold">{t('No active projects')}</p>
                     </div>
                 {:else}
-                    <div class="space-y-6">
+                    <div class="flex flex-col gap-4">
                         {#each projectGroups as group (group.id ?? 'other')}
-                            <section>
+                            <section class="flex flex-col gap-2">
                                 <h3
-                                    class="mb-2 flex items-center gap-2 px-1 text-sm font-bold text-muted-foreground"
+                                    class="flex items-center gap-2 px-1 text-sm font-bold text-muted-foreground"
                                 >
                                     <FolderKanban class="size-4" />
                                     {group.name}
@@ -370,19 +341,19 @@
                                                     project.id,
                                                 ])}
                                                 prefetch
-                                                class="group flex min-h-48 min-w-0 flex-col rounded-2xl border border-slate-200 bg-card p-5 shadow-xs transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-slate-600 dark:bg-[#192932] sm:p-6"
+                                                class="group flex min-h-32 min-w-0 flex-col rounded-2xl border border-slate-200 bg-card p-3 shadow-xs transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-slate-600 dark:bg-[#192932] sm:p-4"
                                             >
                                                 <span
                                                     class="flex min-w-0 items-start justify-between gap-4 pr-10"
                                                 >
                                                     <span class="min-w-0">
                                                         <span
-                                                            class="block break-words text-xl font-bold tracking-tight sm:text-2xl"
+                                                            class="block break-words text-lg font-bold tracking-tight sm:text-xl"
                                                         >
                                                             {project.name}
                                                         </span>
                                                         <span
-                                                            class="mt-1 line-clamp-3 block text-sm leading-6 text-muted-foreground"
+                                                            class="mt-1 line-clamp-2 block text-sm leading-5 text-muted-foreground"
                                                         >
                                                             {project.description ||
                                                                 t(
@@ -396,7 +367,7 @@
                                                 </span>
 
                                                 <span
-                                                    class="mt-auto flex items-end justify-between gap-4 pt-8"
+                                                    class="mt-auto flex items-end justify-between gap-4 pt-3"
                                                 >
                                                     <span
                                                         class="flex -space-x-2"
@@ -406,7 +377,7 @@
                                                     >
                                                         {#each project.members as member (member.id)}
                                                             <Avatar
-                                                                class="size-9 border-2 border-card dark:border-[#192932]"
+                                                                class="size-8 border-2 border-card dark:border-[#192932]"
                                                             >
                                                                 <AvatarFallback
                                                                     class="bg-primary/15 text-xs font-bold text-primary"
@@ -439,7 +410,7 @@
                                                         project.id,
                                                     ],
                                                 )}
-                                                class="absolute top-4 right-4"
+                                                class="absolute top-3 right-3"
                                             >
                                                 {#snippet children({
                                                     processing,
@@ -475,122 +446,180 @@
             <aside
                 id="dashboard-recent-activity"
                 class={cn(
-                    'min-w-0 lg:sticky lg:top-24',
-                    !dashboardActivityPanel.open && 'lg:hidden',
+                    'relative min-w-0 lg:sticky lg:top-24 lg:self-stretch lg:overflow-hidden',
+                    !dashboardActivityPanel.open &&
+                        'lg:border-l lg:border-border lg:pl-2',
                 )}
+                data-state={dashboardActivityPanel.open ? 'open' : 'closed'}
+                onmouseenter={() => dashboardActivityPanel.show()}
+                onmouseleave={() => dashboardActivityPanel.hide()}
             >
-                <div class="mb-4 flex items-center justify-between gap-3">
-                    <h2 class="text-lg font-bold">{t('Recent activity')}</h2>
-                    <Link
-                        href={ActivityController(currentTeam.slug)}
-                        class="shrink-0 text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                <div
+                    class={cn(
+                        'lg:flex lg:min-h-0 lg:w-full lg:min-w-0 lg:flex-col lg:transition-[height,opacity,transform,visibility] lg:duration-200 lg:ease-out motion-reduce:transition-none',
+                        dashboardActivityPanel.open
+                            ? 'lg:visible lg:max-h-[calc(100dvh-9rem)] lg:translate-x-0 lg:opacity-100'
+                            : 'lg:invisible lg:h-0 lg:translate-x-3 lg:opacity-0',
+                    )}
+                >
+                    <div
+                        class="mb-4 flex items-center justify-between gap-3 lg:shrink-0"
                     >
-                        {t('View all')}
-                    </Link>
+                        <h2 class="text-lg font-bold">
+                            {t('Recent activity')}
+                        </h2>
+                        <div class="flex items-center gap-1">
+                            <Link
+                                href={ActivityController(currentTeam.slug)}
+                                class="shrink-0 text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                            >
+                                {t('View all')}
+                            </Link>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                class="hidden lg:inline-flex"
+                                aria-label={t('Collapse column')}
+                                aria-controls="dashboard-recent-activity"
+                                aria-expanded={dashboardActivityPanel.open}
+                                onclick={() => dashboardActivityPanel.hide()}
+                            >
+                                <PanelRightClose />
+                            </Button>
+                        </div>
+                    </div>
+
+                    <div
+                        class="lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:pr-2"
+                    >
+                        {#if recentActivities.length === 0}
+                            <div
+                                class="rounded-2xl border border-dashed bg-card/70 px-5 py-10 text-center"
+                            >
+                                <History
+                                    class="mx-auto mb-3 size-8 text-muted-foreground"
+                                />
+                                <p class="text-sm text-muted-foreground">
+                                    {t('No activity yet')}
+                                </p>
+                            </div>
+                        {:else}
+                            <ol class="ml-4 border-l border-border">
+                                {#each recentActivities as activity (activity.id)}
+                                    <li class="relative pb-5 pl-6 last:pb-0">
+                                        <Avatar
+                                            class="absolute top-0 -left-4 size-8 border-2 border-[#f5f7f3] dark:border-[#07151d]"
+                                        >
+                                            <AvatarFallback
+                                                class="bg-violet-500 text-[10px] font-bold text-white"
+                                            >
+                                                {getInitials(
+                                                    activity.actorName ||
+                                                        t('Deleted user'),
+                                                )}
+                                            </AvatarFallback>
+                                        </Avatar>
+                                        <Link
+                                            href={activityHref(
+                                                currentTeam.slug,
+                                                activity,
+                                            )}
+                                            class="block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                        >
+                                            <time
+                                                datetime={activity.createdAt ||
+                                                    ''}
+                                                class="text-xs text-muted-foreground"
+                                            >
+                                                {formatActivityDate(
+                                                    activity.createdAt,
+                                                )}
+                                            </time>
+                                            <p class="mt-1 text-sm leading-5">
+                                                <strong class="font-semibold">
+                                                    {activity.actorName ||
+                                                        t('Deleted user')}
+                                                </strong>
+                                                {activityAction(activity.type)}
+                                            </p>
+                                            <p
+                                                class="mt-0.5 break-words text-sm font-medium text-blue-600 underline-offset-4 hover:underline dark:text-blue-400"
+                                            >
+                                                {activity.subjectLabel}
+                                            </p>
+                                            <p
+                                                class="mt-1 truncate text-xs text-muted-foreground"
+                                            >
+                                                {activity.project.name}
+                                            </p>
+                                        </Link>
+                                    </li>
+                                {/each}
+                            </ol>
+                        {/if}
+                    </div>
                 </div>
 
-                {#if recentActivities.length === 0}
-                    <div
-                        class="rounded-2xl border border-dashed bg-card/70 px-5 py-10 text-center"
-                    >
-                        <History
-                            class="mx-auto mb-3 size-8 text-muted-foreground"
-                        />
-                        <p class="text-sm text-muted-foreground">
-                            {t('No activity yet')}
-                        </p>
-                    </div>
-                {:else}
-                    <ol class="ml-4 border-l border-border">
-                        {#each recentActivities as activity (activity.id)}
-                            <li class="relative pb-5 pl-6 last:pb-0">
-                                <Avatar
-                                    class="absolute top-0 -left-4 size-8 border-2 border-[#f5f7f3] dark:border-[#07151d]"
-                                >
-                                    <AvatarFallback
-                                        class="bg-violet-500 text-[10px] font-bold text-white"
-                                    >
-                                        {getInitials(
-                                            activity.actorName ||
-                                                t('Deleted user'),
-                                        )}
-                                    </AvatarFallback>
-                                </Avatar>
-                                <Link
-                                    href={activityHref(
-                                        currentTeam.slug,
-                                        activity,
-                                    )}
-                                    class="block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                >
-                                    <time
-                                        datetime={activity.createdAt || ''}
-                                        class="text-xs text-muted-foreground"
-                                    >
-                                        {formatActivityDate(activity.createdAt)}
-                                    </time>
-                                    <p class="mt-1 text-sm leading-5">
-                                        <strong class="font-semibold">
-                                            {activity.actorName ||
-                                                t('Deleted user')}
-                                        </strong>
-                                        {activityAction(activity.type)}
-                                    </p>
-                                    <p
-                                        class="mt-0.5 break-words text-sm font-medium text-blue-600 underline-offset-4 hover:underline dark:text-blue-400"
-                                    >
-                                        {activity.subjectLabel}
-                                    </p>
-                                    <p
-                                        class="mt-1 truncate text-xs text-muted-foreground"
-                                    >
-                                        {activity.project.name}
-                                    </p>
-                                </Link>
-                            </li>
-                        {/each}
-                    </ol>
-                {/if}
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    class={cn(
+                        'absolute top-0 right-0 hidden',
+                        !dashboardActivityPanel.open && 'lg:inline-flex',
+                    )}
+                    aria-label={t('Expand column')}
+                    aria-controls="dashboard-recent-activity"
+                    aria-expanded={dashboardActivityPanel.open}
+                    onclick={() => dashboardActivityPanel.show()}
+                >
+                    <PanelRightOpen />
+                </Button>
             </aside>
         </div>
 
         <section
             id="my-tasks"
-            class="mt-8 scroll-mt-24 rounded-[1.75rem] border bg-card/90 p-4 shadow-sm sm:p-6"
+            class="mt-4 scroll-mt-24 rounded-2xl border bg-card/90 p-3 shadow-sm sm:p-4 lg:mt-auto"
             aria-labelledby="my-tasks-heading"
         >
             <div
-                class="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"
+                class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
             >
                 <div>
                     <h2
                         id="my-tasks-heading"
-                        class="flex items-center gap-2 text-xl font-bold"
+                        class="flex items-center gap-2 text-lg font-bold"
                     >
-                        <ClipboardCheck class="size-5 text-primary" />
+                        <ClipboardCheck class="size-4 text-primary" />
                         {t('My work')}
                     </h2>
-                    <p class="mt-1 text-sm text-muted-foreground">
+                    <p class="mt-0.5 text-xs text-muted-foreground">
                         {t(
                             'Everything assigned to you across active projects.',
                         )}
                     </p>
                 </div>
-                <Badge variant="secondary">
+                <Badge variant="secondary" class="text-xs">
                     {totalTasks}
                     {t('Open tasks')}
                 </Badge>
             </div>
 
-            <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 {#each workGroups as group (group.key)}
-                    <article class="overflow-hidden rounded-2xl border">
+                    <article class="overflow-hidden rounded-xl border">
                         <header
-                            class="flex items-start justify-between gap-3 border-b bg-muted/30 px-4 py-3"
+                            class="flex items-start justify-between gap-2 border-b bg-muted/30 px-3 py-2"
                         >
                             <div>
-                                <h3 class="font-semibold">{group.title}</h3>
-                                <p class="text-xs text-muted-foreground">
+                                <h3 class="text-sm font-semibold">
+                                    {group.title}
+                                </h3>
+                                <p
+                                    class="text-[11px] leading-4 text-muted-foreground"
+                                >
                                     {group.description}
                                 </p>
                             </div>
@@ -598,6 +627,7 @@
                                 variant={group.overdue && group.todos.length > 0
                                     ? 'destructive'
                                     : 'secondary'}
+                                class="text-[11px]"
                             >
                                 {group.todos.length}
                             </Badge>
@@ -605,7 +635,7 @@
 
                         {#if group.todos.length === 0}
                             <p
-                                class="px-4 py-8 text-center text-sm text-muted-foreground"
+                                class="px-3 py-5 text-center text-xs text-muted-foreground"
                             >
                                 {t('No tasks in this section')}
                             </p>
@@ -618,16 +648,16 @@
                                                 currentTeam.slug,
                                                 todo.project.id,
                                             ])}
-                                            class="group flex min-w-0 items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                                            class="group flex min-w-0 items-center gap-2 px-3 py-2 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                                         >
                                             <span class="min-w-0 flex-1">
                                                 <span
-                                                    class="block break-words text-sm font-medium"
+                                                    class="block break-words text-xs font-medium"
                                                 >
                                                     {todo.title}
                                                 </span>
                                                 <span
-                                                    class="mt-1 block truncate text-xs text-muted-foreground"
+                                                    class="mt-0.5 block truncate text-[11px] text-muted-foreground"
                                                 >
                                                     {todo.project.name} · {todo.dueOn
                                                         ? formatDate(todo.dueOn)

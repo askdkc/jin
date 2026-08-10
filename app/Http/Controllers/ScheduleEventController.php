@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Enums\ActivityType;
+use App\Http\Requests\Phase3\GetScheduleGanttWindowRequest;
 use App\Http\Requests\Phase3\SaveMessageBoardPostReactionRequest as SaveReactionRequest;
 use App\Http\Requests\Phase3\SaveScheduleEventRequest;
 use App\Models\Activity;
@@ -14,8 +15,10 @@ use App\Models\User;
 use App\Support\InlineAttachments;
 use App\Support\Reactions;
 use Carbon\CarbonImmutable;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\Paginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -28,6 +31,12 @@ class ScheduleEventController extends Controller
     // ponytail: caps how far a recurring series is materialized up front; raise or move
     // to a background job if projects need recurrences spanning further than this.
     private const MAX_RECURRING_OCCURRENCES = 60;
+
+    private const CALENDAR_WEEKS_PER_PAGE = 6;
+
+    private const GANTT_DAYS_PER_LOAD = 42;
+
+    private const MAX_CALENDAR_PAGES = 10000;
 
     public function show(
         Request $request,
@@ -90,6 +99,7 @@ class ScheduleEventController extends Controller
             default => CarbonImmutable::now($timezone)->startOfDay(),
         };
         $month = $anchor->startOfMonth();
+        $calendarPage = min(max($request->integer('page', 1), 1), self::MAX_CALENDAR_PAGES);
         $canManageProject = Gate::allows('update', $project);
         $userId = $request->user()->id;
         $projectStart = $project->starts_on !== null
@@ -131,18 +141,11 @@ class ScheduleEventController extends Controller
             ],
         };
 
-        $mapEvent = fn (ScheduleEvent $event): array => [
-            'id' => $event->id,
-            'title' => $event->title,
-            'details' => $event->details,
-            'meetingUrl' => $event->meeting_url,
-            'startsAt' => $event->starts_at->format('Y-m-d\\TH:i'),
-            'endsAt' => $event->ends_at->format('Y-m-d\\TH:i'),
-            'allDay' => $event->all_day,
-            'recurrence' => $event->recurrence,
-            'creatorName' => $event->creator?->name,
-            'canEdit' => $canManageProject || $event->created_by === $userId,
-        ];
+        $mapEvent = fn (ScheduleEvent $event): array => $this->scheduleEventData(
+            $event,
+            $canManageProject,
+            $userId,
+        );
 
         $overlappingEvents = fn (CarbonImmutable $start, CarbonImmutable $end) => $project->scheduleEvents()
             ->where('starts_at', '<=', $end)
@@ -154,20 +157,16 @@ class ScheduleEventController extends Controller
             ->get()
             ->map($mapEvent);
 
-        $weeks = null;
-
-        if ($view === 'month') {
-            $gridStart = $month->startOfWeek(CarbonImmutable::SUNDAY);
-            $gridEnd = $month->endOfMonth()->endOfWeek(CarbonImmutable::SATURDAY);
-
-            $gridEvents = $overlappingEvents($gridStart, $gridEnd)
-                ->with('creator:id,name')
-                ->orderBy('starts_at')
-                ->get()
-                ->map($mapEvent);
-
-            $weeks = $this->buildCalendarGrid($gridStart, $gridEnd, $month, $gridEvents);
-        }
+        $calendarPeriods = $view === 'month'
+            ? Inertia::scroll(fn (): Paginator => $this->calendarPeriodPaginator(
+                $request,
+                $project,
+                $month,
+                $calendarPage,
+                $canManageProject,
+                $userId,
+            ))
+            : null;
 
         return Inertia::render('projects/schedule/Index', [
             'project' => ['id' => $project->id, 'name' => $project->name],
@@ -181,15 +180,116 @@ class ScheduleEventController extends Controller
             'ganttUsesProjectDates' => $ganttUsesProjectDates,
             'month' => $month->format('Y-m'),
             'events' => $events,
-            'weeks' => $weeks,
+            'weeks' => null,
+            'calendarPeriods' => $calendarPeriods,
         ]);
+    }
+
+    public function ganttWindow(
+        GetScheduleGanttWindowRequest $request,
+        Team $currentTeam,
+        Project $project,
+    ): JsonResponse {
+        $timezone = (string) config('app.timezone');
+        $boundary = CarbonImmutable::createFromFormat(
+            '!Y-m-d',
+            (string) $request->validated('boundary'),
+            $timezone,
+        );
+        $direction = $request->validated('direction');
+        $canManageProject = Gate::allows('update', $project);
+        $userId = $request->user()->id;
+
+        if ($direction === 'previous') {
+            $rangeEnd = $boundary->subDay()->endOfDay();
+            $rangeStart = $rangeEnd->subDays(self::GANTT_DAYS_PER_LOAD - 1)->startOfDay();
+        } else {
+            $rangeStart = $boundary->addDay()->startOfDay();
+            $rangeEnd = $rangeStart->addDays(self::GANTT_DAYS_PER_LOAD - 1)->endOfDay();
+        }
+
+        return response()->json([
+            'rangeStart' => $rangeStart->toDateString(),
+            'rangeEnd' => $rangeEnd->toDateString(),
+            'events' => $project->scheduleEvents()
+                ->where('starts_at', '<=', $rangeEnd)
+                ->where('ends_at', '>', $rangeStart)
+                ->with('creator:id,name')
+                ->orderBy('starts_at')
+                ->get()
+                ->map(fn (ScheduleEvent $event): array => $this->scheduleEventData(
+                    $event,
+                    $canManageProject,
+                    $userId,
+                )),
+        ]);
+    }
+
+    /**
+     * @return Paginator<int, array{key: string, startDate: string, endDate: string, weeks: list<list<array<string, mixed>>>}>
+     */
+    private function calendarPeriodPaginator(
+        Request $request,
+        Project $project,
+        CarbonImmutable $month,
+        int $page,
+        bool $canManageProject,
+        int $userId,
+    ): Paginator {
+        $periodStart = $month
+            ->startOfWeek(CarbonImmutable::SUNDAY)
+            ->addWeeks(($page - 1) * self::CALENDAR_WEEKS_PER_PAGE);
+        $periodEnd = $periodStart
+            ->addWeeks(self::CALENDAR_WEEKS_PER_PAGE)
+            ->subSecond();
+        $events = $project->scheduleEvents()
+            ->where('starts_at', '<=', $periodEnd)
+            ->where('ends_at', '>', $periodStart)
+            ->with('creator:id,name')
+            ->orderBy('starts_at')
+            ->get()
+            ->map(fn (ScheduleEvent $event): array => $this->scheduleEventData(
+                $event,
+                $canManageProject,
+                $userId,
+            ));
+        $period = [
+            'key' => $periodStart->toDateString(),
+            'startDate' => $periodStart->toDateString(),
+            'endDate' => $periodEnd->toDateString(),
+            'weeks' => $this->buildCalendarGrid($periodStart, $periodEnd, null, $events),
+        ];
+
+        return (new Paginator([$period], 1, $page, [
+            'path' => $request->url(),
+            'query' => $request->except('page'),
+        ]))->hasMorePagesWhen($page < self::MAX_CALENDAR_PAGES);
+    }
+
+    /**
+     * @return array{id: int, title: string, details: string|null, meetingUrl: string|null, startsAt: string, endsAt: string, allDay: bool, recurrence: string|null, creatorName: string|null, canEdit: bool}
+     */
+    private function scheduleEventData(ScheduleEvent $event, bool $canManageProject, int $userId): array
+    {
+        return [
+            'id' => $event->id,
+            'title' => $event->title,
+            'details' => $event->details,
+            'meetingUrl' => $event->meeting_url,
+            'startsAt' => $event->starts_at->format('Y-m-d\\TH:i'),
+            'endsAt' => $event->ends_at->format('Y-m-d\\TH:i'),
+            'allDay' => $event->all_day,
+            'recurrence' => $event->recurrence,
+            'creatorName' => $event->creator?->name,
+            'canEdit' => $canManageProject || $event->created_by === $userId,
+        ];
     }
 
     /**
      * @param  Collection<int, covariant array{startsAt: string, endsAt: string}>  $events
      * @return list<list<array<string, mixed>>>
      */
-    private function buildCalendarGrid(CarbonImmutable $gridStart, CarbonImmutable $gridEnd, CarbonImmutable $month, $events): array
+    private function buildCalendarGrid(CarbonImmutable $gridStart, CarbonImmutable $gridEnd, ?CarbonImmutable $month, $events): array
     {
         $today = CarbonImmutable::now()->toDateString();
         $weeks = [];
@@ -205,7 +305,8 @@ class ScheduleEventController extends Controller
                 $week[] = [
                     'date' => $dateKey,
                     'day' => $cursor->day,
-                    'inCurrentMonth' => $cursor->month === $month->month,
+                    'inCurrentMonth' => $month === null
+                        || ($cursor->year === $month->year && $cursor->month === $month->month),
                     'isToday' => $dateKey === $today,
                     'monthLabel' => $cursor->day === 1 ? $cursor->translatedFormat('M j, Y') : null,
                     'events' => $events->filter(fn (array $event): bool => $event['startsAt'] < "{$nextDateKey}T00:00"

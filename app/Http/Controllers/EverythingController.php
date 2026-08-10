@@ -22,6 +22,7 @@ use App\Support\StoredFileContentSnippet;
 use Illuminate\Contracts\Database\Query\Expression;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -53,6 +54,7 @@ class EverythingController extends Controller
 
         $queries = collect([
             'message' => $this->messageQuery($currentTeam, $user, $search, $projectId),
+            'chat' => $this->chatQuery($currentTeam, $user, $search, $projectId),
             'todo' => $this->todoQuery($currentTeam, $user, $search, $projectId),
             'document' => $this->documentQuery($currentTeam, $user, $search, $projectId),
             'file' => $this->fileQuery($currentTeam, $user, $search, $projectId, $fileCategories),
@@ -209,6 +211,33 @@ class EverythingController extends Controller
             ->selectRaw('COALESCE(todos.parent_id, todos.id) as route_resource_id');
 
         $this->applySearch($query, $search, ['todos.title', 'todos.details']);
+
+        return $this->scopeProjectAccess($query, $team, $user, $projectId);
+    }
+
+    private function chatQuery(Team $team, User $user, ?string $search, ?int $projectId): Builder
+    {
+        $query = DB::table('chat_messages')
+            ->join('projects', 'projects.id', '=', 'chat_messages.project_id')
+            ->leftJoin('chat_channels', function (JoinClause $join): void {
+                $join->on('chat_channels.id', '=', 'chat_messages.chat_channel_id')
+                    ->on('chat_channels.project_id', '=', 'chat_messages.project_id');
+            })
+            ->select('chat_messages.id')
+            ->selectRaw('COALESCE(chat_channels.name, ?) as title', [__('Chat')])
+            ->addSelect([
+                'chat_messages.body as snippet',
+                'chat_messages.project_id',
+                'projects.name as project_name',
+                'chat_messages.updated_at',
+            ])
+            ->selectRaw('? as type', ['chat'])
+            ->addSelect([
+                'chat_messages.chat_channel_id as route_parent_id',
+                'chat_messages.id as route_resource_id',
+            ]);
+
+        $this->applySearch($query, $search, ['chat_messages.body']);
 
         return $this->scopeProjectAccess($query, $team, $user, $projectId);
     }
@@ -605,6 +634,9 @@ class EverythingController extends Controller
                     absolute: false,
                 )
                 : $fallback,
+            'chat' => $project->usesTool('chat')
+                ? $this->chatHref($team, $project, (int) $values['route_parent_id'])
+                : $fallback,
             'todo' => $project->usesTool('todos')
                 && (int) $values['route_parent_id'] > 0
                 && (int) $values['route_resource_id'] > 0
@@ -635,6 +667,20 @@ class EverythingController extends Controller
             'comment' => $this->commentHref($comment, $team, $project),
             default => $fallback,
         };
+    }
+
+    private function chatHref(Team $team, Project $project, int $channelId): string
+    {
+        $parameters = [
+            'current_team' => $team,
+            'project' => $project,
+        ];
+
+        if ($channelId > 0) {
+            $parameters['channel'] = $channelId;
+        }
+
+        return route('projects.chat.show', $parameters, absolute: false);
     }
 
     private function commentHref(?Comment $comment, Team $team, Project $project): string

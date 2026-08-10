@@ -195,7 +195,9 @@ test('project participants can view a project', function () {
 test('project home summarizes the latest work', function () {
     $this->travelTo('2026-07-15 09:00:00');
 
-    $owner = User::factory()->create();
+    $owner = User::factory()->create([
+        'avatar_path' => 'avatars/project-owner.webp',
+    ]);
     $team = Team::factory()->create();
     $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
     $project = Project::factory()->for($team)->for($owner, 'creator')->create();
@@ -271,7 +273,7 @@ test('project home summarizes the latest work', function () {
         ]);
     ChatMessage::factory()->for($project)->create([
         'user_id' => $owner->id,
-        'body' => '確認をお願いします',
+        'body' => '<div>なんですの？</div>',
     ]);
     Activity::factory()->for($project)->for($owner, 'actor')->create([
         'type' => ActivityType::TodoCompleted,
@@ -294,9 +296,11 @@ test('project home summarizes the latest work', function () {
         ->assertOk()
         ->assertInertia(fn (Assert $page) => $page
             ->component('projects/Show')
+            ->where('project.members.0.avatar', $owner->avatar)
             ->where('home.messages.count', 2)
             ->where('home.messages.latest.0.title', '最新のお知らせ')
             ->where('home.messages.latest.0.body', '公開準備の最終確認をお願いします。')
+            ->where('home.messages.latest.0.authorAvatar', $owner->avatar)
             ->where('home.todos.total', 3)
             ->where('home.todos.completed', 1)
             ->where('home.todos.overdue', 1)
@@ -330,12 +334,15 @@ test('project home summarizes the latest work', function () {
                     && $folder['title'] === '納品物'
                     && $folder['itemCount'] === 1;
             })
-            ->where('home.activity.latest.0.type', ActivityType::TodoCompleted->value)
-            ->where('home.activity.latest.0.subjectLabel', '公開前チェック')
-            ->where('home.activity.latest.0.subjectId', fn (int $id): bool => $id > 0)
-            ->where('home.activity.activeLastSevenDays', 1)
-            ->where('home.chat.latest.body', '確認をお願いします')
-            ->where('home.chat.recent.0.body', '確認をお願いします'),
+            ->where('activity.latest.0.type', ActivityType::TodoCompleted->value)
+            ->where('activity.latest.0.subjectLabel', '公開前チェック')
+            ->where('activity.latest.0.actorAvatar', $owner->avatar)
+            ->where('activity.latest.0.subjectId', fn (int $id): bool => $id > 0)
+            ->where('activity.activeLastSevenDays', 1)
+            ->where('home.chat.latest.body', 'なんですの？')
+            ->where('home.chat.latest.authorAvatar', $owner->avatar)
+            ->where('home.chat.recent.0.body', 'なんですの？')
+            ->where('home.chat.recent.0.authorAvatar', $owner->avatar),
         );
 
     expect($todoCounterQueries)->toHaveCount(1);
@@ -364,6 +371,28 @@ test('project home activity query count does not grow with activity volume', fun
     DB::disableQueryLog();
 
     expect($manyActivitiesQueryCount)->toBe($singleActivityQueryCount);
+});
+
+test('project home activity can be refreshed without reloading the other home data', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $project->members()->attach($owner);
+    $activity = Activity::factory()->for($project)->for($owner, 'actor')->create([
+        'metadata' => ['label' => 'リアルタイム更新'],
+    ]);
+
+    $this->actingAs($owner)
+        ->get(route('projects.show', [$team, $project]))
+        ->assertInertia(fn (Assert $page) => $page->reloadOnly(
+            'activity',
+            fn (Assert $reload) => $reload
+                ->where('activity.latest.0.id', $activity->id)
+                ->where('activity.latest.0.subjectLabel', 'リアルタイム更新')
+                ->missing('home')
+                ->missing('project'),
+        ));
 });
 
 test('non participants cannot view a project', function () {

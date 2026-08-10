@@ -20,6 +20,7 @@
     import ProjectTodoController from '@/actions/App/Http/Controllers/ProjectTodoController';
     import WorkspaceCalendarController from '@/actions/App/Http/Controllers/WorkspaceCalendarController';
     import AppLogoIcon from '@/components/AppLogoIcon.svelte';
+    import { Badge } from '@/components/ui/badge';
     import { Button } from '@/components/ui/button';
     import {
         DropdownMenu,
@@ -29,8 +30,10 @@
     import UserMenuContent from '@/components/UserMenuContent.svelte';
     import { getEcho } from '@/lib/echo';
     import { currentLocale, t } from '@/lib/i18n';
+    import { realtimeNotificationToast } from '@/lib/realtime-notifications';
+    import { cn } from '@/lib/utils';
     import { show } from '@/routes/projects';
-    import type { Team, WorkspacePing } from '@/types';
+    import type { Team, WorkspaceNotification, WorkspacePing } from '@/types';
 
     type Panel = 'tasks' | 'events' | 'bookmarks' | 'notes' | 'notifications';
     type NewForYouTab = 'notifications' | 'pings' | 'later';
@@ -54,7 +57,7 @@
     const currentUser = $derived(page.props.auth.user);
     const currentUserId = $derived(currentUser?.id ?? 0);
     const unreadNotifications = $derived(
-        workspace.notifications.filter((item) => !item.read).length,
+        page.props.notificationSummary.unreadCount,
     );
     const dueBubbleUps = $derived(
         workspace.bubbleUps.filter((item) => item.due).length,
@@ -107,6 +110,8 @@
               ? 'border-lime-400 bg-lime-100 text-lime-950 dark:bg-lime-800 dark:text-white'
               : 'border-amber-300 bg-amber-50 text-amber-950 dark:bg-amber-900 dark:text-amber-50',
     );
+    const notificationContent = (notification: WorkspaceNotification) =>
+        realtimeNotificationToast(notification, t);
     const eventFormatter = $derived(
         new Intl.DateTimeFormat(currentLocale(), {
             timeZone: 'Asia/Tokyo',
@@ -319,7 +324,15 @@
         aria-label={activePanel === 'notifications'
             ? t('Pings + Notifications')
             : dockItems.find((item) => item.panel === activePanel)?.label}
-        class="fixed inset-x-2 bottom-14 z-50 mx-auto max-h-[min(72dvh,42rem)] max-w-3xl overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-[#14242c]"
+        data-layout={activePanel === 'notifications'
+            ? 'right-rail'
+            : 'bottom-tray'}
+        class={cn(
+            'fixed z-50 overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-[#14242c]',
+            activePanel === 'notifications'
+                ? 'top-14 right-3 bottom-14 w-[min(24rem,calc(100vw-1.5rem))]'
+                : 'inset-x-2 bottom-14 mx-auto max-h-[min(72dvh,42rem)] max-w-3xl',
+        )}
     >
         <header
             class="sticky top-0 z-10 flex items-center justify-between gap-3 border-b bg-white/95 px-4 py-3 backdrop-blur dark:bg-[#14242c]/95 sm:px-5"
@@ -585,17 +598,33 @@
             {#if newForYouTab === 'notifications'}
                 <div class="divide-y">
                     {#each workspace.notifications as notification (notification.id)}
-                        <article
-                            class={!notification.read
-                                ? 'bg-primary/5 px-5 py-3'
-                                : 'px-5 py-3'}
-                        >
-                            <p class="text-sm font-semibold">
-                                {notification.actorName || t('Notification')} · {notification.projectName}
-                            </p>
-                            <p class="mt-0.5 text-sm text-muted-foreground">
-                                {notification.title || t('Project update')}
-                            </p>
+                        {@const content = notificationContent(notification)}
+                        <article class="bg-primary/5 px-5 py-3">
+                            <Link
+                                href={NotificationController.open([
+                                    currentTeam.slug,
+                                    notification.id,
+                                ])}
+                                as="button"
+                                class="block w-full rounded-md px-2 py-1.5 text-left transition hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                                onclick={closePanel}
+                            >
+                                <span class="block text-sm font-semibold">
+                                    {content.title}
+                                </span>
+                                <span
+                                    class="mt-1 line-clamp-2 block break-words text-sm leading-5 text-foreground/90"
+                                >
+                                    {content.description}
+                                </span>
+                                <span
+                                    class="mt-1 block truncate text-xs text-muted-foreground"
+                                >
+                                    {notification.chatChannelName
+                                        ? `${notification.projectName} · #${notification.chatChannelName}`
+                                        : notification.projectName}
+                                </span>
+                            </Link>
                             {#if notification.replyable}
                                 <Form
                                     {...NotificationReplyController.store.form([
@@ -640,7 +669,7 @@
                                         <input
                                             type="hidden"
                                             name="label"
-                                            value={`${notification.projectName}: ${notification.title || t('Project update')}`}
+                                            value={`${notification.projectName}: ${content.description}`}
                                         />
                                         <input
                                             type="hidden"
@@ -896,21 +925,31 @@
                 </button>
             {/each}
         </div>
-        <button
-            type="button"
-            class={`${itemClasses(activePanel === 'notifications')} sm:justify-self-end`}
-            aria-expanded={activePanel === 'notifications'}
-            aria-controls="workspace-personal-panel"
-            onclick={openNewForYou}
-        >
-            <span class="relative md:hidden"
-                ><MessageCircle class="size-3.5" />{#if newForYouCount > 0}<span
-                        class="absolute -right-2 -top-2 min-w-4 rounded-full bg-red-500 px-0.5 text-[9px] font-bold leading-4 text-white"
-                        >{newForYouCount > 9 ? '9+' : newForYouCount}</span
-                    >{/if}</span
+        <div class="flex min-w-0 items-stretch sm:justify-self-end">
+            <button
+                type="button"
+                class={cn(
+                    itemClasses(activePanel === 'notifications'),
+                    'relative h-full',
+                )}
+                aria-label={`${t('Pings + Notifications')} (${newForYouCount})`}
+                aria-expanded={activePanel === 'notifications'}
+                aria-controls="workspace-personal-panel"
+                onclick={openNewForYou}
             >
-            <span class="hidden md:inline">{t('Pings + Notifications')}</span
-            ><span class="md:hidden">{t('Updates')}</span>
-        </button>
+                <MessageCircle class="size-3.5 shrink-0 md:hidden" />
+                <span class="hidden md:inline"
+                    >{t('Pings + Notifications')}</span
+                ><span class="md:hidden">{t('Updates')}</span>
+                <Badge
+                    variant={newForYouCount > 0 ? 'destructive' : 'secondary'}
+                    class="pointer-events-none absolute top-0.5 right-0.5 h-4 min-w-4 px-1 py-0 text-[9px] leading-none sm:static sm:ml-1 sm:h-5 sm:min-w-5 sm:px-1.5 sm:text-[10px]"
+                    aria-label={`${t('Pings + Notifications')} (${newForYouCount})`}
+                    aria-live="polite"
+                >
+                    {newForYouCount}
+                </Badge>
+            </button>
+        </div>
     </div>
 </nav>

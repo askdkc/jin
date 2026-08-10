@@ -37,9 +37,145 @@ test('project participants can create and view events for a selected month', fun
         ->assertInertia(fn (Assert $page) => $page
             ->component('projects/schedule/Index')
             ->where('month', '2026-08')
-            ->has('events', 1)
-            ->where('events.0.title', '公開ミーティング')
-            ->where('events.0.startsAt', '2026-08-03T10:00'));
+            ->where('calendarPeriods.data.0.startDate', '2026-07-26')
+            ->where('calendarPeriods.data.0.endDate', '2026-09-05')
+            ->where('calendarPeriods.data.0.weeks', fn ($weeks): bool => $weeks
+                ->flatten(1)
+                ->firstWhere('date', '2026-08-03')['events'][0]['title'] === '公開ミーティング'));
+});
+
+test('the month calendar continuously loads the next six week period', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $event = ScheduleEvent::factory()->for($project)->for($owner, 'creator')->create([
+        'title' => '次の期間の予定',
+        'starts_at' => '2026-09-20 10:00:00',
+        'ends_at' => '2026-09-20 11:00:00',
+    ]);
+
+    $response = $this->actingAs($owner)
+        ->get(route('projects.schedule.index', [$team, $project, 'month' => '2026-08']));
+
+    $response
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('calendarPeriods.data.0.startDate', '2026-07-26')
+            ->where('calendarPeriods.data.0.endDate', '2026-09-05')
+            ->where('calendarPeriods.data.0.weeks', fn ($weeks): bool => $weeks
+                ->flatten(1)
+                ->flatMap(fn (array $day) => $day['events'])
+                ->doesntContain('id', $event->id)));
+
+    expect(data_get($response->viewData('page'), 'scrollProps.calendarPeriods'))
+        ->toMatchArray([
+            'pageName' => 'page',
+            'previousPage' => null,
+            'nextPage' => 2,
+            'currentPage' => 1,
+        ]);
+
+    $this->get(route('projects.schedule.index', [
+        $team,
+        $project,
+        'month' => '2026-08',
+        'page' => 2,
+    ]))->assertInertia(fn (Assert $page) => $page
+        ->where('calendarPeriods.data.0.startDate', '2026-09-06')
+        ->where('calendarPeriods.data.0.endDate', '2026-10-17')
+        ->where('calendarPeriods.data.0.weeks', fn ($weeks): bool => $weeks
+            ->flatten(1)
+            ->flatMap(fn (array $day) => $day['events'])
+            ->contains('id', $event->id)));
+});
+
+test('the gantt chart loads adjacent six week windows as json', function () {
+    $owner = User::factory()->create();
+    $outsider = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($outsider, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create();
+    $nextEvent = ScheduleEvent::factory()->for($project)->for($owner, 'creator')->create([
+        'title' => '次に読み込まれる予定',
+        'starts_at' => '2026-09-01 10:00:00',
+        'ends_at' => '2026-09-01 11:00:00',
+    ]);
+    ScheduleEvent::factory()->for($project)->for($owner, 'creator')->create([
+        'title' => '範囲外の予定',
+        'starts_at' => '2026-10-01 10:00:00',
+        'ends_at' => '2026-10-01 11:00:00',
+    ]);
+
+    $this->actingAs($owner)
+        ->getJson(route('projects.schedule.gantt-window', [
+            $team,
+            $project,
+            'direction' => 'next',
+            'boundary' => '2026-08-10',
+        ]))
+        ->assertOk()
+        ->assertJsonPath('rangeStart', '2026-08-11')
+        ->assertJsonPath('rangeEnd', '2026-09-21')
+        ->assertJsonCount(1, 'events')
+        ->assertJsonPath('events.0.id', $nextEvent->id);
+
+    $this->actingAs($owner)
+        ->getJson(route('projects.schedule.gantt-window', [
+            $team,
+            $project,
+            'direction' => 'previous',
+            'boundary' => '2026-08-10',
+        ]))
+        ->assertOk()
+        ->assertJsonPath('rangeStart', '2026-06-29')
+        ->assertJsonPath('rangeEnd', '2026-08-09');
+
+    $this->actingAs($owner)
+        ->getJson(route('projects.schedule.gantt-window', [
+            $team,
+            $project,
+            'direction' => 'sideways',
+            'boundary' => '2026-08-10',
+        ]))
+        ->assertUnprocessable();
+
+    $this->actingAs($outsider)
+        ->getJson(route('projects.schedule.gantt-window', [
+            $team,
+            $project,
+            'direction' => 'next',
+            'boundary' => '2026-08-10',
+        ]))
+        ->assertForbidden();
+});
+
+test('the schedule interface loads months on scroll and keeps a stable shell across views', function () {
+    $schedule = file_get_contents(resource_path('js/pages/projects/schedule/Index.svelte'));
+
+    expect($schedule)
+        ->toContain('import { Form, InfiniteScroll, Link, useHttp }')
+        ->toContain('<InfiniteScroll')
+        ->toContain('data="calendarPeriods"')
+        ->toContain('buffer={800}')
+        ->toContain('onlyNext')
+        ->toContain('class="mx-auto w-full max-w-5xl space-y-3 px-4 pt-2 pb-4 sm:px-6 sm:pt-3 sm:pb-6"')
+        ->toContain('class="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-center"')
+        ->toContain('lg:col-start-2 lg:row-start-1 lg:justify-self-center')
+        ->toContain('class="min-h-[38rem] w-full rounded-lg border sm:min-h-[50rem]"')
+        ->toContain('class="h-[38rem] w-full overflow-hidden rounded-lg border sm:h-[50rem]"')
+        ->toContain('data-test="schedule-gantt-scroll"')
+        ->toContain('onscroll={handleGanttScroll}')
+        ->toContain('const observer = new IntersectionObserver(')
+        ->toContain("use:observeGanttEdge={'previous'}")
+        ->toContain("use:observeGanttEdge={'next'}")
+        ->toContain("void loadGanttWindow('previous')")
+        ->toContain("void loadGanttWindow('next')")
+        ->toContain('node.scrollLeft += node.scrollWidth - previousScrollWidth')
+        ->toContain('data-test="schedule-view-frame"')
+        ->toContain('class="pointer-events-none absolute inset-y-0 z-30 border-l-2 border-primary"')
+        ->toMatch('/\{t\(\'Today\'\)\}.*<time\s+datetime=\{today\}.*\{formatShortDate\(today\)\}/s');
 });
 
 test('an event must end after it starts', function () {
@@ -97,8 +233,7 @@ test('the month grid shows a cross-month event on every overlapping day', functi
     $this->actingAs($owner)
         ->get(route('projects.schedule.index', [$team, $project, 'month' => '2026-08']))
         ->assertInertia(fn (Assert $page) => $page
-            ->has('events', 1)
-            ->where('weeks', fn ($weeks): bool => $weeks
+            ->where('calendarPeriods.data.0.weeks', fn ($weeks): bool => $weeks
                 ->flatten(1)
                 ->filter(fn (array $day): bool => collect($day['events'])->contains('id', $event->id))
                 ->pluck('date')
@@ -239,16 +374,13 @@ test('all day events respect the Tokyo calendar month boundary', function () {
     ]);
 
     $this->actingAs($owner)
-        ->get(route('projects.schedule.index', [$team, $project, 'month' => '2026-07']))
-        ->assertInertia(fn (Assert $page) => $page->has('events', 0));
-
-    $this->actingAs($owner)
         ->get(route('projects.schedule.index', [$team, $project, 'month' => '2026-08']))
         ->assertInertia(fn (Assert $page) => $page
-            ->has('events', 1)
-            ->where('events.0.title', '8月初日の終日予定')
-            ->where('events.0.startsAt', '2026-08-01T00:00')
-            ->where('events.0.allDay', true));
+            ->where('calendarPeriods.data.0.weeks', fn ($weeks): bool => collect(
+                $weeks->flatten(1)->firstWhere('date', '2026-08-01')['events'],
+            )->contains(fn (array $event): bool => $event['title'] === '8月初日の終日予定'
+                && $event['startsAt'] === '2026-08-01T00:00'
+                && $event['allDay'] === true)));
 });
 
 test('event authors and team managers can edit while other members cannot', function () {

@@ -169,9 +169,10 @@ test('project participants can upload and download private files', function () {
         ->and($storedFile->size)->toBe(Storage::disk('local')->size($storedFile->path));
 });
 
-test('additional office formats validate without entering the local preview queue', function () {
+test('additional office formats validate and enter the preview queue when OnlyOffice is enabled', function () {
     Storage::fake('local');
     Queue::fake();
+    config(['onlyoffice.enabled' => true]);
 
     $owner = User::factory()->create();
     $team = Team::factory()->create();
@@ -194,8 +195,8 @@ test('additional office formats validate without entering the local preview queu
     }
 
     expect(StoredFile::query()->count())->toBe(4)
-        ->and(StoredFile::query()->whereNotNull('preview_status')->count())->toBe(0);
-    Queue::assertNotPushed(GenerateStoredFilePreview::class);
+        ->and(StoredFile::query()->where('preview_status', 'pending')->count())->toBe(4);
+    Queue::assertPushed(GenerateStoredFilePreview::class, 4);
 });
 
 test('folder uploads create or reuse a material folder for every uploaded file', function () {
@@ -1022,6 +1023,7 @@ test('a replacement must keep the current filename extension', function () {
 test('same-extension replacement supports macro-enabled workbooks', function () {
     Storage::fake('local');
     Queue::fake();
+    config(['onlyoffice.enabled' => true]);
 
     $owner = User::factory()->create();
     $team = Team::factory()->create();
@@ -1050,10 +1052,14 @@ test('same-extension replacement supports macro-enabled workbooks', function () 
 
     expect($file->path)->not->toBe($oldPath)
         ->and($file->original_name)->toBe('report.xlsm')
-        ->and($file->preview_status)->toBeNull()
+        ->and($file->preview_status)->toBe('pending')
         ->and($file->checksum)->toBe(StoredFile::checksumFor(Storage::disk('local'), $file->path))
         ->and($file->size)->toBe(Storage::disk('local')->size($file->path));
-    Queue::assertNotPushed(GenerateStoredFilePreview::class);
+    Queue::assertPushed(
+        GenerateStoredFilePreview::class,
+        fn (GenerateStoredFilePreview $job): bool => $job->storedFileId === $file->id
+            && $job->sourcePath === $file->path,
+    );
 });
 
 test('a failed replacement update removes the newly stored blob', function () {

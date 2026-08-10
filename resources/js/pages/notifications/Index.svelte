@@ -14,6 +14,7 @@
 
 <script lang="ts">
     import { Form, Link } from '@inertiajs/svelte';
+    import ChatController from '@/actions/App/Http/Controllers/ChatController';
     import CheckInController from '@/actions/App/Http/Controllers/CheckInController';
     import MessageBoardController from '@/actions/App/Http/Controllers/MessageBoardController';
     import ProjectFileController from '@/actions/App/Http/Controllers/ProjectFileController';
@@ -65,6 +66,16 @@
                 return t(':actorName mentioned you in a message', {
                     actorName,
                 });
+            case 'mention_chat':
+                return t(':actorName mentioned you in chat', { actorName });
+            case 'chat_message':
+                return t(':actorName posted in #:channel', {
+                    actorName,
+                    channel:
+                        notification.chatChannelName ??
+                        notification.messageTitle?.replace(/^#/, '') ??
+                        '',
+                });
             case 'mention_todo':
                 return t(':actorName mentioned you in a to-do', { actorName });
             case 'mention_file':
@@ -86,6 +97,13 @@
         ];
 
         switch (notification.type) {
+            case 'chat_message':
+            case 'mention_chat':
+                return ChatController.show(projectArguments, {
+                    query: {
+                        channel: notification.chatChannelId ?? undefined,
+                    },
+                });
             case 'message_comment':
             case 'mention_message':
                 return notification.messageBoardPostId !== null

@@ -22,7 +22,7 @@
 </script>
 
 <script lang="ts">
-    import { Form, Link } from '@inertiajs/svelte';
+    import { Form } from '@inertiajs/svelte';
     import Download from 'lucide-svelte/icons/download';
     import FileIcon from 'lucide-svelte/icons/file';
     import Pencil from 'lucide-svelte/icons/pencil';
@@ -45,6 +45,7 @@
     import { Button } from '@/components/ui/button';
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
+    import { submitFormById } from '@/lib/form-submit';
     import { currentLocale, t } from '@/lib/i18n';
     import type { ProjectReaction, TodoMember } from '@/types';
 
@@ -582,6 +583,9 @@
                                 attachmentUploadUrl={AttachmentController.uploadInline.url(
                                     [currentTeam.slug, project.id],
                                 )}
+                                onSubmitShortcut={() =>
+                                    !processing &&
+                                    submitFormById('file-comment-form')}
                             />
                             <InputError message={errors.body} />
                             <div class="flex gap-2">

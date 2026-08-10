@@ -78,6 +78,7 @@
     import RichTextEditor from '@/components/RichTextEditor.svelte';
     import { Avatar, AvatarFallback } from '@/components/ui/avatar';
     import { Button } from '@/components/ui/button';
+    import { submitFormById } from '@/lib/form-submit';
     import { currentLocale, t } from '@/lib/i18n';
     import { getInitials } from '@/lib/initials';
     import type { MessageBoardPost, TodoMember } from '@/types';
@@ -424,6 +425,7 @@
                                 project.id,
                                 post.id,
                             ])}
+                            id="message-comment-form"
                             resetOnSuccess
                             onSuccess={() => (commentComposerOpen = false)}
                             class="space-y-3"
@@ -440,6 +442,11 @@
                                         ariaLabel={t('Comment')}
                                         mentionables={members}
                                         {attachmentUploadUrl}
+                                        onSubmitShortcut={() =>
+                                            !processing &&
+                                            submitFormById(
+                                                'message-comment-form',
+                                            )}
                                     />
                                     <InputError message={errors.body} />
                                 </div>

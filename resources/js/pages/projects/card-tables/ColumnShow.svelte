@@ -67,6 +67,7 @@
     } from '@/components/ui/dropdown-menu';
     import { Input } from '@/components/ui/input';
     import { Label } from '@/components/ui/label';
+    import { submitFormById } from '@/lib/form-submit';
     import { currentLocale, t } from '@/lib/i18n';
     import { getInitials } from '@/lib/initials';
     import type { MessageComment, ProjectCard, TodoMember } from '@/types';
@@ -451,6 +452,7 @@
                         {...CommentController.storeCardColumn.form(
                             routeArguments,
                         )}
+                        id={`card-column-comment-form-${column.id}`}
                         resetOnSuccess
                         onSuccess={() => (commentComposerOpen = false)}
                         class="space-y-3"
@@ -464,6 +466,11 @@
                                 ariaLabel={t('Comment')}
                                 mentionables={members}
                                 {attachmentUploadUrl}
+                                onSubmitShortcut={() =>
+                                    !processing &&
+                                    submitFormById(
+                                        `card-column-comment-form-${column.id}`,
+                                    )}
                             />
                             <InputError message={errors.body} />
                             <div class="flex flex-wrap gap-2">

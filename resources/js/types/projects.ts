@@ -4,6 +4,7 @@ export type ProjectMember = {
     id: number;
     name: string;
     email: string;
+    avatar: string | null;
     role?: TeamRole;
     roleLabel?: string;
 };
@@ -80,6 +81,7 @@ export type ProjectHome = {
             title: string;
             body: string;
             authorName: string | null;
+            authorAvatar: string | null;
             publishedAt: string;
         }[];
     };
@@ -125,18 +127,16 @@ export type ProjectHome = {
             id: number;
             body: string;
             authorName: string | null;
+            authorAvatar: string | null;
             createdAt: string | null;
         }[];
         latest: {
             id: number;
             body: string;
             authorName: string | null;
+            authorAvatar: string | null;
             createdAt: string | null;
         } | null;
-    };
-    activity: {
-        latest: ActivityItem[];
-        activeLastSevenDays: number;
     };
     timesheets: {
         totalMinutes: number;
@@ -147,6 +147,11 @@ export type ProjectHome = {
             userName: string;
         }[];
     };
+};
+
+export type ProjectActivity = {
+    latest: ActivityItem[];
+    activeLastSevenDays: number;
 };
 
 export type ActivityType =
@@ -232,7 +237,7 @@ export type MaterialFilters = {
 };
 
 export type EverythingType =
-    'message' | 'todo' | 'document' | 'file' | 'link' | 'comment';
+    'message' | 'chat' | 'todo' | 'document' | 'file' | 'link' | 'comment';
 
 type EverythingItemBase = {
     id: number;
@@ -407,6 +412,7 @@ export type ActivityItem = {
     target: ActivityTarget;
     actorId: number | null;
     actorName: string | null;
+    actorAvatar: string | null;
     subjectLabel: string;
     subjectId: number | null;
     createdAt: string | null;
@@ -433,6 +439,7 @@ export type ProjectPermissions = {
 export type ChatUser = {
     id: number;
     name: string;
+    avatar: string | null;
 };
 
 export type ChatAttachment = {
@@ -493,6 +500,17 @@ export type ChatHistoryResponse = {
 
 export type ChatStoreResponse = {
     message: ChatMessage;
+};
+
+export type ChatUpdateResponse = {
+    messageId: number;
+    body: string;
+};
+
+export type ChatDeleteResponse = {
+    messageId: number;
+    parentId: number | null;
+    attachmentIds: number[];
 };
 
 export type ChatReactionResponse = {
@@ -571,6 +589,8 @@ export type ProjectNotification = {
         | 'todo_due'
         | 'check_in_due'
         | 'mention_message'
+        | 'mention_chat'
+        | 'chat_message'
         | 'mention_todo'
         | 'mention_file'
         | 'todo_list_comment';
@@ -579,6 +599,10 @@ export type ProjectNotification = {
     messageTitle: string | null;
     messageBoardPostId: number | null;
     storedFileId: number | null;
+    chatMessageId: number | null;
+    chatChannelId: number | null;
+    chatChannelName: string | null;
+    chatMessageExcerpt: string | null;
     todoListId: number | null;
     todoTitle: string | null;
     checkInQuestion: string | null;
@@ -735,6 +759,11 @@ export type WorkspaceNotification = {
     projectId: number;
     projectName: string;
     title: string | null;
+    messageTitle: string | null;
+    todoTitle: string | null;
+    checkInQuestion: string | null;
+    chatChannelName: string | null;
+    chatMessageExcerpt: string | null;
     replyable: boolean;
     actorName: string | null;
     read: boolean;

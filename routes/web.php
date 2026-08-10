@@ -102,6 +102,7 @@ Route::prefix('{current_team}')
         Route::get('lineup', LineupController::class)->name('lineup.index');
         Route::get('notifications', [NotificationController::class, 'index'])->name('notifications.index');
         Route::patch('notifications/read-all', [NotificationController::class, 'markAllRead'])->name('notifications.read-all');
+        Route::patch('notifications/{notification}/open', [NotificationController::class, 'open'])->name('notifications.open');
         Route::post('notifications/{notification}/reply', [NotificationReplyController::class, 'store'])->name('notifications.reply');
         Route::get('notes', [PersonalNoteController::class, 'index'])->name('notes.index');
         Route::post('notes/attachments', [PersonalNoteAttachmentController::class, 'upload'])
@@ -132,6 +133,8 @@ Route::prefix('{current_team}')
             Route::get('projects/{project}/chat', [ChatController::class, 'show'])->name('projects.chat.show');
             Route::get('projects/{project}/chat/messages', [ChatController::class, 'history'])->name('projects.chat.messages.index');
             Route::post('projects/{project}/chat/messages', [ChatController::class, 'store'])->name('projects.chat.messages.store');
+            Route::patch('projects/{project}/chat/messages/{chat_message}', [ChatController::class, 'update'])->name('projects.chat.messages.update');
+            Route::delete('projects/{project}/chat/messages/{chat_message}', [ChatController::class, 'destroy'])->name('projects.chat.messages.destroy');
             Route::get('projects/{project}/chat/messages/{chat_message}/replies', [ChatController::class, 'thread'])->name('projects.chat.messages.replies');
             Route::post('projects/{project}/chat/messages/{chat_message}/reaction', [ChatController::class, 'toggleReaction'])->name('projects.chat.messages.reaction.toggle');
             Route::post('projects/{project}/chat/channels', [ChatChannelController::class, 'store'])->name('projects.chat.channels.store');
@@ -176,6 +179,7 @@ Route::prefix('{current_team}')
             Route::delete('projects/{project}/todo-lists/{todo_list}/todos/{todo}/comments/{comment}', [CommentController::class, 'destroyTodo'])->name('projects.todos.comments.destroy');
 
             Route::get('projects/{project}/schedule', [ScheduleEventController::class, 'index'])->name('projects.schedule.index');
+            Route::get('projects/{project}/schedule/gantt-window', [ScheduleEventController::class, 'ganttWindow'])->name('projects.schedule.gantt-window');
             Route::post('projects/{project}/schedule', [ScheduleEventController::class, 'store'])->name('projects.schedule.store');
             Route::get('projects/{project}/schedule/{schedule_event}', [ScheduleEventController::class, 'show'])->name('projects.schedule.show');
             Route::post('projects/{project}/schedule/{schedule_event}/reaction', [ScheduleEventController::class, 'toggleReaction'])->name('projects.schedule.reaction.toggle');

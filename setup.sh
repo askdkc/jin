@@ -318,6 +318,194 @@ set_env() {
     fi
 }
 
+setup_input_is_interactive() {
+    [[ -t 0 ]]
+}
+
+normalize_ip_allowlist() {
+    local raw_value="$1"
+
+    python3 - "$raw_value" <<'PY'
+import ipaddress
+import sys
+
+raw_value = sys.argv[1]
+values = [value.strip() for value in raw_value.split(',')]
+
+if not values or any(not value or '%' in value for value in values):
+    raise SystemExit(1)
+
+normalized = ['127.0.0.1', '::1']
+try:
+    for value in values:
+        if '/' in value:
+            normalized_value = str(ipaddress.ip_network(value, strict=True))
+        else:
+            normalized_value = str(ipaddress.ip_address(value))
+        if normalized_value not in normalized:
+            normalized.append(normalized_value)
+except ValueError:
+    raise SystemExit(1)
+
+print(','.join(normalized), end='')
+PY
+}
+
+application_locale_from_choice() {
+    case "$1" in
+        ''|1|ja) printf 'ja' ;;
+        2|en) printf 'en' ;;
+        3|fr) printf 'fr' ;;
+        4|de) printf 'de' ;;
+        5|zh_CN) printf 'zh_CN' ;;
+        6|zh_TW) printf 'zh_TW' ;;
+        7|es) printf 'es' ;;
+        8|pt_BR) printf 'pt_BR' ;;
+        9|pt_PT) printf 'pt_PT' ;;
+        10|ko) printf 'ko' ;;
+        *) return 1 ;;
+    esac
+}
+
+prompt_allowed_ip_ranges() {
+    local input normalized
+
+    printf '%s\n' 'Enter allowed IP addresses or CIDR ranges separated by commas.'
+    printf '%s\n' 'Example: 192.168.1.0/24, 10.0.0.0/8'
+    printf '%s\n' 'Loopback addresses 127.0.0.1 and ::1 are added automatically.'
+    while true; do
+        printf 'Allowed IP addresses/CIDR ranges: '
+        IFS= read -r input || input=""
+        if normalized="$(normalize_ip_allowlist "$input")"; then
+            TARGET_ALLOWED_IPS="$normalized"
+            return 0
+        fi
+        warn "Enter one or more valid IP addresses or strict CIDR ranges"
+    done
+}
+
+prompt_ip_restriction() {
+    local input
+
+    printf '\nIP address restriction\n'
+    printf '%s\n' 'Leave this blank to allow access from every IP address.'
+    while true; do
+        printf 'Enable IP address restriction? [y/N]: '
+        IFS= read -r input || input=""
+        case "$input" in
+            ''|n|N|no|No|NO)
+                TARGET_IP_RESTRICTION_ENABLED=false
+                TARGET_ALLOWED_IPS=""
+                return 0
+                ;;
+            y|Y|yes|Yes|YES)
+                TARGET_IP_RESTRICTION_ENABLED=true
+                prompt_allowed_ip_ranges
+                return 0
+                ;;
+            *)
+                warn "Enter y or n; leave blank to allow all access"
+                ;;
+        esac
+    done
+}
+
+prompt_application_locale() {
+    local input locale
+
+    printf '\nDefault language\n'
+    printf '%s\n' \
+        '  1) 日本語 (ja)' \
+        '  2) English (en)' \
+        '  3) Français (fr)' \
+        '  4) Deutsch (de)' \
+        '  5) 简体中文 (zh_CN)' \
+        '  6) 繁體中文 (zh_TW)' \
+        '  7) Español (es)' \
+        '  8) Português (Brasil) (pt_BR)' \
+        '  9) Português (Portugal) (pt_PT)' \
+        ' 10) 한국어 (ko)'
+    while true; do
+        printf 'Select the default language [1]: '
+        IFS= read -r input || input=""
+        if locale="$(application_locale_from_choice "$input")"; then
+            TARGET_APP_LOCALE="$locale"
+            return 0
+        fi
+        warn "Enter a number from 1 to 10 or one of the displayed locale codes"
+    done
+}
+
+resolve_ubuntu_access_and_locale() {
+    local env_file_created="$1"
+    local enabled_value allowed_value locale_value normalized
+
+    TARGET_IP_RESTRICTION_ENABLED=""
+    TARGET_ALLOWED_IPS=""
+    TARGET_APP_LOCALE=""
+
+    if [[ -n "${IP_RESTRICTION_OVERRIDE:-}" ]]; then
+        enabled_value="$(normalize_boolean "$IP_RESTRICTION_OVERRIDE")" \
+            || die "IP_RESTRICTION_ENABLED must be true, false, 1, or 0"
+        allowed_value="${ALLOWED_IPS_OVERRIDE:-}"
+    elif [[ -n "${ALLOWED_IPS_OVERRIDE:-}" ]]; then
+        enabled_value=true
+        allowed_value="$ALLOWED_IPS_OVERRIDE"
+    elif [[ "$env_file_created" -eq 1 ]] && setup_input_is_interactive; then
+        prompt_ip_restriction
+        enabled_value="$TARGET_IP_RESTRICTION_ENABLED"
+        allowed_value="$TARGET_ALLOWED_IPS"
+    elif [[ "$env_file_created" -eq 1 ]]; then
+        enabled_value=false
+        allowed_value=""
+    else
+        enabled_value="$(read_env IP_RESTRICTION_ENABLED "$ENV_FILE")"
+        enabled_value="${enabled_value:-false}"
+        enabled_value="$(normalize_boolean "$enabled_value")" \
+            || die "Existing IP_RESTRICTION_ENABLED must be true, false, 1, or 0"
+        allowed_value="$(read_env ALLOWED_IPS "$ENV_FILE")"
+    fi
+
+    if [[ "$enabled_value" == true ]]; then
+        if [[ -z "$allowed_value" ]] && setup_input_is_interactive; then
+            prompt_allowed_ip_ranges
+            allowed_value="$TARGET_ALLOWED_IPS"
+        fi
+        [[ -n "$allowed_value" ]] \
+            || die "ALLOWED_IPS is required when IP_RESTRICTION_ENABLED is true"
+        normalized="$(normalize_ip_allowlist "$allowed_value")" \
+            || die "ALLOWED_IPS must contain comma-separated IP addresses or strict CIDR ranges"
+        TARGET_ALLOWED_IPS="$normalized"
+    else
+        [[ -z "${ALLOWED_IPS_OVERRIDE:-}" ]] \
+            || die "ALLOWED_IPS cannot be set when IP_RESTRICTION_ENABLED is false"
+        TARGET_ALLOWED_IPS=""
+    fi
+    TARGET_IP_RESTRICTION_ENABLED="$enabled_value"
+
+    if [[ -n "${APP_LOCALE_OVERRIDE:-}" ]]; then
+        locale_value="$(application_locale_from_choice "$APP_LOCALE_OVERRIDE")" \
+            || die "APP_LOCALE is unsupported: $APP_LOCALE_OVERRIDE"
+    elif [[ "$env_file_created" -eq 1 ]] && setup_input_is_interactive; then
+        prompt_application_locale
+        locale_value="$TARGET_APP_LOCALE"
+    elif [[ "$env_file_created" -eq 1 ]]; then
+        locale_value=ja
+    else
+        locale_value="$(read_env APP_LOCALE "$ENV_FILE")"
+        locale_value="${locale_value:-ja}"
+        locale_value="$(application_locale_from_choice "$locale_value")" \
+            || die "Existing APP_LOCALE is unsupported: $locale_value"
+    fi
+    TARGET_APP_LOCALE="$locale_value"
+}
+
+configure_access_and_locale_environment() {
+    set_env IP_RESTRICTION_ENABLED "$TARGET_IP_RESTRICTION_ENABLED" "$ENV_FILE"
+    set_env ALLOWED_IPS "$TARGET_ALLOWED_IPS" "$ENV_FILE"
+    set_env APP_LOCALE "$TARGET_APP_LOCALE" "$ENV_FILE"
+}
+
 dotenv_quote() {
     local value="$1"
 
@@ -2238,7 +2426,7 @@ verify_jin_deployment() {
 setup_ubuntu() {
     local architecture processor_count memory_mb swap_mb available_disk_mb
     local -a php_packages postgres_packages
-    local php_version_id
+    local env_file_created=0 php_version_id
 
     announce_passwordless_sudo_option
     if [[ "$(id -u)" -eq 0 ]]; then
@@ -2365,8 +2553,11 @@ setup_ubuntu() {
     if [[ ! -f "$ENV_FILE" ]]; then
         [[ -f "$APP_DIR/.env.example" ]] || die "Could not find $ENV_FILE or $APP_DIR/.env.example"
         run_as_deploy cp "$APP_DIR/.env.example" "$ENV_FILE"
+        env_file_created=1
     fi
     sudo chmod o-rwx "$ENV_FILE"
+    resolve_ubuntu_access_and_locale "$env_file_created"
+    configure_access_and_locale_environment
 
     DB_NAME="${DB_NAME:-jin}"
     DB_USER="${DB_USER:-jin}"
@@ -2487,6 +2678,8 @@ Ubuntu defaults:
   Public Office path: <domain>/onlyoffice
   Laravel -> DocumentServer: http://127.0.0.1:<onlyoffice-port>
   DocumentServer -> Laravel: http://127.0.0.1:<app-internal-port>
+  IP access:   unrestricted when the first-run prompt is left blank
+  Language:    Japanese when the first-run prompt is left blank
 
 Options:
   --domain <domain>            Jin public domain (prompted when interactive)
@@ -2516,6 +2709,11 @@ Options:
   --no-nginx                   macOS-only; Ubuntu requires Nginx
   -h, --help                   Show this help
 
+Non-interactive Ubuntu environment overrides:
+  IP_RESTRICTION_ENABLED       true/false; defaults to false on first setup
+  ALLOWED_IPS                  Comma-separated IP/CIDR list; implies true when set
+  APP_LOCALE                   ja, en, fr, de, zh_CN, zh_TW, es, pt_BR, pt_PT, or ko
+
 Ubuntu installs PHP 8.5/FPM, Composer, Node.js 24+, PostgreSQL 16 with
 postgresql-16-pgroonga on Ubuntu 24.04 or PostgreSQL 18 with
 postgresql-18-pgdg-pgroonga on Ubuntu 26.04, Redis, RabbitMQ, the pinned
@@ -2541,6 +2739,9 @@ main() {
     DB_NAME="${DB_NAME:-jin}"
     DB_USER="${DB_USER:-jin}"
     DB_PASSWORD="${DB_PASSWORD:-}"
+    IP_RESTRICTION_OVERRIDE="${IP_RESTRICTION_ENABLED:-}"
+    ALLOWED_IPS_OVERRIDE="${ALLOWED_IPS:-}"
+    APP_LOCALE_OVERRIDE="${APP_LOCALE:-}"
     TARGET_DOCUMENT_SERVER_URL="${ONLYOFFICE_DOCUMENT_SERVER_URL:-}"
     TARGET_PUBLIC_URL="${ONLYOFFICE_PUBLIC_URL:-}"
     TARGET_INTERNAL_URL="${APP_ONLYOFFICE_INTERNAL_URL:-}"

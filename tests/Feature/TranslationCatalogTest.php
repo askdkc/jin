@@ -2,7 +2,7 @@
 
 use Illuminate\Support\Facades\File;
 
-const JIN_EXPECTED_TRANSLATION_KEY_COUNT = 1192;
+const JIN_EXPECTED_TRANSLATION_KEY_COUNT = 1214;
 
 const JIN_TRANSLATION_CATALOG_LOCALES = [
     'fr',

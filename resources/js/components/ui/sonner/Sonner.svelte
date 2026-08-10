@@ -11,6 +11,6 @@
     theme={appearance.value}
     class="toaster group"
     position="bottom-right"
-    style="--normal-bg: var(--popover); --normal-text: var(--popover-foreground); --normal-border: var(--border);"
+    style="--normal-bg: var(--popover); --normal-text: var(--popover-foreground); --normal-border: var(--border); --info-bg: var(--popover); --info-text: var(--popover-foreground); --info-border: var(--ring);"
     {...restProps}
 />

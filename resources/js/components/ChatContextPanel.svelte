@@ -12,6 +12,7 @@
     import ProjectFileController from '@/actions/App/Http/Controllers/ProjectFileController';
     import ProjectTodoController from '@/actions/App/Http/Controllers/ProjectTodoController';
     import InputError from '@/components/InputError.svelte';
+    import ProjectFileThumbnail from '@/components/ProjectFileThumbnail.svelte';
     import StoredFilePreviewDialog, {
         canPreviewStoredFile,
     } from '@/components/StoredFilePreviewDialog.svelte';
@@ -307,8 +308,13 @@
                         <div
                             class="flex items-center gap-2 rounded-lg border bg-background p-2.5"
                         >
-                            <FileText
-                                class="size-4 shrink-0 text-muted-foreground"
+                            <ProjectFileThumbnail
+                                teamSlug={currentTeam.slug}
+                                projectId={project.id}
+                                fileId={file.id}
+                                mimeType={file.mimeType}
+                                thumbnailUrl={null}
+                                variant="summary"
                             />
                             <div class="min-w-0 flex-1">
                                 {#if canPreviewStoredFile(file.name)}

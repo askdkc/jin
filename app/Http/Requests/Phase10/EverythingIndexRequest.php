@@ -68,7 +68,7 @@ class EverythingIndexRequest extends FormRequest
 
         return [
             'q' => ['nullable', 'string', 'max:100'],
-            'type' => ['nullable', Rule::in(['message', 'todo', 'document', 'file', 'link', 'comment'])],
+            'type' => ['nullable', Rule::in(['message', 'chat', 'todo', 'document', 'file', 'link', 'comment'])],
             'file_categories' => ['sometimes', 'array', 'list', 'max:4'],
             'file_categories.*' => ['string', 'distinct:strict', Rule::in(self::FILE_CATEGORY_OPTIONS)],
             'sort' => ['nullable', Rule::in(self::SORT_OPTIONS)],

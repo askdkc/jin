@@ -31,9 +31,10 @@
     import Hash from 'lucide-svelte/icons/hash';
     import ListTodo from 'lucide-svelte/icons/list-todo';
     import LoaderCircle from 'lucide-svelte/icons/loader-circle';
+    import Maximize2 from 'lucide-svelte/icons/maximize-2';
+    import Minimize2 from 'lucide-svelte/icons/minimize-2';
     import Paperclip from 'lucide-svelte/icons/paperclip';
     import Plus from 'lucide-svelte/icons/plus';
-    import Send from 'lucide-svelte/icons/send';
     import X from 'lucide-svelte/icons/x';
     import { onMount, tick } from 'svelte';
     import { SvelteSet } from 'svelte/reactivity';
@@ -41,6 +42,7 @@
     import ChatChannelController from '@/actions/App/Http/Controllers/ChatChannelController';
     import AppHead from '@/components/AppHead.svelte';
     import ChatChannelActions from '@/components/ChatChannelActions.svelte';
+    import ChatComposer from '@/components/ChatComposer.svelte';
     import ChatContextPanel from '@/components/ChatContextPanel.svelte';
     import ChatMessageItem from '@/components/ChatMessageItem.svelte';
     import InputError from '@/components/InputError.svelte';
@@ -60,6 +62,7 @@
     import type {
         ChatAttachment,
         ChatChannel,
+        ChatDeleteResponse,
         ChatHistoryResponse,
         ChatMessage,
         ChatReactionResponse,
@@ -67,6 +70,7 @@
         ChatThreadResponse,
         ChatTodo,
         ChatTodoList,
+        ChatUpdateResponse,
         ProjectReaction,
         TodoMember,
     } from '@/types';
@@ -99,6 +103,7 @@
         members,
         maxChatAttachments,
         currentUserId,
+        canManageMessages,
     }: {
         currentTeam: Team;
         project: ChatProject;
@@ -113,6 +118,7 @@
         members: TodoMember[];
         maxChatAttachments: number;
         currentUserId: number;
+        canManageMessages: boolean;
     } = $props();
 
     const initialChannelId = (): number => selectedChannel.id;
@@ -137,12 +143,15 @@
     const reactionHttp = useHttp<{ reaction: string }, ChatReactionResponse>({
         reaction: '',
     });
+    const updateHttp = useHttp<{ body: string }, ChatUpdateResponse>({
+        body: '',
+    });
+    const deleteHttp = useHttp<Record<string, never>, ChatDeleteResponse>({});
 
     let messages = $state<ChatMessage[]>(initialMessageState());
     let channelFiles = $state<ChatAttachment[]>(initialFileState());
     let historyCursor = $state<string | null>(initialCursorState());
     let connectionStatus = $state<ConnectionStatus>('connecting');
-    let isComposing = $state(false);
     let sendError = $state('');
     let uploadError = $state('');
     let showChannelForm = $state(false);
@@ -150,6 +159,7 @@
     let threadMessages = $state<ChatMessage[]>([]);
     let threadCursor = $state<string | null>(null);
     let threadError = $state('');
+    let threadFullscreen = $state(false);
     let pendingAttachments = $state<ChatAttachment[]>([]);
     let pendingUploadCount = $state(0);
     let dragActive = $state(false);
@@ -158,12 +168,13 @@
     let messageList = $state<HTMLDivElement>();
     let threadList = $state<HTMLDivElement>();
     let fileInput = $state<HTMLInputElement>();
-    let composerShell = $state<HTMLDivElement>();
-    let messageComposer = $state<HTMLTextAreaElement>();
-    let composerExpanded = $state(false);
 
     const receivedReplyIds = new SvelteSet<number>();
+    const deletedMessageIds = new SvelteSet<number>();
     const channelName = $derived(`projects.${project.id}.chat`);
+    const attachmentUploadUrl = $derived(
+        AttachmentController.uploadInline.url([currentTeam.slug, project.id]),
+    );
     const incompleteTodoCount = $derived(
         relatedTodos.filter((todo) => !todo.completed).length,
     );
@@ -175,12 +186,6 @@
               ? t('Connecting')
               : t('Offline — messages are still saved'),
     );
-    const canSend = $derived(
-        !sendHttp.processing &&
-            pendingUploadCount === 0 &&
-            (sendHttp.body.trim() !== '' || pendingAttachments.length > 0),
-    );
-
     const mergeChannelFiles = (incoming: ChatAttachment[]): void => {
         const existingIds = new Set(channelFiles.map((file) => file.id));
         const uniqueFiles = incoming.filter(
@@ -248,6 +253,113 @@
 
         if (activeThread?.id === messageId) {
             activeThread = { ...activeThread, reactions };
+        }
+    };
+
+    const setMessageBody = (messageId: number, body: string): void => {
+        messages = messages.map((message) =>
+            message.id === messageId ? { ...message, body } : message,
+        );
+        threadMessages = threadMessages.map((message) =>
+            message.id === messageId ? { ...message, body } : message,
+        );
+
+        if (activeThread?.id === messageId) {
+            activeThread = { ...activeThread, body };
+        }
+    };
+
+    const removeMessage = (event: ChatDeleteResponse): void => {
+        if (deletedMessageIds.has(event.messageId)) {
+            return;
+        }
+
+        deletedMessageIds.add(event.messageId);
+        channelFiles = channelFiles.filter(
+            (file) => !event.attachmentIds.includes(file.id),
+        );
+
+        if (event.parentId === null) {
+            messages = messages.filter(
+                (message) => message.id !== event.messageId,
+            );
+
+            if (activeThread?.id === event.messageId) {
+                activeThread = null;
+                threadMessages = [];
+                threadCursor = null;
+                threadFullscreen = false;
+            }
+
+            return;
+        }
+
+        threadMessages = threadMessages.filter(
+            (message) => message.id !== event.messageId,
+        );
+        messages = messages.map((message) =>
+            message.id === event.parentId
+                ? {
+                      ...message,
+                      replyCount: Math.max(0, message.replyCount - 1),
+                  }
+                : message,
+        );
+
+        if (activeThread?.id === event.parentId) {
+            activeThread = {
+                ...activeThread,
+                replyCount: Math.max(0, activeThread.replyCount - 1),
+            };
+        }
+    };
+
+    const updateMessage = async (
+        message: ChatMessage,
+        body: string,
+    ): Promise<boolean> => {
+        updateHttp.body = body;
+
+        try {
+            const response = await updateHttp.submit(
+                ChatController.update([
+                    currentTeam.slug,
+                    project.id,
+                    message.id,
+                ]),
+            );
+
+            if (!response) {
+                return false;
+            }
+
+            setMessageBody(response.messageId, response.body);
+
+            return true;
+        } catch {
+            return false;
+        }
+    };
+
+    const deleteMessage = async (message: ChatMessage): Promise<boolean> => {
+        try {
+            const response = await deleteHttp.submit(
+                ChatController.destroy([
+                    currentTeam.slug,
+                    project.id,
+                    message.id,
+                ]),
+            );
+
+            if (!response) {
+                return false;
+            }
+
+            removeMessage(response);
+
+            return true;
+        } catch {
+            return false;
         }
     };
 
@@ -360,8 +472,6 @@
             return;
         }
 
-        expandComposer();
-
         const availableSlots =
             maxChatAttachments - pendingAttachments.length - pendingUploadCount;
 
@@ -383,21 +493,15 @@
                 const csrfToken = document.querySelector<HTMLMetaElement>(
                     'meta[name="csrf-token"]',
                 )?.content;
-                const response = await fetch(
-                    AttachmentController.uploadInline.url([
-                        currentTeam.slug,
-                        project.id,
-                    ]),
-                    {
-                        method: 'POST',
-                        credentials: 'same-origin',
-                        headers: {
-                            Accept: 'application/json',
-                            ...(csrfToken ? { 'X-CSRF-TOKEN': csrfToken } : {}),
-                        },
-                        body: formData,
+                const response = await fetch(attachmentUploadUrl, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {
+                        Accept: 'application/json',
+                        ...(csrfToken ? { 'X-CSRF-TOKEN': csrfToken } : {}),
                     },
-                );
+                    body: formData,
+                });
 
                 if (!response.ok) {
                     throw new Error(`Upload failed: ${response.status}`);
@@ -420,17 +524,33 @@
         void uploadFiles(files);
     };
 
+    const richTextEditorHandlesDrop = (event: DragEvent): boolean =>
+        event
+            .composedPath()
+            .some(
+                (target) =>
+                    target instanceof HTMLElement &&
+                    target.tagName === 'TRIX-EDITOR',
+            );
+
     const handleDrop = (event: DragEvent): void => {
-        event.preventDefault();
         dragActive = false;
+
+        if (richTextEditorHandlesDrop(event)) {
+            return;
+        }
+
+        event.preventDefault();
         void uploadFiles(Array.from(event.dataTransfer?.files ?? []));
     };
 
-    const sendMessage = async (): Promise<void> => {
-        const body = sendHttp.body.trim();
-
-        if (!canSend || isComposing) {
-            return;
+    const sendMessage = async (body: string): Promise<boolean> => {
+        if (
+            sendHttp.processing ||
+            pendingUploadCount > 0 ||
+            (body === '' && pendingAttachments.length === 0)
+        ) {
+            return false;
         }
 
         sendError = '';
@@ -448,13 +568,15 @@
                 sendHttp.attachment_ids = [];
                 pendingAttachments = [];
                 sendHttp.clearErrors();
-                await tick();
-                resizeMessageComposer();
                 await scrollToLatest();
+
+                return true;
             }
         } catch {
             sendError = t('Message could not be sent. Please try again.');
         }
+
+        return false;
     };
 
     const openThread = async (message: ChatMessage): Promise<void> => {
@@ -488,6 +610,15 @@
         }
     };
 
+    const toggleThreadFullscreen = (): void => {
+        threadFullscreen = !threadFullscreen;
+    };
+
+    const closeThread = (): void => {
+        threadFullscreen = false;
+        activeThread = null;
+    };
+
     const loadOlderReplies = async (): Promise<void> => {
         if (!activeThread || !threadCursor || threadHttp.processing) {
             return;
@@ -511,11 +642,9 @@
         }
     };
 
-    const sendReply = async (): Promise<void> => {
-        const body = replyHttp.body.trim();
-
-        if (!activeThread || !body || isComposing || replyHttp.processing) {
-            return;
+    const sendReply = async (body: string): Promise<boolean> => {
+        if (!activeThread || body === '' || replyHttp.processing) {
+            return false;
         }
 
         threadError = '';
@@ -531,72 +660,14 @@
                 handleReplyCreated(response.message);
                 replyHttp.body = '';
                 replyHttp.clearErrors();
+
+                return true;
             }
         } catch {
             threadError = t('Message could not be sent. Please try again.');
         }
-    };
 
-    const handleMessageKeydown = (event: KeyboardEvent): void => {
-        if (
-            event.key === 'Enter' &&
-            !event.shiftKey &&
-            !event.isComposing &&
-            !isComposing
-        ) {
-            event.preventDefault();
-            void sendMessage();
-        }
-    };
-
-    const resizeMessageComposer = (): void => {
-        if (!messageComposer) {
-            return;
-        }
-
-        if (!composerExpanded) {
-            messageComposer.style.height = '';
-            messageComposer.style.overflowY = 'hidden';
-
-            return;
-        }
-
-        messageComposer.style.height = 'auto';
-        messageComposer.style.height = `${Math.min(messageComposer.scrollHeight, 192)}px`;
-        messageComposer.style.overflowY =
-            messageComposer.scrollHeight > 192 ? 'auto' : 'hidden';
-    };
-
-    const expandComposer = (): void => {
-        composerExpanded = true;
-        void tick().then(resizeMessageComposer);
-    };
-
-    const collapseComposerIfIdle = (): void => {
-        requestAnimationFrame(() => {
-            if (
-                pendingAttachments.length > 0 ||
-                pendingUploadCount > 0 ||
-                composerShell?.contains(document.activeElement)
-            ) {
-                return;
-            }
-
-            composerExpanded = false;
-            requestAnimationFrame(resizeMessageComposer);
-        });
-    };
-
-    const handleReplyKeydown = (event: KeyboardEvent): void => {
-        if (
-            event.key === 'Enter' &&
-            !event.shiftKey &&
-            !event.isComposing &&
-            !isComposing
-        ) {
-            event.preventDefault();
-            void sendReply();
-        }
+        return false;
     };
 
     const switchChannel = (event: Event): void => {
@@ -650,6 +721,12 @@
                 .listen(
                     '.chat.message.reaction.updated',
                     handleReactionBroadcast,
+                )
+                .listen('.chat.message.updated', (event: ChatUpdateResponse) =>
+                    setMessageBody(event.messageId, event.body),
+                )
+                .listen('.chat.message.deleted', (event: ChatDeleteResponse) =>
+                    removeMessage(event),
                 );
 
             return () => {
@@ -665,7 +742,8 @@
 <AppHead title={`${currentTeam.menuNames.chat} — ${project.name}`} />
 
 <div
-    class="relative grid min-h-0 flex-1 overflow-hidden bg-background lg:grid-cols-[15rem_minmax(0,1fr)] xl:grid-cols-[15rem_minmax(0,1fr)_20rem]"
+    data-chat-layout
+    class="relative grid h-[calc(100dvh-6rem-1px)] min-h-0 flex-none overflow-hidden bg-background lg:grid-cols-[15rem_minmax(0,1fr)] xl:grid-cols-[15rem_minmax(0,1fr)_16rem]"
 >
     <aside
         class="hidden min-h-0 flex-col border-r bg-sidebar text-sidebar-foreground lg:flex"
@@ -892,7 +970,14 @@
                         {currentTeam}
                         {project}
                         {message}
+                        mentionables={members}
+                        canManage={canManageMessages ||
+                            message.user?.id === currentUserId}
+                        processing={updateHttp.processing ||
+                            deleteHttp.processing}
                         onToggleReaction={toggleMessageReaction}
+                        onUpdate={updateMessage}
+                        onDelete={deleteMessage}
                         onOpenThread={() => void openThread(message)}
                     />
                 {/each}
@@ -911,23 +996,20 @@
                     onchange={onFileInputChange}
                 />
                 <div
-                    bind:this={composerShell}
-                    data-expanded={composerExpanded}
                     role="group"
                     aria-label={t('Write a message')}
                     class:ring-2={dragActive}
                     class:ring-ring={dragActive}
-                    class="overflow-hidden rounded-xl border border-input bg-card shadow-sm transition focus-within:border-ring focus-within:ring-2 focus-within:ring-ring"
+                    class="rounded-xl"
                     ondragover={(event) => {
                         event.preventDefault();
                         dragActive = true;
                     }}
                     ondragleave={() => (dragActive = false)}
                     ondrop={handleDrop}
-                    onfocusout={collapseComposerIfIdle}
                 >
                     {#if pendingAttachments.length > 0 || pendingUploadCount > 0}
-                        <div class="flex flex-wrap gap-2 px-3 pt-3">
+                        <div class="mb-2 flex flex-wrap gap-2">
                             {#each pendingAttachments as file (file.id)}
                                 <Badge variant="secondary" class="gap-1.5 py-1">
                                     <Paperclip />
@@ -958,106 +1040,22 @@
                         </div>
                     {/if}
 
-                    <div
-                        class={cn(
-                            !composerExpanded &&
-                                'flex h-12 items-center gap-1.5 px-2',
-                        )}
-                    >
-                        {#if !composerExpanded}
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                class="size-8 shrink-0 rounded-full"
-                                aria-label={t('Attach file')}
-                                title={t('Attach file')}
-                                disabled={pendingUploadCount > 0 ||
-                                    pendingAttachments.length >=
-                                        maxChatAttachments}
-                                onclick={() => fileInput?.click()}
-                            >
-                                <Paperclip />
-                            </Button>
-                        {/if}
-
-                        <textarea
-                            bind:this={messageComposer}
-                            bind:value={sendHttp.body}
-                            rows={composerExpanded ? 3 : 1}
-                            maxlength="2000"
-                            placeholder={t('Message #:channel', {
-                                channel: selectedChannel.name,
-                            })}
-                            aria-label={t('Write a message')}
-                            class={cn(
-                                'resize-none overflow-hidden bg-transparent text-base leading-5 outline-none placeholder:text-muted-foreground sm:text-sm',
-                                composerExpanded
-                                    ? 'block min-h-20 max-h-48 w-full px-3 py-2.5'
-                                    : 'h-9 min-h-9 min-w-0 flex-1 px-1 py-2',
-                            )}
-                            onfocus={expandComposer}
-                            oninput={resizeMessageComposer}
-                            onkeydown={handleMessageKeydown}
-                            oncompositionstart={() => (isComposing = true)}
-                            oncompositionend={() => (isComposing = false)}
-                        ></textarea>
-
-                        {#if !composerExpanded}
-                            <Button
-                                type="button"
-                                size="icon"
-                                class="size-8 shrink-0 rounded-full"
-                                disabled={!canSend}
-                                aria-label={t('Send message')}
-                                onclick={() => void sendMessage()}
-                            >
-                                {#if sendHttp.processing}
-                                    <LoaderCircle class="animate-spin" />
-                                {:else}
-                                    <Send />
-                                {/if}
-                            </Button>
-                        {/if}
-                    </div>
-
-                    {#if composerExpanded}
-                        <div class="flex items-center gap-1 px-2 py-1.5">
-                            <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                class="size-8 shrink-0 rounded-full"
-                                aria-label={t('Attach file')}
-                                title={t('Attach file')}
-                                disabled={pendingUploadCount > 0 ||
-                                    pendingAttachments.length >=
-                                        maxChatAttachments}
-                                onclick={() => fileInput?.click()}
-                            >
-                                <Paperclip />
-                            </Button>
-                            <span
-                                class="ml-auto hidden text-xs text-muted-foreground sm:inline"
-                            >
-                                {t('Drop files to attach')}
-                            </span>
-                            <Button
-                                type="button"
-                                size="icon"
-                                class="size-8 shrink-0 rounded-full"
-                                disabled={!canSend}
-                                aria-label={t('Send message')}
-                                onclick={() => void sendMessage()}
-                            >
-                                {#if sendHttp.processing}
-                                    <LoaderCircle class="animate-spin" />
-                                {:else}
-                                    <Send />
-                                {/if}
-                            </Button>
-                        </div>
-                    {/if}
+                    <ChatComposer
+                        id={`chat-message-${selectedChannel.id}`}
+                        placeholder={t('Message #:channel', {
+                            channel: selectedChannel.name,
+                        })}
+                        mentionables={members}
+                        {attachmentUploadUrl}
+                        processing={sendHttp.processing ||
+                            pendingUploadCount > 0}
+                        allowEmpty={pendingAttachments.length > 0}
+                        attachDisabled={pendingUploadCount > 0 ||
+                            pendingAttachments.length >= maxChatAttachments}
+                        onAttach={() => fileInput?.click()}
+                        onSubmit={sendMessage}
+                        submitLabel={t('Send message')}
+                    />
                 </div>
                 <InputError
                     class="mt-1"
@@ -1089,8 +1087,12 @@
 
     {#if activeThread}
         <aside
-            class="absolute inset-0 flex min-h-0 flex-col border-l bg-card shadow-2xl lg:right-0 lg:left-auto lg:w-96"
+            class={cn(
+                'absolute inset-0 flex min-h-0 flex-col border-l bg-card shadow-2xl',
+                !threadFullscreen && 'lg:right-0 lg:left-auto lg:w-96',
+            )}
             aria-label={t('Thread')}
+            data-thread-view={threadFullscreen ? 'fullscreen' : 'panel'}
         >
             <header
                 class="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3"
@@ -1101,95 +1103,118 @@
                         #{selectedChannel.name}
                     </p>
                 </div>
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={t('Close')}
-                    onclick={() => (activeThread = null)}
-                >
-                    <X />
-                </Button>
+                <div class="flex items-center gap-1">
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        class="hidden lg:inline-flex"
+                        aria-label={threadFullscreen
+                            ? t('Restore thread panel')
+                            : t('Maximize thread')}
+                        aria-pressed={threadFullscreen}
+                        title={threadFullscreen
+                            ? t('Restore thread panel')
+                            : t('Maximize thread')}
+                        onclick={toggleThreadFullscreen}
+                    >
+                        {#if threadFullscreen}
+                            <Minimize2 />
+                        {:else}
+                            <Maximize2 />
+                        {/if}
+                    </Button>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={t('Close')}
+                        onclick={closeThread}
+                    >
+                        <X />
+                    </Button>
+                </div>
             </header>
 
             <div
                 bind:this={threadList}
                 class="min-h-0 flex-1 overflow-y-auto p-2"
             >
-                <ChatMessageItem
-                    {currentTeam}
-                    {project}
-                    message={activeThread}
-                    onToggleReaction={toggleMessageReaction}
-                />
+                <div class="mx-auto w-full max-w-5xl">
+                    <ChatMessageItem
+                        {currentTeam}
+                        {project}
+                        message={activeThread}
+                        mentionables={members}
+                        canManage={canManageMessages ||
+                            activeThread.user?.id === currentUserId}
+                        processing={updateHttp.processing ||
+                            deleteHttp.processing}
+                        onToggleReaction={toggleMessageReaction}
+                        onUpdate={updateMessage}
+                        onDelete={deleteMessage}
+                    />
 
-                {#if threadCursor}
-                    <div class="py-2 text-center">
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            disabled={threadHttp.processing}
-                            onclick={() => void loadOlderReplies()}
-                        >
-                            {t('Load older replies')}
-                        </Button>
+                    {#if threadCursor}
+                        <div class="py-2 text-center">
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={threadHttp.processing}
+                                onclick={() => void loadOlderReplies()}
+                            >
+                                {t('Load older replies')}
+                            </Button>
+                        </div>
+                    {/if}
+
+                    {#if threadHttp.processing && threadMessages.length === 0}
+                        <div class="flex justify-center py-10">
+                            <LoaderCircle
+                                class="size-5 animate-spin text-muted-foreground"
+                            />
+                        </div>
+                    {/if}
+
+                    <div class="mt-2 flex flex-col gap-0.5 border-t pt-2">
+                        {#each threadMessages as reply (reply.id)}
+                            <ChatMessageItem
+                                {currentTeam}
+                                {project}
+                                message={reply}
+                                mentionables={members}
+                                canManage={canManageMessages ||
+                                    reply.user?.id === currentUserId}
+                                processing={updateHttp.processing ||
+                                    deleteHttp.processing}
+                                onToggleReaction={toggleMessageReaction}
+                                onUpdate={updateMessage}
+                                onDelete={deleteMessage}
+                            />
+                        {/each}
                     </div>
-                {/if}
-
-                {#if threadHttp.processing && threadMessages.length === 0}
-                    <div class="flex justify-center py-10">
-                        <LoaderCircle
-                            class="size-5 animate-spin text-muted-foreground"
-                        />
-                    </div>
-                {/if}
-
-                <div class="mt-2 flex flex-col gap-0.5 border-t pt-2">
-                    {#each threadMessages as reply (reply.id)}
-                        <ChatMessageItem
-                            {currentTeam}
-                            {project}
-                            message={reply}
-                            onToggleReaction={toggleMessageReaction}
-                        />
-                    {/each}
                 </div>
             </div>
 
             <footer
                 class="shrink-0 border-t bg-card p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
             >
-                <div
-                    class="flex items-end gap-2 rounded-xl border border-input bg-background p-1.5 focus-within:ring-2 focus-within:ring-ring"
-                >
-                    <textarea
-                        bind:value={replyHttp.body}
-                        rows="1"
-                        maxlength="2000"
+                <div class="mx-auto w-full max-w-5xl">
+                    <ChatComposer
+                        id={`chat-reply-${activeThread.id}`}
                         placeholder={t('Reply')}
-                        aria-label={t('Reply')}
-                        class="max-h-32 min-h-10 flex-1 resize-y bg-transparent px-2 py-2 text-base outline-none placeholder:text-muted-foreground sm:text-sm"
-                        onkeydown={handleReplyKeydown}
-                        oncompositionstart={() => (isComposing = true)}
-                        oncompositionend={() => (isComposing = false)}
-                    ></textarea>
-                    <Button
-                        size="icon"
-                        disabled={!replyHttp.body.trim() ||
-                            replyHttp.processing}
-                        aria-label={t('Send reply')}
-                        onclick={() => void sendReply()}
-                    >
-                        {#if replyHttp.processing}
-                            <LoaderCircle class="animate-spin" />
-                        {:else}
-                            <Send />
-                        {/if}
-                    </Button>
+                        mentionables={members}
+                        {attachmentUploadUrl}
+                        processing={replyHttp.processing}
+                        onSubmit={sendReply}
+                        submitLabel={t('Send reply')}
+                        compact
+                    />
+                    <InputError class="mt-1" message={replyHttp.errors.body} />
+                    {#if threadError}
+                        <p class="mt-1 text-sm text-destructive">
+                            {threadError}
+                        </p>
+                    {/if}
                 </div>
-                <InputError class="mt-1" message={replyHttp.errors.body} />
-                {#if threadError}
-                    <p class="mt-1 text-sm text-destructive">{threadError}</p>
-                {/if}
             </footer>
         </aside>
     {/if}

@@ -7,6 +7,7 @@ use App\Models\ChatMessage;
 use App\Models\Project;
 use App\Models\StoredFile;
 use App\Models\User;
+use App\Support\InlineAttachments;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -30,41 +31,54 @@ class CreateChatMessage
                 'parent_id' => $parent?->id,
                 'body' => $body,
             ]);
+            $messageMorphClass = $message->getMorphClass();
 
-            if ($attachmentIds === []) {
-                return $message;
-            }
+            InlineAttachments::syncFromBody($message, $project, $actor->id, $body);
 
-            $files = StoredFile::query()
-                ->whereIn('id', $attachmentIds)
-                ->orderBy('id')
-                ->lockForUpdate()
-                ->get();
+            if ($attachmentIds !== []) {
+                $files = StoredFile::query()
+                    ->whereIn('id', $attachmentIds)
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->get();
 
-            if ($files->count() !== count($attachmentIds)
-                || $files->contains(fn (StoredFile $file): bool => $file->project_id !== $project->id
-                    || $file->uploaded_by !== $actor->id
-                    || ! $file->is_inline
-                    || $file->attachable_type !== null
-                    || $file->attachable_id !== null
-                    || $file->preview_status === 'deleting')) {
-                $this->throwUnavailableAttachments();
-            }
+                if ($files->count() !== count($attachmentIds)
+                    || $files->contains(function (StoredFile $file) use ($actor, $message, $messageMorphClass, $project): bool {
+                        $isAttachedToMessage = $file->attachable_type === $messageMorphClass
+                            && $file->attachable_id === $message->id;
 
-            $claimed = StoredFile::query()
-                ->whereIn('id', $attachmentIds)
-                ->where('project_id', $project->id)
-                ->where('uploaded_by', $actor->id)
-                ->where('is_inline', true)
-                ->whereNull('attachable_type')
-                ->whereNull('attachable_id')
-                ->update([
-                    'attachable_type' => $message->getMorphClass(),
-                    'attachable_id' => $message->id,
-                ]);
+                        return ! $isAttachedToMessage
+                            && ($file->project_id !== $project->id
+                                || $file->uploaded_by !== $actor->id
+                                || ! $file->is_inline
+                                || $file->attachable_type !== null
+                                || $file->attachable_id !== null
+                                || $file->preview_status === 'deleting');
+                    })) {
+                    $this->throwUnavailableAttachments();
+                }
 
-            if ($claimed !== count($attachmentIds)) {
-                $this->throwUnavailableAttachments();
+                $claimableAttachmentIds = $files
+                    ->filter(fn (StoredFile $file): bool => $file->attachable_type === null && $file->attachable_id === null)
+                    ->modelKeys();
+
+                if ($claimableAttachmentIds !== []) {
+                    $claimed = StoredFile::query()
+                        ->whereIn('id', $claimableAttachmentIds)
+                        ->where('project_id', $project->id)
+                        ->where('uploaded_by', $actor->id)
+                        ->where('is_inline', true)
+                        ->whereNull('attachable_type')
+                        ->whereNull('attachable_id')
+                        ->update([
+                            'attachable_type' => $messageMorphClass,
+                            'attachable_id' => $message->id,
+                        ]);
+
+                    if ($claimed !== count($claimableAttachmentIds)) {
+                        $this->throwUnavailableAttachments();
+                    }
+                }
             }
 
             return $message;

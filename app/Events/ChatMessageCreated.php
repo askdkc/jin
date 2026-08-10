@@ -52,7 +52,7 @@ class ChatMessageCreated implements ShouldBroadcast, ShouldDispatchAfterCommit, 
      */
     public function broadcastWith(): array
     {
-        $this->message->loadMissing(['user:id,name', 'attachments.uploader:id,name']);
+        $this->message->loadMissing(['user:id,name,avatar_path', 'attachments.uploader:id,name']);
 
         return [
             'message' => [
@@ -66,6 +66,7 @@ class ChatMessageCreated implements ShouldBroadcast, ShouldDispatchAfterCommit, 
                 'user' => $this->message->user ? [
                     'id' => $this->message->user->id,
                     'name' => $this->message->user->name,
+                    'avatar' => $this->message->user->avatar,
                 ] : null,
                 'attachments' => $this->message->attachments->map(fn (StoredFile $file): array => [
                     'id' => $file->id,

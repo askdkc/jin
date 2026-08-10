@@ -2,7 +2,9 @@
 
 use App\Enums\TeamRole;
 use App\Events\ChatMessageCreated;
+use App\Events\ChatMessageDeleted;
 use App\Events\ChatMessageReactionUpdated;
+use App\Events\ChatMessageUpdated;
 use App\Models\ChatChannel;
 use App\Models\ChatMessage;
 use App\Models\Project;
@@ -11,6 +13,8 @@ use App\Models\Team;
 use App\Models\Todo;
 use App\Models\TodoList;
 use App\Models\User;
+use App\Notifications\MentionNotification;
+use App\Notifications\NewChatMessageNotification;
 use Illuminate\Broadcasting\BroadcastEvent;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
@@ -18,11 +22,12 @@ use Illuminate\Contracts\Broadcasting\ShouldRescue;
 use Illuminate\Contracts\Events\ShouldDispatchAfterCommit;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
 use Inertia\Testing\AssertableInertia as Assert;
 
 test('project participants can open chat with the latest messages', function () {
-    $user = User::factory()->create();
+    $user = User::factory()->create(['avatar_path' => 'avatars/chat-user.webp']);
     $team = Team::factory()->create();
     $team->members()->attach($user, ['role' => TeamRole::Member->value]);
     $project = Project::factory()->for($team)->for($user, 'creator')->create();
@@ -46,8 +51,111 @@ test('project participants can open chat with the latest messages', function () 
             ->has('messages', 50)
             ->where('messages.0.body', 'Message 6')
             ->where('messages.49.body', 'Message 55')
+            ->where('messages.49.user.avatar', $user->avatar)
+            ->where('canManageMessages', false)
             ->where('historyCursor', fn (mixed $cursor): bool => is_string($cursor) && $cursor !== ''),
         );
+});
+
+test('message authors can edit their chat messages with sanitized rich text', function () {
+    Event::fake([ChatMessageUpdated::class]);
+    $author = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($author, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($author, 'creator')->create();
+    $project->members()->attach($author);
+    $message = ChatMessage::factory()->for($project)->for($author)->create([
+        'body' => 'Before',
+    ]);
+
+    $this
+        ->actingAs($author)
+        ->patchJson(route('projects.chat.messages.update', [$team, $project, $message]), [
+            'body' => '<p>After</p><script>alert(1)</script>',
+        ])
+        ->assertOk()
+        ->assertJsonPath('messageId', $message->id)
+        ->assertJsonPath('body', '<p>After</p>');
+
+    expect($message->fresh()->body)->toBe('<p>After</p>');
+    Event::assertDispatched(ChatMessageUpdated::class, fn (ChatMessageUpdated $event): bool => $event->message->is($message));
+});
+
+test('project managers can edit other authors chat messages but regular members cannot', function () {
+    $author = User::factory()->create();
+    $member = User::factory()->create();
+    $manager = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($author, ['role' => TeamRole::Member->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $team->members()->attach($manager, ['role' => TeamRole::Admin->value]);
+    $project = Project::factory()->for($team)->for($author, 'creator')->create();
+    $project->members()->attach([$author->id, $member->id, $manager->id]);
+    $message = ChatMessage::factory()->for($project)->for($author)->create();
+
+    $this
+        ->actingAs($member)
+        ->patchJson(route('projects.chat.messages.update', [$team, $project, $message]), ['body' => 'Denied'])
+        ->assertForbidden();
+
+    $this
+        ->actingAs($manager)
+        ->patchJson(route('projects.chat.messages.update', [$team, $project, $message]), ['body' => 'Managed'])
+        ->assertOk();
+
+    expect($message->fresh()->body)->toBe('Managed');
+
+    $this
+        ->actingAs($manager)
+        ->get(route('projects.chat.show', [$team, $project]))
+        ->assertInertia(fn (Assert $page) => $page->where('canManageMessages', true));
+});
+
+test('message authors can delete a chat message and its thread attachments are detached', function () {
+    Event::fake([ChatMessageDeleted::class]);
+    $author = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($author, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($author, 'creator')->create();
+    $project->members()->attach($author);
+    $message = ChatMessage::factory()->for($project)->for($author)->create();
+    $reply = ChatMessage::factory()->for($project)->for($author)->for($message, 'parent')->create();
+    $messageFile = StoredFile::factory()->for($project)->for($author, 'uploader')->for($message, 'attachable')->create();
+    $replyFile = StoredFile::factory()->for($project)->for($author, 'uploader')->for($reply, 'attachable')->create();
+
+    $this
+        ->actingAs($author)
+        ->deleteJson(route('projects.chat.messages.destroy', [$team, $project, $message]))
+        ->assertOk()
+        ->assertJsonPath('messageId', $message->id)
+        ->assertJsonPath('parentId', null)
+        ->assertJsonPath('attachmentIds', [$messageFile->id, $replyFile->id]);
+
+    expect(ChatMessage::query()->whereKey([$message->id, $reply->id])->exists())->toBeFalse()
+        ->and($messageFile->fresh()->attachable_type)->toBeNull()
+        ->and($messageFile->fresh()->attachable_id)->toBeNull()
+        ->and($replyFile->fresh()->attachable_type)->toBeNull()
+        ->and($replyFile->fresh()->attachable_id)->toBeNull();
+    Event::assertDispatched(ChatMessageDeleted::class, fn (ChatMessageDeleted $event): bool => $event->messageId === $message->id
+        && $event->attachmentIds === [$messageFile->id, $replyFile->id]);
+});
+
+test('regular project members cannot delete another authors chat message', function () {
+    $author = User::factory()->create();
+    $member = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($author, ['role' => TeamRole::Member->value]);
+    $team->members()->attach($member, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($author, 'creator')->create();
+    $project->members()->attach([$author->id, $member->id]);
+    $message = ChatMessage::factory()->for($project)->for($author)->create();
+
+    $this
+        ->actingAs($member)
+        ->deleteJson(route('projects.chat.messages.destroy', [$team, $project, $message]))
+        ->assertForbidden();
+
+    expect($message->fresh())->not->toBeNull();
 });
 
 test('chat channels keep project conversations separate', function () {
@@ -406,7 +514,7 @@ test('chat reconnect sync returns messages after the latest known id', function 
 });
 
 test('project participants can post a chat message', function () {
-    $user = User::factory()->create();
+    $user = User::factory()->create(['avatar_path' => 'avatars/chat-user.webp']);
     $team = Team::factory()->create();
     $team->members()->attach($user, ['role' => TeamRole::Member->value]);
     $project = Project::factory()->for($team)->for($user, 'creator')->create();
@@ -425,7 +533,8 @@ test('project participants can post a chat message', function () {
         ->assertCreated()
         ->assertJsonPath('message.id', $message->id)
         ->assertJsonPath('message.body', '進捗を共有します。')
-        ->assertJsonPath('message.user.id', $user->id);
+        ->assertJsonPath('message.user.id', $user->id)
+        ->assertJsonPath('message.user.avatar', $user->avatar);
 
     expect($message->project_id)->toBe($project->id)
         ->and($message->chat_channel_id)->not->toBeNull()
@@ -436,6 +545,142 @@ test('project participants can post a chat message', function () {
         ChatMessageCreated::class,
         fn (ChatMessageCreated $event): bool => $event->message->is($message),
     );
+});
+
+test('chat messages sanitize rich text and preserve code language markers', function () {
+    $user = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($user, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($user, 'creator')->create();
+    $project->members()->attach($user);
+
+    $response = $this
+        ->actingAs($user)
+        ->postJson(route('projects.chat.messages.store', [$team, $project]), [
+            'body' => "<p><strong>安全</strong></p><pre><code>lang:php\necho &quot;hi&quot;;</code></pre><script>alert(1)</script>",
+        ]);
+
+    $message = ChatMessage::query()->firstOrFail();
+
+    $response
+        ->assertCreated()
+        ->assertJsonPath('message.body', $message->body);
+
+    expect($message->getRawOriginal('body'))
+        ->toContain('<strong>安全</strong>')
+        ->toContain("lang:php\necho &#34;hi&#34;;")
+        ->not->toContain('<script')
+        ->not->toContain('alert(1)');
+});
+
+test('semantic chat mentions notify only the selected project member', function () {
+    Notification::fake();
+
+    $actor = User::factory()->create();
+    $mentioned = User::factory()->create(['name' => '同名ユーザー']);
+    $sameName = User::factory()->create(['name' => '同名ユーザー']);
+    $outsider = User::factory()->create(['name' => '同名ユーザー']);
+    $team = Team::factory()->create();
+    $team->members()->attach($actor, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach([$mentioned->id, $sameName->id], ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($actor, 'creator')->create();
+    $project->members()->attach([$actor->id, $mentioned->id, $sameName->id]);
+    $channel = ChatChannel::factory()->for($project)->for($actor, 'creator')->create([
+        'name' => 'design',
+    ]);
+
+    $this
+        ->actingAs($actor)
+        ->postJson(route('projects.chat.messages.store', [$team, $project]), [
+            'channel_id' => $channel->id,
+            'body' => '<p><a href="/mentions/'.$mentioned->id.'">@同名ユーザー</a> 確認してください。</p>',
+        ])
+        ->assertCreated();
+
+    $message = ChatMessage::query()->firstOrFail();
+
+    Notification::assertSentTo(
+        $mentioned,
+        MentionNotification::class,
+        fn (MentionNotification $notification, array $channels): bool => $notification->type === MentionNotification::Chat
+            && $notification->targetId === $message->id
+            && $notification->chatChannelId === $channel->id
+            && $notification->chatMessageExcerpt === '@同名ユーザー 確認してください。'
+            && in_array('database', $channels, true)
+            && in_array('broadcast', $channels, true),
+    );
+    Notification::assertNotSentTo($sameName, MentionNotification::class);
+    Notification::assertNotSentTo($outsider, MentionNotification::class);
+    Notification::assertNotSentTo($actor, MentionNotification::class);
+    Notification::assertNotSentTo($mentioned, NewChatMessageNotification::class);
+    Notification::assertSentTo(
+        $sameName,
+        NewChatMessageNotification::class,
+        fn (NewChatMessageNotification $notification, array $channels): bool => $notification->message->is($message)
+            && $notification->channel->is($channel)
+            && $channels === ['database', 'broadcast'],
+    );
+    Notification::assertNotSentTo($outsider, NewChatMessageNotification::class);
+    Notification::assertNotSentTo($actor, NewChatMessageNotification::class);
+});
+
+test('chat posts notify every other project member in app', function () {
+    Notification::fake();
+
+    $actor = User::factory()->create(['name' => '投稿者']);
+    $firstMember = User::factory()->create();
+    $secondMember = User::factory()->create();
+    $outsider = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($actor, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach([$firstMember->id, $secondMember->id], ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($actor, 'creator')->create(['name' => '公開準備']);
+    $project->members()->attach([$actor->id, $firstMember->id, $secondMember->id]);
+    $channel = ChatChannel::factory()->for($project)->for($actor, 'creator')->create([
+        'name' => 'design',
+    ]);
+
+    $this
+        ->actingAs($actor)
+        ->postJson(route('projects.chat.messages.store', [$team, $project]), [
+            'channel_id' => $channel->id,
+            'body' => '<p>レビューをお願いします。</p>',
+        ])
+        ->assertCreated();
+
+    $message = ChatMessage::query()->firstOrFail();
+    $assertsChatNotification = fn (NewChatMessageNotification $notification, array $channels): bool => $notification->actor->is($actor)
+        && $notification->project->is($project)
+        && $notification->channel->is($channel)
+        && $notification->message->is($message)
+        && $channels === ['database', 'broadcast'];
+
+    Notification::assertSentTo($firstMember, NewChatMessageNotification::class, $assertsChatNotification);
+    Notification::assertSentTo($secondMember, NewChatMessageNotification::class, $assertsChatNotification);
+    Notification::assertNotSentTo($actor, NewChatMessageNotification::class);
+    Notification::assertNotSentTo($outsider, NewChatMessageNotification::class);
+
+    $notification = new NewChatMessageNotification($actor, $project, $channel, $message);
+    $mentionsOnlyMember = User::factory()->create([
+        'notification_preferences' => [
+            ...User::DEFAULT_NOTIFICATION_PREFERENCES,
+            'scope' => 'mentions',
+        ],
+    ]);
+
+    expect($notification->via($mentionsOnlyMember))->toBe([])
+        ->and($notification->toArray($firstMember))->toMatchArray([
+            'type' => 'chat_message',
+            'teamId' => $team->id,
+            'projectId' => $project->id,
+            'projectName' => '公開準備',
+            'messageTitle' => '#design',
+            'chatMessageId' => $message->id,
+            'chatChannelId' => $channel->id,
+            'chatChannelName' => 'design',
+            'chatMessageExcerpt' => 'レビューをお願いします。',
+            'actorName' => '投稿者',
+        ]);
 });
 
 test('chat messages can claim uploaded files and expose channel files', function () {
@@ -494,6 +739,39 @@ test('chat messages can claim uploaded files and expose channel files', function
         ])
         ->assertUnprocessable()
         ->assertJsonValidationErrors('attachment_ids.0');
+});
+
+test('chat messages claim images inserted into the rich text body', function () {
+    $user = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($user, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($user, 'creator')->create();
+    $project->members()->attach($user);
+    $channel = ChatChannel::factory()->for($project)->for($user, 'creator')->create();
+    $image = StoredFile::factory()->for($project)->for($user, 'uploader')->create([
+        'is_inline' => true,
+        'mime_type' => 'image/png',
+        'original_name' => 'design.png',
+        'preview_status' => null,
+    ]);
+    $previewUrl = route('projects.files.preview', [$team, $project, $image], absolute: false);
+
+    $response = $this
+        ->actingAs($user)
+        ->postJson(route('projects.chat.messages.store', [$team, $project]), [
+            'channel_id' => $channel->id,
+            'body' => "<p><a href=\"{$previewUrl}\"><img src=\"{$previewUrl}\" alt=\"design.png\"></a></p>",
+        ]);
+
+    $message = ChatMessage::query()->firstOrFail();
+
+    $response
+        ->assertCreated()
+        ->assertJsonPath('message.attachments.0.id', $image->id);
+
+    expect($image->fresh())
+        ->attachable_type->toBe($message->getMorphClass())
+        ->attachable_id->toBe($message->id);
 });
 
 test('chat exposes linked and linkable todos for the selected channel', function () {
@@ -591,7 +869,7 @@ test('thread parent must belong to the selected channel', function () {
         ->assertJsonValidationErrors('parent_id');
 });
 
-test('chat message body is required without attachments and limited to 2000 characters', function () {
+test('chat message body is required without attachments and limited to 20000 characters', function () {
     $user = User::factory()->create();
     $team = Team::factory()->create();
     $team->members()->attach($user, ['role' => TeamRole::Member->value]);
@@ -607,7 +885,7 @@ test('chat message body is required without attachments and limited to 2000 char
     $this
         ->actingAs($user)
         ->postJson(route('projects.chat.messages.store', [$team, $project]), [
-            'body' => str_repeat('あ', 2001),
+            'body' => str_repeat('あ', 20001),
         ])
         ->assertUnprocessable()
         ->assertJsonValidationErrors('body');
@@ -775,7 +1053,7 @@ test('chat routes scope projects to the current team', function () {
 });
 
 test('chat message broadcast uses a private project channel and the default queue', function () {
-    $user = User::factory()->create();
+    $user = User::factory()->create(['avatar_path' => 'avatars/chat-user.webp']);
     $team = Team::factory()->create();
     $project = Project::factory()->for($team)->for($user, 'creator')->create();
     $message = ChatMessage::factory()->for($project)->for($user)->create();
@@ -796,6 +1074,7 @@ test('chat message broadcast uses a private project channel and the default queu
         ->and($event->broadcastWith()['message']['id'])->toBe($message->id)
         ->and($event->broadcastWith()['message']['channelId'])->toBe($message->chat_channel_id)
         ->and($event->broadcastWith()['message']['parentId'])->toBeNull()
+        ->and($event->broadcastWith()['message']['user']['avatar'])->toBe($user->avatar)
         ->and($event->broadcastWith()['message']['attachments'][0]['id'])->toBe($attachment->id);
 
     Queue::fake();
@@ -830,4 +1109,37 @@ test('chat reaction broadcast includes grouped reactors on the private project c
         ->and($payload['reactions'][0]['count'])->toBe(2)
         ->and($payload['reactions'][0]['names'])->toBe(['First User', 'Second User'])
         ->and($payload['reactions'][0]['userIds'])->toBe([$firstUser->id, $secondUser->id]);
+});
+
+test('chat update and delete broadcasts use the private project channel', function () {
+    $user = User::factory()->create();
+    $team = Team::factory()->create();
+    $project = Project::factory()->for($team)->for($user, 'creator')->create();
+    $message = ChatMessage::factory()->for($project)->for($user)->create([
+        'body' => 'Updated body',
+    ]);
+    $updated = new ChatMessageUpdated($message);
+    $deleted = new ChatMessageDeleted($project->id, $message->id, null, [41, 42]);
+
+    expect($updated)->toBeInstanceOf(ShouldBroadcast::class)
+        ->and($updated)->toBeInstanceOf(ShouldDispatchAfterCommit::class)
+        ->and($updated)->toBeInstanceOf(ShouldRescue::class)
+        ->and($updated->broadcastOn()[0])->toBeInstanceOf(PrivateChannel::class)
+        ->and($updated->broadcastOn()[0]->name)->toBe("private-projects.{$project->id}.chat")
+        ->and($updated->broadcastAs())->toBe('chat.message.updated')
+        ->and($updated->broadcastWith())->toBe([
+            'messageId' => $message->id,
+            'body' => 'Updated body',
+        ])
+        ->and($deleted)->toBeInstanceOf(ShouldBroadcast::class)
+        ->and($deleted)->toBeInstanceOf(ShouldDispatchAfterCommit::class)
+        ->and($deleted)->toBeInstanceOf(ShouldRescue::class)
+        ->and($deleted->broadcastOn()[0])->toBeInstanceOf(PrivateChannel::class)
+        ->and($deleted->broadcastOn()[0]->name)->toBe("private-projects.{$project->id}.chat")
+        ->and($deleted->broadcastAs())->toBe('chat.message.deleted')
+        ->and($deleted->broadcastWith())->toBe([
+            'messageId' => $message->id,
+            'parentId' => null,
+            'attachmentIds' => [41, 42],
+        ]);
 });

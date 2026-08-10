@@ -4,11 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Actions\Chat\CreateChatMessage;
 use App\Events\ChatMessageCreated;
+use App\Events\ChatMessageDeleted;
 use App\Events\ChatMessageReactionUpdated;
+use App\Events\ChatMessageUpdated;
 use App\Http\Requests\Chat\ChatHistoryRequest;
 use App\Http\Requests\Chat\ChatThreadRequest;
 use App\Http\Requests\Chat\SaveChatMessageReactionRequest;
 use App\Http\Requests\Chat\StoreChatMessageRequest;
+use App\Http\Requests\Chat\UpdateChatMessageRequest;
 use App\Models\ChatChannel;
 use App\Models\ChatMessage;
 use App\Models\Project;
@@ -17,12 +20,19 @@ use App\Models\Team;
 use App\Models\Todo;
 use App\Models\TodoList;
 use App\Models\User;
+use App\Notifications\MentionNotification;
+use App\Notifications\NewChatMessageNotification;
+use App\Support\InlineAttachments;
+use App\Support\Mentions;
 use App\Support\Reactions;
+use App\Support\RichText;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\Cursor;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -121,6 +131,7 @@ class ChatController extends Controller
                 ->map(fn (User $user): array => ['id' => $user->id, 'name' => $user->name]),
             'maxChatAttachments' => (int) config('uploads.max_files_per_request'),
             'currentUserId' => $userId,
+            'canManageMessages' => $canManageProject,
         ]);
     }
 
@@ -134,7 +145,7 @@ class ChatController extends Controller
         if ($request->filled('after_id')) {
             $afterId = $request->integer('after_id');
             $messages = $channel->messages()
-                ->with(['user:id,name', 'attachments.uploader:id,name', 'reactors:id,name'])
+                ->with(['user:id,name,avatar_path', 'attachments.uploader:id,name', 'reactors:id,name'])
                 ->withCount('replies')
                 ->whereNull('parent_id')
                 ->where('id', '>', $afterId)
@@ -182,12 +193,106 @@ class ChatController extends Controller
             is_array($attachmentIds) ? array_values(array_map('intval', $attachmentIds)) : [],
         );
 
-        $message->load(['user:id,name', 'attachments.uploader:id,name', 'reactors:id,name'])->loadCount('replies');
+        $message->load(['user:id,name,avatar_path', 'attachments.uploader:id,name', 'reactors:id,name'])->loadCount('replies');
         ChatMessageCreated::dispatch($message);
+
+        $projectMembers = $project->members()->get([
+            'users.id',
+            'users.name',
+            'users.email',
+            'users.notification_preferences',
+        ]);
+        $mentionedMembers = Mentions::extract($message->body, $projectMembers);
+        $messageExcerpt = Str::limit(RichText::plainText($message->body), 120);
+
+        MentionNotification::sendToUsers(
+            $mentionedMembers,
+            $request->user(),
+            $project,
+            MentionNotification::Chat,
+            "#{$channel->name}",
+            $message->id,
+            $channel->id,
+            $messageExcerpt,
+        );
+        NewChatMessageNotification::sendToUsers(
+            $projectMembers
+                ->whereNotIn('id', $mentionedMembers->modelKeys())
+                ->values(),
+            $request->user(),
+            $project,
+            $channel,
+            $message,
+        );
 
         return response()->json([
             'message' => $this->messageData($message),
         ], 201);
+    }
+
+    /**
+     * Update a chat message owned by the user or managed by a project administrator.
+     */
+    public function update(
+        UpdateChatMessageRequest $request,
+        Team $currentTeam,
+        Project $project,
+        ChatMessage $chatMessage,
+    ): JsonResponse {
+        $chatMessage->update([
+            'body' => (string) ($request->validated('body') ?? ''),
+        ]);
+        ChatMessageUpdated::dispatch($chatMessage);
+
+        return response()->json([
+            'messageId' => $chatMessage->id,
+            'body' => $chatMessage->body,
+        ]);
+    }
+
+    /**
+     * Delete a chat message and detach files belonging to it and its replies.
+     */
+    public function destroy(
+        Team $currentTeam,
+        Project $project,
+        ChatMessage $chatMessage,
+    ): JsonResponse {
+        Gate::authorize('view', $project);
+        abort_unless(
+            $chatMessage->user_id === request()->user()->id || Gate::allows('update', $project),
+            403,
+        );
+
+        $messageId = $chatMessage->id;
+        $parentId = $chatMessage->parent_id;
+        $messageIds = $chatMessage->replies()->pluck('id')->push($messageId);
+        $attachmentIds = array_values(
+            StoredFile::query()
+                ->where('attachable_type', $chatMessage->getMorphClass())
+                ->whereIn('attachable_id', $messageIds)
+                ->pluck('id')
+                ->map(fn (mixed $id): int => (int) $id)
+                ->all(),
+        );
+
+        DB::transaction(function () use ($chatMessage, $messageIds): void {
+            InlineAttachments::detachMany($chatMessage->getMorphClass(), $messageIds);
+            $chatMessage->delete();
+        });
+
+        ChatMessageDeleted::dispatch(
+            $project->id,
+            $messageId,
+            $parentId,
+            $attachmentIds,
+        );
+
+        return response()->json([
+            'messageId' => $messageId,
+            'parentId' => $parentId,
+            'attachmentIds' => $attachmentIds,
+        ]);
     }
 
     /**
@@ -207,7 +312,7 @@ class ChatController extends Controller
             $chatMessage->id,
         );
 
-        $chatMessage->load(['user:id,name', 'attachments.uploader:id,name', 'reactors:id,name'])->loadCount('replies');
+        $chatMessage->load(['user:id,name,avatar_path', 'attachments.uploader:id,name', 'reactors:id,name'])->loadCount('replies');
 
         return response()->json([
             'message' => $this->messageData($chatMessage),
@@ -251,7 +356,7 @@ class ChatController extends Controller
         ?int $parentId = null,
     ): array {
         $paginator = $channel->messages()
-            ->with(['user:id,name', 'attachments.uploader:id,name', 'reactors:id,name'])
+            ->with(['user:id,name,avatar_path', 'attachments.uploader:id,name', 'reactors:id,name'])
             ->withCount('replies')
             ->when(
                 $parentId === null,
@@ -292,6 +397,7 @@ class ChatController extends Controller
             'user' => $message->user ? [
                 'id' => $message->user->id,
                 'name' => $message->user->name,
+                'avatar' => $message->user->avatar,
             ] : null,
             'attachments' => $message->attachments
                 ->map(fn (StoredFile $file): array => $this->fileData($file))

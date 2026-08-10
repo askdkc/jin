@@ -14,13 +14,34 @@ use Throwable;
 class StoredFilePreviewGenerator
 {
     /** @var list<string> */
+    private const OFFICE_EXTENSIONS = [
+        'doc',
+        'docx',
+        'odt',
+        'xls',
+        'xlsx',
+        'xlsm',
+        'ods',
+        'ppt',
+        'pptx',
+        'odp',
+    ];
+
+    /** @var list<string> */
     public const SUPPORTED_EXTENSIONS = [
         'pdf',
+        ...self::OFFICE_EXTENSIONS,
     ];
+
+    public function __construct(private OnlyOfficeThumbnailService $onlyOfficeThumbnailService) {}
 
     public static function supports(?string $name): bool
     {
-        return in_array(strtolower(pathinfo((string) $name, PATHINFO_EXTENSION)), self::SUPPORTED_EXTENSIONS, true);
+        $extension = strtolower(pathinfo((string) $name, PATHINFO_EXTENSION));
+
+        return $extension === 'pdf'
+            || ((bool) config('onlyoffice.enabled', false)
+                && in_array($extension, self::OFFICE_EXTENSIONS, true));
     }
 
     public static function sourceHash(string $sourcePath): string
@@ -105,39 +126,44 @@ class StoredFilePreviewGenerator
     {
         $disk = Storage::disk($storedFile->disk);
         $extension = strtolower(pathinfo($storedFile->original_name, PATHINFO_EXTENSION));
-        $pdfPath = $extension === 'pdf' ? $disk->path($storedFile->path) : null;
-
-        if ($pdfPath === null || ! is_file($pdfPath)) {
-            throw new RuntimeException('PDF input is unavailable.');
-        }
 
         $workDir = sys_get_temp_dir().'/stored-file-preview-'.bin2hex(random_bytes(8));
         File::makeDirectory($workDir, 0700, true);
 
         try {
-            $pngPrefix = $workDir.'/page-1';
-            $pngResult = Process::timeout((int) config('services.poppler.timeout', 45))->run([
-                config('services.poppler.path', 'pdftoppm'),
-                '-f',
-                '1',
-                '-l',
-                '1',
-                '-png',
-                '-singlefile',
-                $pdfPath,
-                $pngPrefix,
-            ]);
+            if ($extension === 'pdf') {
+                $pdfPath = $disk->path($storedFile->path);
 
-            $pngPath = $pngPrefix.'.png';
+                if (! is_file($pdfPath)) {
+                    throw new RuntimeException('PDF input is unavailable.');
+                }
 
-            if (! $pngResult->successful() || ! is_file($pngPath)) {
-                throw new RuntimeException('PDF page rendering failed.');
+                $pngPath = $this->renderPdfFirstPage($pdfPath, $workDir);
+            } elseif (in_array($extension, self::OFFICE_EXTENSIONS, true)) {
+                $pngPath = $workDir.'/office-thumbnail.png';
+                $this->onlyOfficeThumbnailService->generate($storedFile, $pngPath);
+            } else {
+                throw new RuntimeException('Preview input is unsupported.');
             }
 
             $webpPath = $workDir.'/preview.webp';
-            $webpResult = Process::timeout((int) config('services.imagemagick.timeout', 45))->run([
+            $webpCommand = [
                 config('services.imagemagick.path', 'convert'),
                 $pngPath,
+            ];
+
+            if (in_array($extension, self::OFFICE_EXTENSIONS, true)) {
+                $webpCommand = [
+                    ...$webpCommand,
+                    '-fuzz',
+                    '2%',
+                    '-trim',
+                    '+repage',
+                ];
+            }
+
+            $webpResult = Process::timeout((int) config('services.imagemagick.timeout', 45))->run([
+                ...$webpCommand,
                 '-resize',
                 '1600x1600>',
                 '-strip',
@@ -161,5 +187,29 @@ class StoredFilePreviewGenerator
         } finally {
             File::deleteDirectory($workDir);
         }
+    }
+
+    private function renderPdfFirstPage(string $pdfPath, string $workDir): string
+    {
+        $pngPrefix = $workDir.'/page-1';
+        $pngResult = Process::timeout((int) config('services.poppler.timeout', 45))->run([
+            config('services.poppler.path', 'pdftoppm'),
+            '-f',
+            '1',
+            '-l',
+            '1',
+            '-png',
+            '-singlefile',
+            $pdfPath,
+            $pngPrefix,
+        ]);
+
+        $pngPath = $pngPrefix.'.png';
+
+        if (! $pngResult->successful() || ! is_file($pngPath)) {
+            throw new RuntimeException('PDF page rendering failed.');
+        }
+
+        return $pngPath;
     }
 }

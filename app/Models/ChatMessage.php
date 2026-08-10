@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Casts\SanitizedRichText;
 use Database\Factories\ChatMessageFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Collection;
@@ -34,6 +35,14 @@ class ChatMessage extends Model
 {
     /** @use HasFactory<ChatMessageFactory> */
     use HasFactory;
+
+    /** @return array<string, string> */
+    protected function casts(): array
+    {
+        return [
+            'body' => SanitizedRichText::class,
+        ];
+    }
 
     /**
      * Get the project that owns the message.

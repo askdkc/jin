@@ -1858,6 +1858,7 @@ NGINX
     sudo ln -sfn "$site" "$enabled"
     sudo nginx -t
     sudo systemctl enable --now nginx
+    sudo systemctl reload nginx
 }
 
 configure_jin_supervisor() {

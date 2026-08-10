@@ -218,6 +218,23 @@ BASH, base_path('setup.sh'), $directory);
     }
 });
 
+it('reloads Nginx after enabling the managed application site', function () {
+    $setup = file_get_contents(base_path('setup.sh'));
+    $start = strpos($setup, 'configure_jin_nginx() {');
+    $end = strpos($setup, "\n}\n\nconfigure_jin_supervisor()", $start);
+
+    expect($start)->not->toBeFalse()
+        ->and($end)->not->toBeFalse();
+
+    $configureNginx = substr($setup, $start, $end - $start);
+    $enablePosition = strpos($configureNginx, 'sudo systemctl enable --now nginx');
+    $reloadPosition = strpos($configureNginx, 'sudo systemctl reload nginx');
+
+    expect($enablePosition)->not->toBeFalse()
+        ->and($reloadPosition)->not->toBeFalse()
+        ->and($enablePosition)->toBeLessThan($reloadPosition);
+});
+
 it('restores per-run Nginx file, symlink, and absent snapshots exactly', function () {
     $directory = sys_get_temp_dir().'/jin-nginx-'.bin2hex(random_bytes(8));
     mkdir($directory, 0700);

@@ -1174,6 +1174,7 @@ wait_for_supervisor() {
 
 configure_rabbitmq() {
     local config=/etc/rabbitmq/rabbitmq.conf env_file=/etc/rabbitmq/rabbitmq-env.conf
+    local epmd_socket_drop_in=/etc/systemd/system/epmd.socket.d/jin.conf unit
 
     sudo install -d -m 0755 /etc/rabbitmq
     if sudo test -f "$config"; then
@@ -1201,7 +1202,18 @@ configure_rabbitmq() {
     printf '\n# Managed by jin/setup.sh\nERL_EPMD_ADDRESS=127.0.0.1\n' \
         | sudo tee -a "$env_file" >/dev/null
 
-    sudo systemctl enable --now rabbitmq-server
+    sudo install -d -m 0755 "$(dirname "$epmd_socket_drop_in")"
+    printf '# Managed by jin/setup.sh\n[Socket]\nListenStream=\nListenStream=127.0.0.1:4369\nListenStream=[::1]:4369\n' \
+        | sudo tee "$epmd_socket_drop_in" >/dev/null
+
+    sudo systemctl stop rabbitmq-server epmd.service epmd.socket || true
+    for unit in rabbitmq-server epmd.service epmd.socket; do
+        sudo systemctl is-active --quiet "$unit" \
+            && die "Could not stop ${unit} before rebinding EPMD"
+    done
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now epmd.socket
+    sudo systemctl enable rabbitmq-server
     sudo systemctl restart rabbitmq-server
     sudo systemctl is-active --quiet rabbitmq-server \
         || die "RabbitMQ is not active"

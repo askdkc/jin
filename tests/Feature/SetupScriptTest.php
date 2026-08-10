@@ -148,6 +148,31 @@ BASH, base_path('setup.sh'));
         ->and($process->getErrorOutput())->toContain('RabbitMQ listener 5672 is not loopback-only');
 });
 
+it('rebinds the systemd EPMD socket to loopback before starting RabbitMQ', function () {
+    $setup = file_get_contents(base_path('setup.sh'));
+    $start = strpos($setup, 'configure_rabbitmq() {');
+    $end = strpos($setup, "\n}\n\nverify_rabbitmq_loopback()", $start);
+
+    expect($start)->not->toBeFalse()
+        ->and($end)->not->toBeFalse();
+
+    $configureRabbitMq = substr($setup, $start, $end - $start);
+    $stopPosition = strpos($configureRabbitMq, 'sudo systemctl stop rabbitmq-server epmd.service epmd.socket');
+    $startEpmdPosition = strpos($configureRabbitMq, 'sudo systemctl enable --now epmd.socket');
+    $startRabbitMqPosition = strpos($configureRabbitMq, 'sudo systemctl restart rabbitmq-server');
+
+    expect($configureRabbitMq)->toContain(
+        '/etc/systemd/system/epmd.socket.d/jin.conf',
+        '[Socket]\nListenStream=\nListenStream=127.0.0.1:4369\nListenStream=[::1]:4369\n',
+        'sudo systemctl daemon-reload',
+    )
+        ->and($stopPosition)->not->toBeFalse()
+        ->and($startEpmdPosition)->not->toBeFalse()
+        ->and($startRabbitMqPosition)->not->toBeFalse()
+        ->and($stopPosition)->toBeLessThan($startEpmdPosition)
+        ->and($startEpmdPosition)->toBeLessThan($startRabbitMqPosition);
+});
+
 it('canonicalizes Ubuntu paths and confines its environment file', function () {
     $directory = sys_get_temp_dir().'/jin-setup-'.bin2hex(random_bytes(8));
     $outside = sys_get_temp_dir().'/jin-outside-'.bin2hex(random_bytes(8));

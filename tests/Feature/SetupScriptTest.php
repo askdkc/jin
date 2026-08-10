@@ -174,6 +174,31 @@ it('rebinds the systemd EPMD socket to loopback before starting RabbitMQ', funct
         ->and($startEpmdPosition)->toBeLessThan($startRabbitMqPosition);
 });
 
+it('checks the Supervisor control API without requiring managed programs to run', function () {
+    $process = runSetupBash(<<<'BASH'
+source "$1"
+sudo() { "$@"; }
+supervisorctl() {
+    case "$1" in
+        pid)
+            printf '123\n'
+            return 0
+            ;;
+        status)
+            return 3
+            ;;
+    esac
+    return 1
+}
+sleep() { :; }
+systemctl() { return 0; }
+journalctl() { return 0; }
+wait_for_supervisor
+BASH, base_path('setup.sh'));
+
+    expect($process->isSuccessful())->toBeTrue($process->getErrorOutput());
+});
+
 it('canonicalizes Ubuntu paths and confines its environment file', function () {
     $directory = sys_get_temp_dir().'/jin-setup-'.bin2hex(random_bytes(8));
     $outside = sys_get_temp_dir().'/jin-outside-'.bin2hex(random_bytes(8));

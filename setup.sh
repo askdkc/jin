@@ -1161,7 +1161,7 @@ wait_for_supervisor() {
     local attempt
 
     for attempt in {1..30}; do
-        if sudo supervisorctl status >/dev/null 2>&1; then
+        if sudo supervisorctl pid >/dev/null 2>&1; then
             return 0
         fi
         sleep 1

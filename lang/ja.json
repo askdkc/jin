@@ -420,6 +420,7 @@
     "Restore thread panel": "スレッド表示を元に戻す",
     "Reply": "返信を入力",
     "Reply in thread": "スレッド返信",
+    "Remove :todo from #:channel?": "「:todo」を#:channelから外しますか？",
     ":count replies": "返信 :count件",
     "Send reply": "返信を送信",
     "Load older replies": "過去の返信を読み込む",

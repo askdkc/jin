@@ -1,10 +1,52 @@
 # Jin
 
-## 語言
-
 [English](README_en.md) | [日本語](../README.md) | [Français](README_fr.md) | [Deutsch](README_de.md) | [简体中文](README_zh_CN.md) | [繁體中文](README_zh_TW.md) | [Español](README_es.md) | [Português (Brasil)](README_pt_BR.md) | [Português (Portugal)](README_pt_PT.md) | [한국어](README_ko.md)
 
 Jin（陣）是一套可自行託管的專案協作群組軟體，讓多個團隊以專案為單位共同工作。它把訊息、待辦事項、行程、檔案、即時聊天、看板與定期檢查集中到同一個專案工作區。
+
+## Ubuntu 24.04 / 26.04 正式環境部署
+
+在 amd64 Ubuntu Server 24.04 / 26.04 上，執行 `setup.sh` 即可建置完整的 Jin 正式環境，不需要手動安裝或設定 Laravel 與資料庫。
+
+此腳本會安裝必要的 APT 套件、PHP 8.5、Composer 與 Node.js 24；clone或更新 Jin；安裝 Laravel 相依套件；產生 `.env` 與應用程式金鑰；執行資料庫migration與前端build；設定 PostgreSQL/PGroonga、資料庫、角色及peer驗證；並安裝 Redis、RabbitMQ、Queue Worker、Reverb、Scheduler、Supervisor、Nginx、PHP-FPM、ONLYOFFICE Docs 與檔案處理工具。除非指定 `--no-ssl`，腳本也會取得 Let's Encrypt 憑證並設定 HTTPS 重新導向與自動續期。伺服器至少需要 2 個 CPU、4 GB 記憶體、4 GB swap 與足夠的磁碟空間。公開網路只應開放 80/443 與選定的 SSH 連接埠。
+
+```bash
+sudo apt update
+sudo apt install -y git
+cd "$HOME"
+git clone https://github.com/askdkc/jin.git
+cd jin
+./setup.sh
+```
+
+請以具有 sudo 權限的一般使用者執行。包含 `setup.sh` 的已clone repository（例如 `/home/ubuntu/jin`）就是預設應用程式directory；只有需要其他目標時才使用 `--app-dir /var/www/jin`。互動式安裝會依序要求sudo驗證、公開domain、選填的 Let's Encrypt email、IP限制、預設語言與 PostgreSQL password。sudo password由`sudo -v`直接處理，Jin不會讀取或保存。PostgreSQL password留空時會安全產生。腳本不會把使用者加入sudoers。若刻意設定了免密碼sudo，請依提示使用`--sudo-nopasswd`；`--no-ssl`僅適用於隔離環境。產生的資料庫密碼會保存在 `.env` 與 `/etc/jin/database-password`（`root:root`、權限 `0600`）。與部署系統使用者同名的 PostgreSQL 管理角色必須和應用程式的 `DB_USER` 分開。
+
+首次互動式執行時，安裝程式會詢問是否依來源 IP 限制 Jin 的存取。直接按 Enter 而不輸入任何內容時，會設定 `IP_RESTRICTION_ENABLED=false`，允許所有 IP 位址存取。啟用限制後，請以逗號分隔輸入 IP 位址或 CIDR 範圍。例如，若要允許多個區域網路，可輸入 `192.168.1.0/24, 10.0.0.0/8`。安裝程式會移除空白，並在儲存至 `.env` 的 `ALLOWED_IPS` 前，自動加入健康檢查及 ONLYOFFICE 內部通訊所需的 `127.0.0.1,::1`。
+
+接著，安裝程式會顯示十種語言並要求選擇預設語言。可透過編號或語系代碼選擇日文、英文、法文、德文、簡體中文、繁體中文、西班牙文、巴西葡萄牙文、歐洲葡萄牙文或韓文。直接按 Enter 時預設使用日文。所選值會儲存至 `.env` 的 `APP_LOCALE`。
+
+在沒有 TTY 的環境中，預設允許所有 IP 存取並使用日文。自動安裝時可傳入以下環境變數。僅設定 `ALLOWED_IPS` 也會啟用 IP 限制。
+
+```bash
+IP_RESTRICTION_ENABLED=true \
+ALLOWED_IPS='192.168.1.0/24, 10.0.0.0/8' \
+APP_LOCALE=zh_TW \
+./setup.sh --platform ubuntu --domain jin.example.com
+```
+
+後續執行會沿用現有 `.env` 中的 `IP_RESTRICTION_ENABLED`、`ALLOWED_IPS` 與 `APP_LOCALE`，不會重複詢問。
+
+部署後檢查：
+
+```bash
+curl -fsS https://jin.example.com/up
+curl -fsS https://jin.example.com/onlyoffice/healthcheck
+sudo supervisorctl status
+sudo systemctl --no-pager --full status nginx php8.5-fpm postgresql redis-server onlyoffice-documentserver
+sudo ss -ltnp
+```
+
+除 80/443 外，任何 Jin 或 ONLYOFFICE 服務都不應監聽 `0.0.0.0` 或 `[::]`。
 
 ## 主要功能
 
@@ -24,10 +66,40 @@ Jin（陣）是一套可自行託管的專案協作群組軟體，讓多個團�
 - 套用至全站的 IPv4、IPv6 與 CIDR 限制
 - 適用桌面與行動裝置的響應式介面
 
-## 技術堆疊
+## 安全邊界
+
+- 檔案保存在 `storage/app/private`，只能經由授權的下載路由取得。
+- Client 的可見範圍以專案為單位設定。
+- 附簽章的行事曆訂閱 URL 應視同密碼保管。
+- 絕不可記錄或提交 ONLYOFFICE JWT 密鑰與完整簽章 URL。
+- IP 限制同樣涵蓋登入頁面與 `/up`。
+
+```dotenv
+IP_RESTRICTION_ENABLED=true
+ALLOWED_IPS=203.0.113.10,198.51.100.0/24,2001:db8::/32
+TRUSTED_PROXIES=10.0.0.0/8
+```
+
+信任的 Proxy 不可使用 `*`。修改後請執行 `php artisan optimize:clear`。
+
+## 疑難排解
+
+- **所有頁面都傳回 404：** 檢查 `IP_RESTRICTION_ENABLED`、`ALLOWED_IPS` 與 `TRUSTED_PROXIES`。
+- **聊天未立即同步：** 檢查 Reverb、佇列 worker、Vite、`REVERB_ALLOWED_ORIGINS`、瀏覽器主控台與 Laravel 日誌。
+- **郵件未寄出：** `MAIL_MAILER=log` 只會寫入 `storage/logs/laravel.log`；正式環境需設定實際郵件驅動程式。
+- **介面變更未出現：** 開發時使用 `npm run dev`，或執行 `npm run build` 後再執行 `php artisan optimize:clear`。
+- **ONLYOFFICE 錯誤：** 檢查三個通訊 URL、共用 JWT 密鑰、健康檢查與回呼可達性，且不要記錄完整 JWT。
+
+完整維運步驟請參閱[日文 README](../README.md)。
+
+## 開發者資訊
+
+以下章節說明本機開發、實作細節、整合與品質檢查。若只需要在 Ubuntu Server 上部署 Jin，通常不需要閱讀這些內容。
+
+### 技術堆疊
 
 | 領域       | 技術                                                   |
-|------------|--------------------------------------------------------|
+| ---------- | ------------------------------------------------------ |
 | 後端       | PHP 8.5 / Laravel 13                                   |
 | 前端       | Inertia.js 3 / Svelte 5 / TypeScript                   |
 | 介面       | Tailwind CSS 4                                         |
@@ -39,7 +111,7 @@ Jin（陣）是一套可自行託管的專案協作群組軟體，讓多個團�
 | 資料庫     | SQLite FTS5（開發）/ PostgreSQL + PGroonga（正式環境） |
 | 測試       | Pest 4 / PHPStan / Svelte Check / ESLint               |
 
-## 系統需求
+### 系統需求
 
 - PHP 8.5 以上與 Composer 2
 - Node.js 22.12 以上與 npm
@@ -51,7 +123,7 @@ Jin（陣）是一套可自行託管的專案協作群組軟體，讓多個團�
 
 本機開發使用 SQLite FTS5。正式環境使用 PostgreSQL 搭配 PGroonga；檔案內文搜尋的正式環境設定不支援 MySQL。
 
-## 本機快速安裝
+### 本機快速安裝
 
 在新複製的儲存庫中執行：
 
@@ -77,7 +149,7 @@ php artisan reverb:start
 
 若需要截止日期通知與定期檢查，請另外啟動 `php artisan schedule:work`，然後開啟 <http://localhost:8000>。填入資料後的開發專用範例帳號為 `test@example.com`，密碼為 `password`。請勿在正式環境使用。
 
-## macOS 與 ONLYOFFICE
+### macOS 與 ONLYOFFICE
 
 支援的 macOS 方案使用 Homebrew 與 Apple [`container`](https://github.com/apple/container)。Apple Container 需要 Apple 晶片與 macOS 26 以上版本。
 
@@ -96,7 +168,7 @@ ONLYOFFICE_JWT_SECRET=replace-with-at-least-32-random-characters
 
 localhost DNS 對應、容器生命週期與復原方式請參閱[權威的 macOS 說明](../README.md#macos開発環境)。
 
-## MCP 整合
+### MCP 整合
 
 本機 Jin MCP 伺服器的整個程序都以指定 Jin 使用者的權限執行：
 
@@ -106,59 +178,7 @@ php artisan jin:mcp user@example.com
 
 僅應在可信任的本機環境中使用，並採用最低權限的專用帳號。該使用者的團隊與專案權限會套用到所有 MCP 工具。
 
-## Ubuntu 24.04 / 26.04 正式環境部署
-
-`setup.sh` 會設定 Jin、PHP、PostgreSQL/PGroonga、Redis、Node.js、MarkItDown、Nginx、Supervisor、TLS 與 ONLYOFFICE Docs。支援的目標為 amd64 Ubuntu Server，至少配備 2 個 CPU、4 GB 記憶體、4 GB swap 與足夠的磁碟空間。公開網路只應開放 80/443 與選定的 SSH 連接埠。
-
-```bash
-export JIN_DOMAIN=jin.example.com
-export JIN_REPOSITORY=https://github.com/askdkc/jin
-export JIN_PATH=/var/www/jin
-
-sudo apt update
-sudo apt install -y git
-git clone --depth=1 "$JIN_REPOSITORY" /tmp/jin-installer
-cd /tmp/jin-installer
-
-./setup.sh \
-  --platform ubuntu \
-  --domain "$JIN_DOMAIN" \
-  --repo "$JIN_REPOSITORY" \
-  --app-dir "$JIN_PATH" \
-  --onlyoffice-port 8081 \
-  --app-internal-port 8090
-```
-
-若需要 Let's Encrypt 註冊與到期通知，請加入 `--email admin@example.com`。`--no-ssl` 僅適用於無法簽發公開憑證的隔離環境。若刻意設定了免密碼 sudo，請在安裝程式提示時使用 `--sudo-nopasswd`。產生的資料庫密碼會保存在 `.env` 與 `/etc/jin/database-password`（`root:root`、權限 `0600`）。與部署系統使用者同名的 PostgreSQL 管理角色必須和應用程式的 `DB_USER` 分開。
-
-首次互動式執行時，安裝程式會詢問是否依來源 IP 限制 Jin 的存取。直接按 Enter 而不輸入任何內容時，會設定 `IP_RESTRICTION_ENABLED=false`，允許所有 IP 位址存取。啟用限制後，請以逗號分隔輸入 IP 位址或 CIDR 範圍。例如，若要允許多個區域網路，可輸入 `192.168.1.0/24, 10.0.0.0/8`。安裝程式會移除空白，並在儲存至 `.env` 的 `ALLOWED_IPS` 前，自動加入健康檢查及 ONLYOFFICE 內部通訊所需的 `127.0.0.1,::1`。
-
-接著，安裝程式會顯示十種語言並要求選擇預設語言。可透過編號或語系代碼選擇日文、英文、法文、德文、簡體中文、繁體中文、西班牙文、巴西葡萄牙文、歐洲葡萄牙文或韓文。直接按 Enter 時預設使用日文。所選值會儲存至 `.env` 的 `APP_LOCALE`。
-
-在沒有 TTY 的環境中，預設允許所有 IP 存取並使用日文。自動安裝時可傳入以下環境變數。僅設定 `ALLOWED_IPS` 也會啟用 IP 限制。
-
-```bash
-IP_RESTRICTION_ENABLED=true \
-ALLOWED_IPS='192.168.1.0/24, 10.0.0.0/8' \
-APP_LOCALE=zh_TW \
-./setup.sh --platform ubuntu --domain jin.example.com --app-dir /var/www/jin
-```
-
-後續執行會沿用現有 `.env` 中的 `IP_RESTRICTION_ENABLED`、`ALLOWED_IPS` 與 `APP_LOCALE`，不會重複詢問。
-
-部署後檢查：
-
-```bash
-curl -fsS https://jin.example.com/up
-curl -fsS https://jin.example.com/onlyoffice/healthcheck
-sudo supervisorctl status
-sudo systemctl --no-pager --full status nginx php8.5-fpm postgresql redis-server onlyoffice-documentserver
-sudo ss -ltnp
-```
-
-除 80/443 外，任何 Jin 或 ONLYOFFICE 服務都不應監聽 `0.0.0.0` 或 `[::]`。
-
-## 檔案內文搜尋
+### 檔案內文搜尋
 
 使用 MarkItDown 非同步擷取後，Everything 可以搜尋 `docx`、`xlsx`、`pptx` 與 `pdf` 的內文。舊版 Office、OpenDocument、加密或密碼保護的檔案、擷取失敗及超過大小限制的檔案只會依檔名搜尋。Jin 不會接收、儲存或把文件密碼傳給擷取器。
 
@@ -168,23 +188,7 @@ php artisan stored-files:backfill-content --retry-failed
 php artisan stored-files:backfill-content --reindex
 ```
 
-## 安全邊界
-
-- 檔案保存在 `storage/app/private`，只能經由授權的下載路由取得。
-- Client 的可見範圍以專案為單位設定。
-- 附簽章的行事曆訂閱 URL 應視同密碼保管。
-- 絕不可記錄或提交 ONLYOFFICE JWT 密鑰與完整簽章 URL。
-- IP 限制同樣涵蓋登入頁面與 `/up`。
-
-```dotenv
-IP_RESTRICTION_ENABLED=true
-ALLOWED_IPS=203.0.113.10,198.51.100.0/24,2001:db8::/32
-TRUSTED_PROXIES=10.0.0.0/8
-```
-
-信任的 Proxy 不可使用 `*`。修改後請執行 `php artisan optimize:clear`。
-
-## 測試與品質檢查
+### 測試與品質檢查
 
 ```bash
 composer ci:check
@@ -194,13 +198,3 @@ npm run format:check
 npm run types:check
 npm run build
 ```
-
-## 疑難排解
-
-- **所有頁面都傳回 404：** 檢查 `IP_RESTRICTION_ENABLED`、`ALLOWED_IPS` 與 `TRUSTED_PROXIES`。
-- **聊天未立即同步：** 檢查 Reverb、佇列 worker、Vite、`REVERB_ALLOWED_ORIGINS`、瀏覽器主控台與 Laravel 日誌。
-- **郵件未寄出：** `MAIL_MAILER=log` 只會寫入 `storage/logs/laravel.log`；正式環境需設定實際郵件驅動程式。
-- **介面變更未出現：** 開發時使用 `npm run dev`，或執行 `npm run build` 後再執行 `php artisan optimize:clear`。
-- **ONLYOFFICE 錯誤：** 檢查三個通訊 URL、共用 JWT 密鑰、健康檢查與回呼可達性，且不要記錄完整 JWT。
-
-完整維運步驟請參閱[日文 README](../README.md)。

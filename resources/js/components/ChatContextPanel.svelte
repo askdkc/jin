@@ -4,6 +4,7 @@
     import CheckCircle2 from 'lucide-svelte/icons/check-circle-2';
     import Circle from 'lucide-svelte/icons/circle';
     import Download from 'lucide-svelte/icons/download';
+    import Eye from 'lucide-svelte/icons/eye';
     import FileText from 'lucide-svelte/icons/file-text';
     import Link2 from 'lucide-svelte/icons/link-2';
     import ListTodo from 'lucide-svelte/icons/list-todo';
@@ -116,6 +117,17 @@
         );
     };
     const unlinkTodo = (todo: ChatTodo): void => {
+        if (
+            !window.confirm(
+                t('Remove :todo from #:channel?', {
+                    todo: todo.title,
+                    channel: selectedChannel.name,
+                }),
+            )
+        ) {
+            return;
+        }
+
         router.patch(
             ProjectTodoController.updateTodo([
                 currentTeam.slug,
@@ -216,7 +228,10 @@
                                     title={t('Remove')}
                                     onclick={() => unlinkTodo(todo)}
                                 >
-                                    <Unlink />
+                                    <Unlink
+                                        data-icon="icon"
+                                        aria-hidden="true"
+                                    />
                                 </Button>
                             {/if}
                         </div>
@@ -346,28 +361,45 @@
                                     {/if}
                                 </p>
                             </div>
-                            <Button asChild variant="ghost" size="icon">
-                                {#snippet children({
-                                    class: className,
-                                    ...rest
-                                })}
-                                    <a
-                                        href={ProjectFileController.download.url(
-                                            [
-                                                currentTeam.slug,
-                                                project.id,
-                                                file.id,
-                                            ],
-                                        )}
-                                        class={className}
-                                        aria-label={t('Download')}
-                                        title={t('Download')}
-                                        {...rest}
-                                    >
-                                        <Download />
-                                    </a>
-                                {/snippet}
-                            </Button>
+                            {#if canPreviewStoredFile(file.name)}
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    aria-label={t('Preview :file', {
+                                        file: file.name,
+                                    })}
+                                    title={t('Preview :file', {
+                                        file: file.name,
+                                    })}
+                                    onclick={() => openPreview(file)}
+                                >
+                                    <Eye data-icon="icon" aria-hidden="true" />
+                                </Button>
+                            {:else}
+                                <Button asChild variant="ghost" size="icon">
+                                    {#snippet children({
+                                        class: className,
+                                        ...rest
+                                    })}
+                                        <a
+                                            href={ProjectFileController.download.url(
+                                                [
+                                                    currentTeam.slug,
+                                                    project.id,
+                                                    file.id,
+                                                ],
+                                            )}
+                                            class={className}
+                                            aria-label={t('Download')}
+                                            title={t('Download')}
+                                            {...rest}
+                                        >
+                                        <Download data-icon="icon" aria-hidden="true" />
+                                        </a>
+                                    {/snippet}
+                                </Button>
+                            {/if}
                         </div>
                     {/each}
                 </div>

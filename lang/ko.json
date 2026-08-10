@@ -420,6 +420,7 @@
     "Restore thread panel": "스레드 패널 복원",
     "Reply": "답글",
     "Reply in thread": "스레드에 답글 달기",
+    "Remove :todo from #:channel?": "#:channel에서 “:todo”을(를) 제거하시겠습니까?",
     ":count replies": "답글 :count개",
     "Send reply": "답글 보내기",
     "Load older replies": "이전 답글 불러오기",

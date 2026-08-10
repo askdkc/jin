@@ -420,6 +420,7 @@
     "Restore thread panel": "恢复线程面板",
     "Reply": "回复",
     "Reply in thread": "在线程中回复",
+    "Remove :todo from #:channel?": "要从 #:channel 中移除“:todo”吗？",
     ":count replies": ":count 条回复",
     "Send reply": "发送回复",
     "Load older replies": "加载更早的回复",

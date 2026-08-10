@@ -420,6 +420,7 @@
     "Restore thread panel": "Restaurar panel del hilo",
     "Reply": "Responder",
     "Reply in thread": "Responder en el hilo",
+    "Remove :todo from #:channel?": "¿Quitar «:todo» de #:channel?",
     ":count replies": ":count respuestas",
     "Send reply": "Enviar respuesta",
     "Load older replies": "Cargar respuestas anteriores",

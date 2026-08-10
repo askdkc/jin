@@ -420,6 +420,7 @@
     "Restore thread panel": "還原執行緒面板",
     "Reply": "回覆",
     "Reply in thread": "在討論串中回覆",
+    "Remove :todo from #:channel?": "要從 #:channel 移除「:todo」嗎？",
     ":count replies": ":count 則回覆",
     "Send reply": "傳送回覆",
     "Load older replies": "載入較早的回覆",

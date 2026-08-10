@@ -8,7 +8,7 @@
 # secrets, private storage, database data, and named volumes are preserved.
 #
 # Examples:
-#   ./setup.sh --platform ubuntu --domain jin.example.com
+#   ./setup.sh
 #   ./setup.sh --platform ubuntu --domain jin.example.com --no-ssl
 #   ./setup.sh --platform macos --app-dir "$PWD" --no-nginx
 #
@@ -177,6 +177,10 @@ canonicalize_ubuntu_app_dir() {
     esac
     [[ "$canonical" != /var/www ]] || return 1
     APP_DIR="$canonical"
+}
+
+validate_ubuntu_repository_target() {
+    [[ "$APP_DIR" != "$SCRIPT_DIR" || -d "$APP_DIR/.git" ]]
 }
 
 validate_ubuntu_env_file() {
@@ -1348,6 +1352,30 @@ announce_passwordless_sudo_option() {
     fi
 }
 
+resolve_ubuntu_operator_inputs() {
+    if [[ -z "$APP_DOMAIN" ]]; then
+        setup_input_is_interactive \
+            || die "--domain is required for a non-interactive Ubuntu deployment"
+        while [[ -z "$APP_DOMAIN" ]]; do
+            printf 'Jin public domain (e.g. jin.example.com): '
+            IFS= read -r APP_DOMAIN || die "Could not read the Jin public domain"
+        done
+    fi
+
+    if [[ "$NO_SSL" -eq 0 && -z "$EMAIL" ]] && setup_input_is_interactive; then
+        printf "Let's Encrypt email (optional): "
+        IFS= read -r EMAIL || die "Could not read the Let's Encrypt email"
+    fi
+
+    if ! valid_hostname "$APP_DOMAIN"; then
+        if [[ "$NO_SSL" -ne 1 ]] || ! valid_local_hostname "$APP_DOMAIN"; then
+            die "Invalid application domain: $APP_DOMAIN"
+        fi
+    fi
+    [[ -z "$EMAIL" || "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] \
+        || die "Invalid email: $EMAIL"
+}
+
 configure_deploy_postgresql_peer_authentication() {
     local hba_directory hba_file hba_temp_file include_rule peer_file peer_rule_count peer_rule_errors
 
@@ -1906,7 +1934,7 @@ configure_ubuntu_postgresql() {
         DB_PASSWORD="$(sudo sh -c "tr -d '\\r\\n' < '$db_credential_file'")"
         is_placeholder_value "$DB_PASSWORD" && DB_PASSWORD=""
     fi
-    if [[ -z "$DB_PASSWORD" && -t 0 ]]; then
+    if [[ -z "$DB_PASSWORD" ]] && setup_input_is_interactive; then
         read -r -s -p "PostgreSQL password (leave blank to generate): " DB_PASSWORD
         printf '\n'
     fi
@@ -2469,19 +2497,15 @@ setup_ubuntu() {
         || die "Deployment user must be a valid PostgreSQL role name: $DEPLOY_USER"
     [[ "$DB_USER" != "$DEPLOY_USER" ]] \
         || die "DB_USER must differ from DEPLOY_USER because the deployment role is a PostgreSQL superuser"
-    if [[ -z "$APP_DOMAIN" ]]; then
-        if [[ -t 0 ]]; then
-            read -r -p "Jin public domain: " APP_DOMAIN
-        else
-            die "--domain is required for a non-interactive Ubuntu deployment"
-        fi
-    fi
+    resolve_ubuntu_operator_inputs
     valid_postgresql_identifier "$DB_USER" || die "Invalid PostgreSQL role name: $DB_USER"
     valid_postgresql_identifier "$DB_NAME" || die "Invalid PostgreSQL database name: $DB_NAME"
     [[ "$DB_USER" != postgres && "$DB_NAME" != postgres && "$DB_NAME" != template0 && "$DB_NAME" != template1 ]] \
         || die "Reserved PostgreSQL role or database name"
     canonicalize_ubuntu_app_dir \
         || die "--app-dir must resolve under /var/www or /home and not escape through a symlink"
+    validate_ubuntu_repository_target \
+        || die "The setup script must be run from a cloned Git repository"
     validate_ubuntu_env_file \
         || die "Ubuntu --env-file is confined to exactly ${APP_DIR}/.env"
     [[ "$REPO_URL" != *$'\n'* && "$REPO_URL" != *$'\r'* && "$REPO_URL" != *[[:space:]]* ]] \
@@ -2674,7 +2698,7 @@ Container DocumentServer development environment.
 
 Ubuntu defaults:
   Repository: https://github.com/askdkc/jin
-  App path:   /var/www/jin
+  App path:   cloned repository containing setup.sh
   Public Office path: <domain>/onlyoffice
   Laravel -> DocumentServer: http://127.0.0.1:<onlyoffice-port>
   DocumentServer -> Laravel: http://127.0.0.1:<app-internal-port>
@@ -2685,7 +2709,7 @@ Options:
   --domain <domain>            Jin public domain (prompted when interactive)
   --app-domain <domain>        Alias for --domain
   --repo <url>                 Git repository (default: https://github.com/askdkc/jin)
-  --app-dir <path>             Jin application directory (Ubuntu: /var/www/jin)
+  --app-dir <path>             Jin application directory (default: cloned repository)
   --env-file <path>            macOS environment file; Ubuntu requires <app-dir>/.env
   --db-name <name>             PostgreSQL database (default: jin)
   --db-user <name>             PostgreSQL application role (default: jin)
@@ -2728,8 +2752,6 @@ EOF
 }
 
 main() {
-    APP_DIR_EXPLICIT=0
-    [[ -n "${APP_DIR:-}" || -n "${JIN_PATH:-}" ]] && APP_DIR_EXPLICIT=1
     APP_DIR="${APP_DIR:-${JIN_PATH:-$SCRIPT_DIR}}"
     ENV_FILE="${ENV_FILE:-}"
     REPO_URL="${REPO_URL:-${JIN_REPOSITORY:-https://github.com/askdkc/jin}}"
@@ -2807,7 +2829,7 @@ main() {
             --app-dir|--env-file|--domain|--app-domain|--repo|--db-name|--db-user|--db-password|--office-domain|--email|--onlyoffice-port|--app-internal-port|--onlyoffice-image|--container-name|--jwt-secret|--instance-id|--app-internal-url|--public-url|--document-server-url|--max-file-size-bytes|--max-download-bytes|--platform)
                 [[ $# -ge 2 ]] || die "$1 requires a value"
                 case "$1" in
-                    --app-dir) APP_DIR="$2"; APP_DIR_EXPLICIT=1 ;;
+                    --app-dir) APP_DIR="$2" ;;
                     --env-file) ENV_FILE="$2" ;;
                     --domain|--app-domain) APP_DOMAIN="$2" ;;
                     --repo) REPO_URL="$2" ;;
@@ -2862,12 +2884,7 @@ main() {
         *) die "Invalid platform: $PLATFORM (use auto, ubuntu, or macos)" ;;
     esac
 
-    if [[ "$PLATFORM" == ubuntu && "$APP_DIR_EXPLICIT" -eq 0 ]]; then
-        APP_DIR=/var/www/jin
-    fi
     [[ -n "$EMAIL" ]] || EMAIL=""
-    [[ -z "$EMAIL" || "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] \
-        || die "Invalid email: $EMAIL"
 
     case "$PLATFORM" in
         macos)

@@ -62,7 +62,7 @@ it('runs under the macOS system Bash', function () {
         ->and($process->getOutput())->toContain('--sudo-nopasswd');
 });
 
-it('dispatches Ubuntu with the public Jin repository and production app path defaults', function () {
+it('dispatches Ubuntu with the public Jin repository and cloned repository path defaults', function () {
     $process = runSetupBash(<<<'BASH'
 source "$1"
 setup_ubuntu() {
@@ -74,10 +74,53 @@ BASH, base_path('setup.sh'));
     expect($process->isSuccessful())->toBeTrue($process->getErrorOutput())
         ->and($process->getOutput())->toContain(
             'repo=https://github.com/askdkc/jin',
-            'app=/var/www/jin',
+            'app='.base_path(),
             'domain=jin.example.com',
             'nopasswd=1',
         );
+});
+
+it('prompts for the Ubuntu domain and optional Lets Encrypt email', function () {
+    $process = runSetupBash(<<<'BASH'
+source "$1"
+setup_input_is_interactive() { return 0; }
+APP_DOMAIN=""
+EMAIL=""
+NO_SSL=0
+resolve_ubuntu_operator_inputs <<'INPUT'
+jin.example.com
+admin@example.com
+INPUT
+printf 'domain=%s\nemail=%s\n' "$APP_DOMAIN" "$EMAIL"
+BASH, base_path('setup.sh'));
+
+    expect($process->isSuccessful())->toBeTrue($process->getErrorOutput())
+        ->and($process->getOutput())->toContain(
+            'Jin public domain (e.g. jin.example.com):',
+            "Let's Encrypt email (optional):",
+            'domain=jin.example.com',
+            'email=admin@example.com',
+        );
+});
+
+it('requires the default Ubuntu target to be a cloned repository', function () {
+    $process = runSetupBash(<<<'BASH'
+source "$1"
+SCRIPT_DIR=/home/ubuntu/jin
+APP_DIR="$SCRIPT_DIR"
+validate_ubuntu_repository_target && exit 1
+APP_DIR=/var/www/jin
+validate_ubuntu_repository_target
+printf 'repository_target=validated\n'
+BASH, base_path('setup.sh'));
+    $setup = (string) file_get_contents(base_path('setup.sh'));
+
+    expect($process->isSuccessful())->toBeTrue($process->getErrorOutput())
+        ->and($process->getOutput())->toContain('repository_target=validated')
+        ->and($setup)->toContain(
+            'APP_DIR="${APP_DIR:-${JIN_PATH:-$SCRIPT_DIR}}"',
+            'The setup script must be run from a cloned Git repository',
+        )->not->toContain('APP_DIR=/var/www/jin');
 });
 
 it('detects passwordless sudo and requires the explicit non-interactive option', function () {

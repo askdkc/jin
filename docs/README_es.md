@@ -1,10 +1,52 @@
 # Jin
 
-## Idiomas
-
 [English](README_en.md) | [日本語](../README.md) | [Français](README_fr.md) | [Deutsch](README_de.md) | [简体中文](README_zh_CN.md) | [繁體中文](README_zh_TW.md) | [Español](README_es.md) | [Português (Brasil)](README_pt_BR.md) | [Português (Portugal)](README_pt_PT.md) | [한국어](README_ko.md)
 
 Jin (陣) es un sistema de trabajo colaborativo autoalojado para que varios equipos cooperen por proyectos. Reúne mensajes, tareas, calendarios, archivos, chat en tiempo real, tableros de tarjetas y revisiones periódicas en un único espacio de proyecto.
+
+## Producción en Ubuntu 24.04 / 26.04
+
+En Ubuntu Server 24.04 / 26.04 amd64, ejecutar `setup.sh` construye un entorno público de Jin completo. No es necesario instalar ni configurar manualmente Laravel o la base de datos.
+
+El script instala los paquetes APT necesarios, PHP 8.5, Composer y Node.js 24; clona o actualiza Jin; instala las dependencias de Laravel; genera `.env` y la clave de la aplicación; ejecuta las migraciones y la compilación del frontend; configura PostgreSQL/PGroonga, la base de datos, los roles y la autenticación peer; e instala Redis, RabbitMQ, los Queue Workers, Reverb, Scheduler, Supervisor, Nginx, PHP-FPM, ONLYOFFICE Docs y las herramientas de procesamiento de archivos. Salvo que se use `--no-ssl`, también obtiene un certificado de Let's Encrypt y configura la redirección HTTPS y la renovación automática. Se requieren al menos 2 CPU, 4 GB de RAM, 4 GB de swap y espacio suficiente. Solo deben exponerse públicamente los puertos 80/443 y el puerto SSH elegido.
+
+```bash
+sudo apt update
+sudo apt install -y git
+cd "$HOME"
+git clone https://github.com/askdkc/jin.git
+cd jin
+./setup.sh
+```
+
+Ejecuta estos pasos como un usuario normal con acceso a sudo. El repositorio clonado que contiene `setup.sh`, por ejemplo `/home/ubuntu/jin`, es el directorio predeterminado de la aplicación; usa `--app-dir /var/www/jin` solo si necesitas otro destino. La instalación interactiva solicita la autenticación de sudo, el dominio público, un correo opcional de Let's Encrypt, las restricciones IP, el idioma predeterminado y la contraseña de PostgreSQL. `sudo -v` gestiona directamente la contraseña de sudo, que Jin no lee ni guarda. Dejar vacía la contraseña de PostgreSQL genera una segura. El script no añade usuarios a sudoers. Si sudo sin contraseña está configurado intencionadamente, usa `--sudo-nopasswd` cuando se indique; usa `--no-ssl` solo en un entorno aislado. La contraseña de base de datos generada se guarda en `.env` y `/etc/jin/database-password` (`root:root`, modo `0600`). Mantén el rol administrador de PostgreSQL del usuario del sistema separado del `DB_USER` de la aplicación.
+
+En la primera ejecución interactiva, el instalador pregunta si se debe restringir el acceso a Jin según la IP de origen. Pulsar Enter sin escribir nada establece `IP_RESTRICTION_ENABLED=false` y permite el acceso desde cualquier dirección IP. Si se activa la restricción, introduce direcciones IP o rangos CIDR separados por comas. Para permitir varias redes locales, usa por ejemplo `192.168.1.0/24, 10.0.0.0/8`. El instalador elimina los espacios y antepone `127.0.0.1,::1`, necesarios para las comprobaciones de estado y la comunicación interna con ONLYOFFICE, antes de guardar el resultado en `ALLOWED_IPS` dentro de `.env`.
+
+A continuación, el instalador muestra diez idiomas y solicita el predeterminado. Selecciona japonés, inglés, francés, alemán, chino simplificado, chino tradicional, español, portugués de Brasil, portugués europeo o coreano mediante el número o el código regional. Pulsar Enter sin elegir usa japonés. El valor seleccionado se guarda en `APP_LOCALE` dentro de `.env`.
+
+Sin TTY, los valores predeterminados son acceso IP sin restricciones y japonés. Para una instalación automatizada, pasa las siguientes variables de entorno. Definir únicamente `ALLOWED_IPS` también activa la restricción por IP.
+
+```bash
+IP_RESTRICTION_ENABLED=true \
+ALLOWED_IPS='192.168.1.0/24, 10.0.0.0/8' \
+APP_LOCALE=es \
+./setup.sh --platform ubuntu --domain jin.example.com
+```
+
+Las ejecuciones posteriores reutilizan `IP_RESTRICTION_ENABLED`, `ALLOWED_IPS` y `APP_LOCALE` del `.env` existente y no repiten estas preguntas.
+
+Comprobaciones posteriores:
+
+```bash
+curl -fsS https://jin.example.com/up
+curl -fsS https://jin.example.com/onlyoffice/healthcheck
+sudo supervisorctl status
+sudo systemctl --no-pager --full status nginx php8.5-fpm postgresql redis-server onlyoffice-documentserver
+sudo ss -ltnp
+```
+
+Ningún servicio de Jin u ONLYOFFICE aparte de 80/443 debe escuchar en `0.0.0.0` o `[::]`.
 
 ## Funciones principales
 
@@ -24,22 +66,52 @@ Jin (陣) es un sistema de trabajo colaborativo autoalojado para que varios equi
 - Restricciones globales IPv4, IPv6 y CIDR
 - Interfaz adaptable a escritorio y dispositivos móviles
 
-## Tecnologías
+## Límites de seguridad
+
+- Los archivos permanecen en `storage/app/private` y se sirven mediante rutas de descarga autorizadas.
+- La visibilidad de Client se define por proyecto.
+- Las URL firmadas de suscripción al calendario deben tratarse como contraseñas.
+- Los secretos JWT de ONLYOFFICE y las URL firmadas completas nunca deben registrarse ni confirmarse.
+- Las restricciones IP también cubren el inicio de sesión y `/up`.
+
+```dotenv
+IP_RESTRICTION_ENABLED=true
+ALLOWED_IPS=203.0.113.10,198.51.100.0/24,2001:db8::/32
+TRUSTED_PROXIES=10.0.0.0/8
+```
+
+No uses `*` para proxies de confianza. Ejecuta `php artisan optimize:clear` después de modificar estos valores.
+
+## Solución de problemas
+
+- **Todas las páginas devuelven 404:** revisa `IP_RESTRICTION_ENABLED`, `ALLOWED_IPS` y `TRUSTED_PROXIES`.
+- **El chat no aparece de inmediato:** comprueba Reverb, el worker de cola, Vite, `REVERB_ALLOWED_ORIGINS`, la consola del navegador y los registros de Laravel.
+- **No se envían correos:** `MAIL_MAILER=log` escribe en `storage/logs/laravel.log`; configura un transporte real en producción.
+- **No aparecen los cambios de interfaz:** usa `npm run dev`, o ejecuta `npm run build` seguido de `php artisan optimize:clear`.
+- **Error de ONLYOFFICE:** revisa las tres URL de comunicación, el secreto JWT compartido, el healthcheck y el acceso al callback sin registrar nunca el JWT completo.
+
+Para todos los procedimientos operativos detallados, consulta el [README en japonés](../README.md).
+
+## Información para desarrolladores
+
+Las secciones siguientes cubren el desarrollo local, los detalles de implementación, las integraciones y los controles de calidad. Normalmente no son necesarias si solo se va a desplegar Jin en Ubuntu Server.
+
+### Tecnologías
 
 | Área              | Tecnología                                                    |
-|-------------------|----------------------------------------------------------------|
-| Backend           | PHP 8.5 / Laravel 13                                           |
-| Frontend          | Inertia.js 3 / Svelte 5 / TypeScript                           |
-| Interfaz          | Tailwind CSS 4                                                 |
-| Texto enriquecido | Trix 2 / Symfony HTML Sanitizer 8                              |
-| Tiempo real       | Laravel Reverb / Laravel Echo                                  |
-| Autenticación    | Laravel Fortify / Passkeys / 2FA                               |
-| Rutas tipadas     | Laravel Wayfinder                                              |
+| ----------------- | ------------------------------------------------------------- |
+| Backend           | PHP 8.5 / Laravel 13                                          |
+| Frontend          | Inertia.js 3 / Svelte 5 / TypeScript                          |
+| Interfaz          | Tailwind CSS 4                                                |
+| Texto enriquecido | Trix 2 / Symfony HTML Sanitizer 8                             |
+| Tiempo real       | Laravel Reverb / Laravel Echo                                 |
+| Autenticación     | Laravel Fortify / Passkeys / 2FA                              |
+| Rutas tipadas     | Laravel Wayfinder                                             |
 | Colas             | Laravel database queue (desarrollo) / Redis (producción)      |
 | Base de datos     | SQLite FTS5 (desarrollo) / PostgreSQL + PGroonga (producción) |
-| Pruebas           | Pest 4 / PHPStan / Svelte Check / ESLint                       |
+| Pruebas           | Pest 4 / PHPStan / Svelte Check / ESLint                      |
 
-## Requisitos
+### Requisitos
 
 - PHP 8.5 o posterior y Composer 2
 - Node.js 22.12 o posterior y npm
@@ -51,7 +123,7 @@ Jin (陣) es un sistema de trabajo colaborativo autoalojado para que varios equi
 
 El desarrollo local usa SQLite FTS5. Producción usa PostgreSQL con PGroonga; MySQL no está admitido para la búsqueda de contenido de archivos en producción.
 
-## Instalación local rápida
+### Instalación local rápida
 
 Desde un clon nuevo:
 
@@ -77,7 +149,7 @@ php artisan reverb:start
 
 Inicia también `php artisan schedule:work` si necesitas avisos de vencimiento y revisiones periódicas. Abre <http://localhost:8000>. Tras cargar los datos iniciales, la cuenta exclusiva para desarrollo es `test@example.com` con contraseña `password`. No la uses en producción.
 
-## macOS y ONLYOFFICE
+### macOS y ONLYOFFICE
 
 La configuración compatible con macOS usa Homebrew y Apple [`container`](https://github.com/apple/container), que requiere Apple silicon y macOS 26 o posterior.
 
@@ -96,7 +168,7 @@ ONLYOFFICE_JWT_SECRET=replace-with-at-least-32-random-characters
 
 Consulta las [instrucciones canónicas para macOS](../README.md#macos開発環境) para el mapeo DNS de localhost, el ciclo de vida del contenedor y la recuperación.
 
-## Integración MCP
+### Integración MCP
 
 El servidor MCP local de Jin ejecuta todo el proceso con los permisos de un usuario Jin fijo:
 
@@ -106,59 +178,7 @@ php artisan jin:mcp user@example.com
 
 Úsalo solo en un entorno local de confianza y con una cuenta dedicada de privilegios mínimos. Los permisos de equipo y proyecto de ese usuario se aplican a todas las herramientas MCP.
 
-## Producción en Ubuntu 24.04 / 26.04
-
-`setup.sh` instala Jin, PHP, PostgreSQL/PGroonga, Redis, Node.js, MarkItDown, Nginx, Supervisor, TLS y ONLYOFFICE Docs. El destino compatible es Ubuntu Server amd64 con al menos 2 CPU, 4 GB de RAM, 4 GB de swap y espacio en disco suficiente. Solo los puertos 80/443 y el puerto SSH elegido deben exponerse públicamente.
-
-```bash
-export JIN_DOMAIN=jin.example.com
-export JIN_REPOSITORY=https://github.com/askdkc/jin
-export JIN_PATH=/var/www/jin
-
-sudo apt update
-sudo apt install -y git
-git clone --depth=1 "$JIN_REPOSITORY" /tmp/jin-installer
-cd /tmp/jin-installer
-
-./setup.sh \
-  --platform ubuntu \
-  --domain "$JIN_DOMAIN" \
-  --repo "$JIN_REPOSITORY" \
-  --app-dir "$JIN_PATH" \
-  --onlyoffice-port 8081 \
-  --app-internal-port 8090
-```
-
-Añade `--email admin@example.com` para Let's Encrypt. Usa `--no-ssl` únicamente en un entorno aislado. Si sudo sin contraseña está configurado intencionadamente, usa `--sudo-nopasswd` cuando el instalador lo indique. La contraseña de base de datos generada se guarda en `.env` y `/etc/jin/database-password` (`root:root`, modo `0600`). Mantén el rol administrador de PostgreSQL del usuario del sistema separado del `DB_USER` de la aplicación.
-
-En la primera ejecución interactiva, el instalador pregunta si se debe restringir el acceso a Jin según la IP de origen. Pulsar Enter sin escribir nada establece `IP_RESTRICTION_ENABLED=false` y permite el acceso desde cualquier dirección IP. Si se activa la restricción, introduce direcciones IP o rangos CIDR separados por comas. Para permitir varias redes locales, usa por ejemplo `192.168.1.0/24, 10.0.0.0/8`. El instalador elimina los espacios y antepone `127.0.0.1,::1`, necesarios para las comprobaciones de estado y la comunicación interna con ONLYOFFICE, antes de guardar el resultado en `ALLOWED_IPS` dentro de `.env`.
-
-A continuación, el instalador muestra diez idiomas y solicita el predeterminado. Selecciona japonés, inglés, francés, alemán, chino simplificado, chino tradicional, español, portugués de Brasil, portugués europeo o coreano mediante el número o el código regional. Pulsar Enter sin elegir usa japonés. El valor seleccionado se guarda en `APP_LOCALE` dentro de `.env`.
-
-Sin TTY, los valores predeterminados son acceso IP sin restricciones y japonés. Para una instalación automatizada, pasa las siguientes variables de entorno. Definir únicamente `ALLOWED_IPS` también activa la restricción por IP.
-
-```bash
-IP_RESTRICTION_ENABLED=true \
-ALLOWED_IPS='192.168.1.0/24, 10.0.0.0/8' \
-APP_LOCALE=es \
-./setup.sh --platform ubuntu --domain jin.example.com --app-dir /var/www/jin
-```
-
-Las ejecuciones posteriores reutilizan `IP_RESTRICTION_ENABLED`, `ALLOWED_IPS` y `APP_LOCALE` del `.env` existente y no repiten estas preguntas.
-
-Comprobaciones posteriores:
-
-```bash
-curl -fsS https://jin.example.com/up
-curl -fsS https://jin.example.com/onlyoffice/healthcheck
-sudo supervisorctl status
-sudo systemctl --no-pager --full status nginx php8.5-fpm postgresql redis-server onlyoffice-documentserver
-sudo ss -ltnp
-```
-
-Ningún servicio de Jin u ONLYOFFICE aparte de 80/443 debe escuchar en `0.0.0.0` o `[::]`.
-
-## Búsqueda en archivos
+### Búsqueda en archivos
 
 Después de la extracción asíncrona con MarkItDown, Everything busca dentro de `docx`, `xlsx`, `pptx` y `pdf`. Los formatos antiguos de Office y OpenDocument, los archivos cifrados o protegidos por contraseña, las extracciones fallidas y los archivos demasiado grandes se buscan solo por nombre. Jin no acepta, guarda ni envía contraseñas de documentos al extractor.
 
@@ -168,23 +188,7 @@ php artisan stored-files:backfill-content --retry-failed
 php artisan stored-files:backfill-content --reindex
 ```
 
-## Límites de seguridad
-
-- Los archivos permanecen en `storage/app/private` y se sirven mediante rutas de descarga autorizadas.
-- La visibilidad de Client se define por proyecto.
-- Las URL firmadas de suscripción al calendario deben tratarse como contraseñas.
-- Los secretos JWT de ONLYOFFICE y las URL firmadas completas nunca deben registrarse ni confirmarse.
-- Las restricciones IP también cubren el inicio de sesión y `/up`.
-
-```dotenv
-IP_RESTRICTION_ENABLED=true
-ALLOWED_IPS=203.0.113.10,198.51.100.0/24,2001:db8::/32
-TRUSTED_PROXIES=10.0.0.0/8
-```
-
-No uses `*` para proxies de confianza. Ejecuta `php artisan optimize:clear` después de modificar estos valores.
-
-## Pruebas y calidad
+### Pruebas y calidad
 
 ```bash
 composer ci:check
@@ -194,13 +198,3 @@ npm run format:check
 npm run types:check
 npm run build
 ```
-
-## Solución de problemas
-
-- **Todas las páginas devuelven 404:** revisa `IP_RESTRICTION_ENABLED`, `ALLOWED_IPS` y `TRUSTED_PROXIES`.
-- **El chat no aparece de inmediato:** comprueba Reverb, el worker de cola, Vite, `REVERB_ALLOWED_ORIGINS`, la consola del navegador y los registros de Laravel.
-- **No se envían correos:** `MAIL_MAILER=log` escribe en `storage/logs/laravel.log`; configura un transporte real en producción.
-- **No aparecen los cambios de interfaz:** usa `npm run dev`, o ejecuta `npm run build` seguido de `php artisan optimize:clear`.
-- **Error de ONLYOFFICE:** revisa las tres URL de comunicación, el secreto JWT compartido, el healthcheck y el acceso al callback sin registrar nunca el JWT completo.
-
-Para todos los procedimientos operativos detallados, consulta el [README en japonés](../README.md).

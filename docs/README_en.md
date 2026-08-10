@@ -1,10 +1,66 @@
 # Jin
 
-## Languages
-
 [English](README_en.md) | [日本語](../README.md) | [Français](README_fr.md) | [Deutsch](README_de.md) | [简体中文](README_zh_CN.md) | [繁體中文](README_zh_TW.md) | [Español](README_es.md) | [Português (Brasil)](README_pt_BR.md) | [Português (Portugal)](README_pt_PT.md) | [한국어](README_ko.md)
 
 Jin (陣) is self-hosted groupware for multiple teams working together on projects. It brings messages, to-dos, schedules, files, real-time chat, card tables, and recurring check-ins into one project workspace.
+
+## Ubuntu 24.04 / 26.04 production setup
+
+On amd64 Ubuntu Server 24.04 / 26.04, running `setup.sh` builds a complete public Jin environment. Laravel and the database do not need to be installed or configured manually.
+
+The script installs the required APT packages, PHP 8.5, Composer, and Node.js 24; clones or updates Jin; installs Laravel dependencies; generates `.env` and the application key; runs migrations and the frontend build; configures PostgreSQL/PGroonga, the database, roles, and peer authentication; and installs Redis, RabbitMQ, Queue workers, Reverb, Scheduler, Supervisor, Nginx, PHP-FPM, ONLYOFFICE Docs, and file-processing tools. Unless `--no-ssl` is used, it also obtains a Let's Encrypt certificate and configures HTTPS redirection and automatic renewal. Rerunning the script updates the installation while preserving `.env`, generated secrets, the database, and private storage.
+
+The supported production host is amd64 Ubuntu Server. Before running setup:
+
+- Point the domain's DNS A/AAAA record to the server
+- Expose only TCP 80/443 publicly, plus the chosen SSH port
+- Provide at least 2 CPUs, 4 GB RAM, 4 GB swap, and adequate disk space
+- Back up and inspect existing Nginx, PostgreSQL, and port usage on non-fresh hosts
+- Never commit production credentials or secrets
+
+Initial setup:
+
+```bash
+sudo apt update
+sudo apt install -y git
+cd "$HOME"
+git clone https://github.com/askdkc/jin.git
+cd jin
+./setup.sh
+```
+
+Run this as a regular sudo-capable user. The cloned repository containing `setup.sh` is the default application directory, such as `/home/ubuntu/jin`; use `--app-dir /var/www/jin` only when a separate target is required. Interactive setup asks for sudo authentication, the public domain, an optional Let's Encrypt email, IP restrictions, the default language, and the PostgreSQL password. The sudo password is handled directly by `sudo -v` and is never read or stored by Jin. Leaving the PostgreSQL password blank generates one securely. Setup does not add users to sudoers.
+
+If passwordless sudo is intentionally configured, rerun with `--sudo-nopasswd` when setup instructs you to do so. Use `--no-ssl` only for an isolated environment where a public certificate cannot be issued.
+
+On the first interactive run, setup asks whether access to Jin should be restricted by source IP. Pressing Enter without typing anything sets `IP_RESTRICTION_ENABLED=false` and allows access from every IP address. When restriction is enabled, enter IP addresses or CIDR ranges separated by commas. For example, to allow multiple local networks, enter `192.168.1.0/24, 10.0.0.0/8`. Setup removes whitespace and prepends `127.0.0.1,::1`, which are required for its health checks and internal ONLYOFFICE traffic, before saving the result to `ALLOWED_IPS` in `.env`.
+
+Setup then displays ten languages and asks for the default. Select Japanese, English, French, German, Simplified Chinese, Traditional Chinese, Spanish, Brazilian Portuguese, European Portuguese, or Korean by number or locale code. Pressing Enter without a selection defaults to Japanese. The selected value is saved to `APP_LOCALE` in `.env`.
+
+Without a TTY, the defaults are unrestricted IP access and Japanese. For an automated installation, pass environment variables as follows. Supplying `ALLOWED_IPS` by itself also enables IP restriction.
+
+```bash
+IP_RESTRICTION_ENABLED=true \
+ALLOWED_IPS='192.168.1.0/24, 10.0.0.0/8' \
+APP_LOCALE=en \
+./setup.sh --platform ubuntu --domain jin.example.com
+```
+
+Subsequent runs reuse `IP_RESTRICTION_ENABLED`, `ALLOWED_IPS`, and `APP_LOCALE` from the existing `.env` and do not repeat these questions.
+
+The generated database password is stored in `.env` and in `/etc/jin/database-password` as `root:root` with mode `0600`. Setup also creates a PostgreSQL `LOGIN SUPERUSER` role matching the deployment OS user for local peer administration. Keep that role separate from the application's `DB_USER` and tightly control shell access to the deployment account.
+
+Post-deployment checks:
+
+```bash
+curl -fsS https://jin.example.com/up
+curl -fsS https://jin.example.com/onlyoffice/healthcheck
+sudo supervisorctl status
+sudo systemctl --no-pager --full status nginx php8.5-fpm postgresql redis-server onlyoffice-documentserver
+sudo ss -ltnp
+```
+
+Jin and ONLYOFFICE listeners other than 80/443 must not bind to `0.0.0.0` or `[::]`. The default setup binds DocumentServer to `127.0.0.1:8081` and the Laravel callback endpoint to `127.0.0.1:8090`.
 
 ## Main features
 
@@ -24,10 +80,43 @@ Jin (陣) is self-hosted groupware for multiple teams working together on projec
 - Site-wide IPv4, IPv6, and CIDR restrictions
 - Responsive UI for desktop and mobile
 
-## Technology stack
+## Security boundaries
+
+- Files remain under `storage/app/private` and are served only through authorized download routes.
+- Client visibility is scoped per project.
+- Calendar subscription URLs contain signatures and must be handled like passwords.
+- ONLYOFFICE JWT secrets and fully signed URLs must never be committed or logged.
+- Database notifications remain authorization-filtered after project access is revoked.
+- Site-wide IP restrictions also cover the login page and `/up`.
+
+Example private-network restriction:
+
+```dotenv
+IP_RESTRICTION_ENABLED=true
+ALLOWED_IPS=203.0.113.10,198.51.100.0/24,2001:db8::/32
+TRUSTED_PROXIES=10.0.0.0/8
+```
+
+Do not use `*` for trusted proxies. Run `php artisan optimize:clear` after changing these values.
+
+## Troubleshooting
+
+- **Every page returns 404:** check `IP_RESTRICTION_ENABLED`, `ALLOWED_IPS`, and `TRUSTED_PROXIES`.
+- **Chat is not delivered immediately to another browser:** verify Reverb, the queue worker, Vite, `REVERB_ALLOWED_ORIGINS`, browser-console errors, and Laravel logs.
+- **Invitations or notifications are not emailed:** `MAIL_MAILER=log` writes locally to `storage/logs/laravel.log`; configure a production mail driver to send email.
+- **UI changes do not appear:** run `npm run dev` during development, or run `npm run build` and `php artisan optimize:clear` for a production-style check.
+- **ONLYOFFICE returns 503 or Download failed:** verify the enabled flag, all three directional URLs, matching JWT secrets, health endpoint, callback reachability, and service logs. Never log the complete JWT or signed URL.
+
+For the complete operational reference, including exact macOS DNS mapping, Ubuntu update behavior, ONLYOFFICE file-size alignment, role details, and end-user workflows, use the [Japanese README](../README.md).
+
+## Developer information
+
+The remaining sections cover local development, implementation details, integrations, and quality checks. They are normally unnecessary when the goal is only to deploy Jin to Ubuntu Server.
+
+### Technology stack
 
 | Area           | Technology                                                     |
-|----------------|----------------------------------------------------------------|
+| -------------- | -------------------------------------------------------------- |
 | Backend        | PHP 8.5 / Laravel 13                                           |
 | Frontend       | Inertia.js 3 / Svelte 5 / TypeScript                           |
 | UI             | Tailwind CSS 4                                                 |
@@ -39,7 +128,7 @@ Jin (陣) is self-hosted groupware for multiple teams working together on projec
 | Database       | SQLite FTS5 (development) / PostgreSQL + PGroonga (production) |
 | Tests          | Pest 4 / PHPStan / Svelte Check / ESLint                       |
 
-## Requirements
+### Requirements
 
 - PHP 8.5 or later and Composer 2
 - Node.js 22.12 or later and npm
@@ -51,7 +140,7 @@ Jin (陣) is self-hosted groupware for multiple teams working together on projec
 
 Local development uses SQLite FTS5. Production uses PostgreSQL with PGroonga; MySQL is not a supported production configuration for file-content search.
 
-## Quick local setup
+### Quick local setup
 
 From a fresh clone:
 
@@ -86,7 +175,7 @@ Password: password
 
 Do not use this account or password in production.
 
-## macOS and ONLYOFFICE
+### macOS and ONLYOFFICE
 
 The supported macOS path uses Homebrew and Apple [`container`](https://github.com/apple/container). Apple Container requires Apple silicon and macOS 26 or later. Install the latest signed package from the [official releases](https://github.com/apple/container/releases), then run:
 
@@ -105,7 +194,7 @@ ONLYOFFICE_JWT_SECRET=replace-with-at-least-32-random-characters
 
 Never commit the JWT secret. `setup.sh` checks both the DocumentServer health endpoint and its editor API before completing. See the [canonical macOS instructions](../README.md#macos開発環境) for localhost DNS mapping, container lifecycle, and recovery details.
 
-## MCP integration
+### MCP integration
 
 The local Jin MCP server runs the entire process as a fixed Jin user. Use the dedicated command instead of the generic `mcp:start` command:
 
@@ -132,71 +221,7 @@ Example `.mcp.json` client configuration:
 }
 ```
 
-## Ubuntu 24.04 / 26.04 production setup
-
-`setup.sh` provisions Jin, PHP, PostgreSQL/PGroonga, Redis, Node.js, MarkItDown, Nginx, Supervisor, TLS, and ONLYOFFICE Docs. It is designed to be rerun for updates while preserving `.env`, secrets, the database, and private storage.
-
-The supported production host is amd64 Ubuntu Server. Before running setup:
-
-- Point the domain's DNS A/AAAA record to the server
-- Expose only TCP 80/443 publicly, plus the chosen SSH port
-- Provide at least 2 CPUs, 4 GB RAM, 4 GB swap, and adequate disk space
-- Back up and inspect existing Nginx, PostgreSQL, and port usage on non-fresh hosts
-- Never commit production credentials or secrets
-
-Initial setup:
-
-```bash
-export JIN_DOMAIN=jin.example.com
-export JIN_REPOSITORY=https://github.com/askdkc/jin
-export JIN_PATH=/var/www/jin
-
-sudo apt update
-sudo apt install -y git
-git clone --depth=1 "$JIN_REPOSITORY" /tmp/jin-installer
-cd /tmp/jin-installer
-
-./setup.sh \
-  --platform ubuntu \
-  --domain "$JIN_DOMAIN" \
-  --repo "$JIN_REPOSITORY" \
-  --app-dir "$JIN_PATH" \
-  --onlyoffice-port 8081 \
-  --app-internal-port 8090
-```
-
-Add `--email admin@example.com` for Let's Encrypt registration and expiry notices. Use `--no-ssl` only for an isolated environment where a public certificate cannot be issued. If passwordless sudo is intentionally configured, rerun with `--sudo-nopasswd` when setup instructs you to do so.
-
-On the first interactive run, setup asks whether access to Jin should be restricted by source IP. Pressing Enter without typing anything sets `IP_RESTRICTION_ENABLED=false` and allows access from every IP address. When restriction is enabled, enter IP addresses or CIDR ranges separated by commas. For example, to allow multiple local networks, enter `192.168.1.0/24, 10.0.0.0/8`. Setup removes whitespace and prepends `127.0.0.1,::1`, which are required for its health checks and internal ONLYOFFICE traffic, before saving the result to `ALLOWED_IPS` in `.env`.
-
-Setup then displays ten languages and asks for the default. Select Japanese, English, French, German, Simplified Chinese, Traditional Chinese, Spanish, Brazilian Portuguese, European Portuguese, or Korean by number or locale code. Pressing Enter without a selection defaults to Japanese. The selected value is saved to `APP_LOCALE` in `.env`.
-
-Without a TTY, the defaults are unrestricted IP access and Japanese. For an automated installation, pass environment variables as follows. Supplying `ALLOWED_IPS` by itself also enables IP restriction.
-
-```bash
-IP_RESTRICTION_ENABLED=true \
-ALLOWED_IPS='192.168.1.0/24, 10.0.0.0/8' \
-APP_LOCALE=en \
-./setup.sh --platform ubuntu --domain jin.example.com --app-dir /var/www/jin
-```
-
-Subsequent runs reuse `IP_RESTRICTION_ENABLED`, `ALLOWED_IPS`, and `APP_LOCALE` from the existing `.env` and do not repeat these questions.
-
-The generated database password is stored in `.env` and in `/etc/jin/database-password` as `root:root` with mode `0600`. Setup also creates a PostgreSQL `LOGIN SUPERUSER` role matching the deployment OS user for local peer administration. Keep that role separate from the application's `DB_USER` and tightly control shell access to the deployment account.
-
-Post-deployment checks:
-
-```bash
-curl -fsS https://jin.example.com/up
-curl -fsS https://jin.example.com/onlyoffice/healthcheck
-sudo supervisorctl status
-sudo systemctl --no-pager --full status nginx php8.5-fpm postgresql redis-server onlyoffice-documentserver
-sudo ss -ltnp
-```
-
-Jin and ONLYOFFICE listeners other than 80/443 must not bind to `0.0.0.0` or `[::]`. The default setup binds DocumentServer to `127.0.0.1:8081` and the Laravel callback endpoint to `127.0.0.1:8090`.
-
-## File-content search
+### File-content search
 
 After asynchronous extraction, Everything can search inside `docx`, `xlsx`, `pptx`, and `pdf` files through MarkItDown. Legacy Office formats, OpenDocument formats, encrypted or password-protected files, failed extractions, oversized files, and partial output from obsolete generations are searched by filename only. Jin never accepts, stores, or sends document passwords to the extractor.
 
@@ -210,26 +235,7 @@ php artisan stored-files:backfill-content --reindex
 
 Run the command without options normally. Use `--retry-failed` only for failed rows at the current checksum and `--reindex` after changing the extractor or normalization logic.
 
-## Security boundaries
-
-- Files remain under `storage/app/private` and are served only through authorized download routes.
-- Client visibility is scoped per project.
-- Calendar subscription URLs contain signatures and must be handled like passwords.
-- ONLYOFFICE JWT secrets and fully signed URLs must never be committed or logged.
-- Database notifications remain authorization-filtered after project access is revoked.
-- Site-wide IP restrictions also cover the login page and `/up`.
-
-Example private-network restriction:
-
-```dotenv
-IP_RESTRICTION_ENABLED=true
-ALLOWED_IPS=203.0.113.10,198.51.100.0/24,2001:db8::/32
-TRUSTED_PROXIES=10.0.0.0/8
-```
-
-Do not use `*` for trusted proxies. Run `php artisan optimize:clear` after changing these values.
-
-## Tests and quality checks
+### Tests and quality checks
 
 ```bash
 composer ci:check
@@ -245,13 +251,3 @@ Run a focused Pest test with:
 ```bash
 php artisan test --compact --filter=Project
 ```
-
-## Troubleshooting
-
-- **Every page returns 404:** check `IP_RESTRICTION_ENABLED`, `ALLOWED_IPS`, and `TRUSTED_PROXIES`.
-- **Chat is not delivered immediately to another browser:** verify Reverb, the queue worker, Vite, `REVERB_ALLOWED_ORIGINS`, browser-console errors, and Laravel logs.
-- **Invitations or notifications are not emailed:** `MAIL_MAILER=log` writes locally to `storage/logs/laravel.log`; configure a production mail driver to send email.
-- **UI changes do not appear:** run `npm run dev` during development, or run `npm run build` and `php artisan optimize:clear` for a production-style check.
-- **ONLYOFFICE returns 503 or Download failed:** verify the enabled flag, all three directional URLs, matching JWT secrets, health endpoint, callback reachability, and service logs. Never log the complete JWT or signed URL.
-
-For the complete operational reference, including exact macOS DNS mapping, Ubuntu update behavior, ONLYOFFICE file-size alignment, role details, and end-user workflows, use the [Japanese README](../README.md).

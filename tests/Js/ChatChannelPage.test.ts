@@ -277,6 +277,10 @@ test('chat columns stay in the viewport while only messages scroll', () => {
     assert.match(chatPage, /h-\[calc\(100dvh-6rem-1px\)\]/);
     assert.match(
         chatPage,
+        /<section class="flex min-h-0 min-w-0 flex-col bg-card\/70">/,
+    );
+    assert.match(
+        chatPage,
         /data-chat-layout[\s\S]*?overflow-hidden[\s\S]*?aria-label=\{t\('Chat channels'\)\}/,
     );
     assert.match(
@@ -430,6 +434,35 @@ test('chat file panel renders compact authenticated file thumbnails', () => {
     assert.match(
         contextPanel,
         /<ProjectFileThumbnail[\s\S]*?teamSlug=\{currentTeam\.slug\}[\s\S]*?projectId=\{project\.id\}[\s\S]*?fileId=\{file\.id\}[\s\S]*?mimeType=\{file\.mimeType\}[\s\S]*?thumbnailUrl=\{null\}[\s\S]*?variant="summary"/,
+    );
+});
+
+test('chat context confirms to-do unlinking and previews supported files', () => {
+    const unlinkAction = contextPanel.match(
+        /const unlinkTodo = \(todo: ChatTodo\): void => \{[\s\S]*?\n {4}\};/,
+    )?.[0];
+
+    assert.ok(unlinkAction);
+    assert.match(
+        unlinkAction,
+        /window\.confirm\([\s\S]*?t\('Remove :todo from #:channel\?'[\s\S]*?todo: todo\.title[\s\S]*?channel: selectedChannel\.name/,
+    );
+    assert.ok(
+        unlinkAction.indexOf('window.confirm') <
+            unlinkAction.indexOf('router.patch'),
+    );
+    assert.match(contextPanel, /import Eye from 'lucide-svelte\/icons\/eye'/);
+    assert.match(
+        contextPanel,
+        /aria-label=\{t\('Preview :file'[\s\S]*?<Eye data-icon="icon" aria-hidden="true" \/>/,
+    );
+    assert.match(
+        contextPanel,
+        /\{:else\}[\s\S]*?<Button asChild variant="ghost" size="icon">[\s\S]*?aria-label=\{t\('Download'\)\}/,
+    );
+    assert.equal(
+        japaneseTranslations['Remove :todo from #:channel?'],
+        '「:todo」を#:channelから外しますか？',
     );
 });
 

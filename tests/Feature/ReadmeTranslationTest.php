@@ -3,16 +3,16 @@
 use Illuminate\Support\Facades\File;
 
 const JIN_README_TRANSLATIONS = [
-    'ja' => ['README.md', '## 翻訳'],
-    'en' => ['docs/README_en.md', '## Languages'],
-    'fr' => ['docs/README_fr.md', '## Langues'],
-    'de' => ['docs/README_de.md', '## Sprachen'],
-    'zh_CN' => ['docs/README_zh_CN.md', '## 语言'],
-    'zh_TW' => ['docs/README_zh_TW.md', '## 語言'],
-    'es' => ['docs/README_es.md', '## Idiomas'],
-    'pt_BR' => ['docs/README_pt_BR.md', '## Idiomas'],
-    'pt_PT' => ['docs/README_pt_PT.md', '## Idiomas'],
-    'ko' => ['docs/README_ko.md', '## 언어'],
+    'ja' => 'README.md',
+    'en' => 'docs/README_en.md',
+    'fr' => 'docs/README_fr.md',
+    'de' => 'docs/README_de.md',
+    'zh_CN' => 'docs/README_zh_CN.md',
+    'zh_TW' => 'docs/README_zh_TW.md',
+    'es' => 'docs/README_es.md',
+    'pt_BR' => 'docs/README_pt_BR.md',
+    'pt_PT' => 'docs/README_pt_PT.md',
+    'ko' => 'docs/README_ko.md',
 ];
 
 const JIN_README_LANGUAGE_FILES = [
@@ -28,7 +28,7 @@ const JIN_README_LANGUAGE_FILES = [
     '한국어' => 'README_ko.md',
 ];
 
-test('translated readme :dataset is complete and links every supported language', function (string $relativePath, string $languageHeading) {
+test('translated readme :dataset is complete and links every supported language', function (string $relativePath) {
     $path = base_path($relativePath);
 
     $this->assertFileExists($path);
@@ -38,7 +38,6 @@ test('translated readme :dataset is complete and links every supported language'
 
     expect($readme)
         ->toStartWith('# Jin')
-        ->toContain($languageHeading)
         ->and(strlen($readme))->toBeGreaterThan(6_000);
 
     foreach (JIN_README_LANGUAGE_FILES as $language => $file) {
@@ -56,6 +55,9 @@ test('translated readme :dataset is complete and links every supported language'
         ->toContain('composer install')
         ->toContain('php artisan jin:mcp')
         ->toContain('--platform ubuntu')
+        ->toContain('git clone https://github.com/askdkc/jin.git')
+        ->toContain('/home/ubuntu/jin')
+        ->toContain('sudo -v')
         ->toContain('IP_RESTRICTION_ENABLED')
         ->toContain('npm run build');
 })->with(JIN_README_TRANSLATIONS);

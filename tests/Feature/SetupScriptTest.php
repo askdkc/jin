@@ -235,6 +235,33 @@ it('reloads Nginx after enabling the managed application site', function () {
         ->and($enablePosition)->toBeLessThan($reloadPosition);
 });
 
+it('captures opt-in Nginx diagnostics before rolling back a failed deployment', function () {
+    $process = runSetupBash(<<<'BASH'
+source "$1"
+JIN_SETUP_DIAGNOSTICS=1
+JIN_NGINX_BACKUP_READY=1
+JIN_NGINX_WAS_ACTIVE=0
+APP_PROCESSES_STOPPED=0
+APP_MAINTENANCE=0
+SUDO_KEEPALIVE_PID=""
+diagnose_jin_nginx_failure() { printf 'diagnose\n'; }
+restore_jin_nginx_state() { printf 'restore\n'; return 0; }
+discard_jin_nginx_backup() { JIN_NGINX_BACKUP_READY=0; return 0; }
+sudo() { return 0; }
+set +e
+false
+cleanup_jin_deployment
+status=$?
+set -e
+[[ "$status" -eq 1 ]]
+BASH, base_path('setup.sh'));
+    $workflow = (string) file_get_contents(base_path('.github/workflows/setup-smoke.yml'));
+
+    expect($process->isSuccessful())->toBeTrue($process->getErrorOutput())
+        ->and(trim($process->getOutput()))->toBe("diagnose\nrestore")
+        ->and($workflow)->toContain('export JIN_SETUP_DIAGNOSTICS=1');
+});
+
 it('restores per-run Nginx file, symlink, and absent snapshots exactly', function () {
     $directory = sys_get_temp_dir().'/jin-nginx-'.bin2hex(random_bytes(8));
     mkdir($directory, 0700);

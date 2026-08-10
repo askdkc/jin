@@ -139,6 +139,7 @@ jobs:
           docker exec --interactive "$container_name" bash -s <<'CONTAINER'
             set -Eeuo pipefail
             export DEBIAN_FRONTEND=noninteractive
+            export JIN_SETUP_DIAGNOSTICS=1
             cd /workspace/jin
             git_config_global="$(mktemp)"
             printf "%s\n" \

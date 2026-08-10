@@ -1461,11 +1461,39 @@ discard_jin_nginx_backup() {
     JIN_NGINX_BACKUP_READY=0
 }
 
+diagnose_jin_nginx_failure() {
+    local effective_config
+
+    warn "Nginx diagnostics before Jin configuration rollback"
+    effective_config="$(mktemp "${TMPDIR:-/tmp}/jin-nginx-effective.XXXXXX")" || return 0
+    sudo nginx -T >"$effective_config" 2>&1 || true
+    if grep -Fq '# Managed by jin/setup.sh' "$effective_config"; then
+        printf 'jin_nginx_effective_config=present\n' >&2
+    else
+        printf 'jin_nginx_effective_config=absent\n' >&2
+    fi
+    awk '
+        /^# configuration file \/etc\/nginx\// { print }
+        /^[[:space:]]*listen[[:space:]]/ { print }
+    ' "$effective_config" >&2
+    rm -f -- "$effective_config"
+    printf 'jin_nginx_enabled_target=' >&2
+    sudo readlink -f "$JIN_NGINX_ENABLED_PATH" >&2 || printf 'unresolved\n' >&2
+    sudo ss -H -ltnp >&2 || true
+    sudo systemctl --no-pager --full status nginx >&2 || true
+    if sudo test -f /var/log/nginx/error.log; then
+        sudo tail -n 200 /var/log/nginx/error.log >&2 || true
+    fi
+}
+
 cleanup_jin_deployment() {
     local status=$?
 
     set +e
     if [[ "$status" -ne 0 && "$JIN_NGINX_BACKUP_READY" -eq 1 ]]; then
+        if [[ "${JIN_SETUP_DIAGNOSTICS:-0}" == 1 ]]; then
+            diagnose_jin_nginx_failure
+        fi
         if restore_jin_nginx_state; then
             if sudo nginx -t >/dev/null 2>&1; then
                 if [[ "$JIN_NGINX_WAS_ACTIVE" -eq 1 ]]; then

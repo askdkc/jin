@@ -6,8 +6,6 @@
 
 Jin (陣) est un collecticiel auto-hébergé permettant à plusieurs équipes de travailler ensemble par projet. Il réunit messages, tâches, calendrier, fichiers, chat en temps réel, tableaux Kanban et points de suivi récurrents dans un même espace.
 
-Son architecture de l'information s'inspire de Basecamp, mais les noms, écrans, couleurs et icônes sont propres à Jin. Le [README japonais](../README.md) constitue la documentation d'exploitation complète et canonique. Cette traduction couvre le produit, les prérequis, l'installation, la sécurité et les commandes de vérification.
-
 ## Fonctionnalités principales
 
 - Création et changement d'équipe, invitations et gestion des autorisations
@@ -28,18 +26,18 @@ Son architecture de l'information s'inspire de Basecamp, mais les noms, écrans,
 
 ## Pile technique
 
-| Domaine          | Technologie                                                      |
-| ---------------- | ---------------------------------------------------------------- |
-| Backend          | PHP 8.5 / Laravel 13                                             |
-| Frontend         | Inertia.js 3 / Svelte 5 / TypeScript                             |
-| Interface        | Tailwind CSS 4                                                   |
-| Texte enrichi    | Trix 2 / Symfony HTML Sanitizer 8                                |
-| Temps réel       | Laravel Reverb / Laravel Echo                                    |
-| Authentification | Laravel Fortify / Passkeys / 2FA                                 |
-| Routes typées    | Laravel Wayfinder                                                |
+| Domaine          | Technologie                                                       |
+|------------------|-------------------------------------------------------------------|
+| Backend          | PHP 8.5 / Laravel 13                                              |
+| Frontend         | Inertia.js 3 / Svelte 5 / TypeScript                              |
+| Interface        | Tailwind CSS 4                                                    |
+| Texte enrichi    | Trix 2 / Symfony HTML Sanitizer 8                                 |
+| Temps réel      | Laravel Reverb / Laravel Echo                                     |
+| Authentification | Laravel Fortify / Passkeys / 2FA                                  |
+| Routes typées   | Laravel Wayfinder                                                 |
 | Files d'attente  | Laravel database queue (développement) / Redis (production)      |
-| Base de données  | SQLite FTS5 (développement) / PostgreSQL + PGroonga (production) |
-| Tests            | Pest 4 / PHPStan / Svelte Check / ESLint                         |
+| Base de données | SQLite FTS5 (développement) / PostgreSQL + PGroonga (production) |
+| Tests            | Pest 4 / PHPStan / Svelte Check / ESLint                          |
 
 ## Prérequis
 

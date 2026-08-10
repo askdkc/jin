@@ -6,8 +6,6 @@
 
 Jin (陣) es un sistema de trabajo colaborativo autoalojado para que varios equipos cooperen por proyectos. Reúne mensajes, tareas, calendarios, archivos, chat en tiempo real, tableros de tarjetas y revisiones periódicas en un único espacio de proyecto.
 
-La arquitectura de la información está inspirada en Basecamp, pero los nombres, las pantallas, los colores y los iconos son propios. El [README en japonés](../README.md) es la guía operativa completa y canónica. Esta traducción cubre el producto, los requisitos, la instalación, los límites de seguridad y los comandos de verificación.
-
 ## Funciones principales
 
 - Crear y cambiar equipos, invitar miembros y administrar permisos
@@ -29,17 +27,17 @@ La arquitectura de la información está inspirada en Basecamp, pero los nombres
 ## Tecnologías
 
 | Área              | Tecnología                                                    |
-| ----------------- | ------------------------------------------------------------- |
-| Backend           | PHP 8.5 / Laravel 13                                          |
-| Frontend          | Inertia.js 3 / Svelte 5 / TypeScript                          |
-| Interfaz          | Tailwind CSS 4                                                |
-| Texto enriquecido | Trix 2 / Symfony HTML Sanitizer 8                             |
-| Tiempo real       | Laravel Reverb / Laravel Echo                                 |
-| Autenticación     | Laravel Fortify / Passkeys / 2FA                              |
-| Rutas tipadas     | Laravel Wayfinder                                             |
+|-------------------|----------------------------------------------------------------|
+| Backend           | PHP 8.5 / Laravel 13                                           |
+| Frontend          | Inertia.js 3 / Svelte 5 / TypeScript                           |
+| Interfaz          | Tailwind CSS 4                                                 |
+| Texto enriquecido | Trix 2 / Symfony HTML Sanitizer 8                              |
+| Tiempo real       | Laravel Reverb / Laravel Echo                                  |
+| Autenticación    | Laravel Fortify / Passkeys / 2FA                               |
+| Rutas tipadas     | Laravel Wayfinder                                              |
 | Colas             | Laravel database queue (desarrollo) / Redis (producción)      |
 | Base de datos     | SQLite FTS5 (desarrollo) / PostgreSQL + PGroonga (producción) |
-| Pruebas           | Pest 4 / PHPStan / Svelte Check / ESLint                      |
+| Pruebas           | Pest 4 / PHPStan / Svelte Check / ESLint                       |
 
 ## Requisitos
 

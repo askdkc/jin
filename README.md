@@ -6,8 +6,6 @@
 
 Jin（陣）は、複数のチームがプロジェクト単位で協調して仕事を進めるための、日本語グループウェアです。メッセージ、To-do、予定、資料庫、チャット、カードテーブル、定期チェックインを1つのプロジェクトに集約します。
 
-Basecampの情報設計を参考にしていますが、名称、画面、配色、アイコンは独自のものです。詳しい設計方針と実装計画は [PLAN.md](PLAN.md) を参照してください。
-
 ## 主な機能
 
 - チーム（ワークスペース）の作成、切り替え、メンバー招待、権限管理
@@ -29,7 +27,7 @@ Basecampの情報設計を参考にしていますが、名称、画面、配色
 ## 技術構成
 
 | 領域           | 使用技術                                              |
-| -------------- | ----------------------------------------------------- |
+|----------------|-------------------------------------------------------|
 | Backend        | PHP 8.5 / Laravel 13                                  |
 | Frontend       | Inertia.js 3 / Svelte 5 / TypeScript                  |
 | UI             | Tailwind CSS 4                                        |
@@ -110,7 +108,7 @@ STORED_FILE_CONTENT_MARKITDOWN_PATH=/absolute/path/to/jin/.venv-file-content/bin
 ONLYOFFICEを使う場合は、さらに次の2項目を設定します。
 
 | パラメータ              | 設定値                                        |
-| ----------------------- | --------------------------------------------- |
+|-------------------------|-----------------------------------------------|
 | `ONLYOFFICE_ENABLED`    | `true`                                        |
 | `ONLYOFFICE_JWT_SECRET` | 32 bytes以上のランダムな値（Gitへ保存しない） |
 
@@ -213,7 +211,7 @@ Claude Codeなど、`.mcp.json`形式に対応するクライアントでは次�
 対応環境はamd64版Ubuntu Serverです。ONLYOFFICE Docsの公式APT packageがamd64向けであるため、arm64ホストは対象外です。
 
 | Ubuntu    | PostgreSQL / PGroonga                         | PHP | Node.js |
-| --------- | --------------------------------------------- | --- | ------- |
+|-----------|-----------------------------------------------|-----|---------|
 | 24.04 LTS | PostgreSQL 16 / `postgresql-16-pgroonga`      | 8.5 | 24      |
 | 26.04     | PostgreSQL 18 / `postgresql-18-pgdg-pgroonga` | 8.5 | 24      |
 
@@ -227,8 +225,8 @@ Claude Codeなど、`.mcp.json`形式に対応するクライアントでは次�
 
 ONLYOFFICEは別domainを使用しません。ブラウザはJinと同じoriginの`/onlyoffice`へ接続し、DocumentServerの実portはloopbackだけで待ち受けます。
 
-| 通信方向                 | URL                                  |
-| ------------------------ | ------------------------------------ |
+| 通信方向                  | URL                                  |
+|---------------------------|--------------------------------------|
 | Browser → DocumentServer | `https://jin.example.com/onlyoffice` |
 | Laravel → DocumentServer | `http://127.0.0.1:8081`              |
 | DocumentServer → Laravel | `http://127.0.0.1:8090`              |
@@ -334,7 +332,7 @@ sudo ss -ltnp
 Everythingはファイル名に加えて、非同期抽出が完了した次の形式の本文を検索します。
 
 | 形式       | 拡張子 | extractor  |
-| ---------- | ------ | ---------- |
+|------------|--------|------------|
 | Word       | `docx` | MarkItDown |
 | Excel      | `xlsx` | MarkItDown |
 | PowerPoint | `pptx` | MarkItDown |
@@ -357,15 +355,15 @@ php artisan stored-files:backfill-content --reindex
 Office文書は、macOS開発ではApple `container`上の公式OCI image、Ubuntu公開環境ではAPTパッケージ`onlyoffice-documentserver`を使って閲覧専用表示します。PDFと画像は既存viewerを使います。
 
 | 種別               | 拡張子                       | `documentType` |
-| ------------------ | ---------------------------- | -------------- |
+|--------------------|------------------------------|----------------|
 | 文書               | `doc`, `docx`, `odt`         | `word`         |
 | 表計算             | `xls`, `xlsx`, `xlsm`, `ods` | `cell`         |
 | プレゼンテーション | `ppt`, `pptx`, `odp`         | `slide`        |
 
 Browser、Laravel、DocumentServerで通信方向が違うため、3つのURLを分けて設定します。
 
-| 通信                     | 設定                             | 開発例                                | 公開環境例                   |
-| ------------------------ | -------------------------------- | ------------------------------------- | ---------------------------- |
+| 通信                      | 設定                             | 開発例                                | 公開環境例                   |
+|---------------------------|----------------------------------|---------------------------------------|------------------------------|
 | Laravel → DocumentServer | `ONLYOFFICE_DOCUMENT_SERVER_URL` | `http://127.0.0.1:8081`               | `http://127.0.0.1:8081`      |
 | Browser → DocumentServer | `ONLYOFFICE_PUBLIC_URL`          | `http://127.0.0.1:8081`               | `https://office.example.com` |
 | DocumentServer → Laravel | `APP_ONLYOFFICE_INTERNAL_URL`    | `http://host.container.internal:8000` | `https://jin.example.com`    |
@@ -432,7 +430,7 @@ OwnerまたはAdminは、メールアドレスを指定してメンバーを招�
 ### 2. 権限を割り当てる
 
 | ロール | 操作範囲                                                                               |
-| ------ | -------------------------------------------------------------------------------------- |
+|--------|----------------------------------------------------------------------------------------|
 | Owner  | チーム、メンバー、招待、全プロジェクトを管理                                           |
 | Admin  | チーム設定、招待、全プロジェクトを管理                                                 |
 | Member | 明示的に参加したプロジェクトを閲覧・操作                                               |

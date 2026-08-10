@@ -6,8 +6,6 @@
 
 Jin (陣) ist eine selbst gehostete Groupware, mit der mehrere Teams projektbezogen zusammenarbeiten. Nachrichten, Aufgaben, Termine, Dateien, Echtzeit-Chat, Kartentabellen und regelmäßige Check-ins werden in einem Projektarbeitsbereich zusammengeführt.
 
-Die Informationsarchitektur ist von Basecamp inspiriert; Namen, Ansichten, Farben und Symbole sind eigenständig. Die [japanische README](../README.md) ist die vollständige und maßgebliche Betriebsdokumentation. Diese Übersetzung beschreibt Produkt, Voraussetzungen, Installation, Sicherheitsgrenzen und Prüfkommandos.
-
 ## Hauptfunktionen
 
 - Teams beziehungsweise Arbeitsbereiche erstellen und wechseln, Mitglieder einladen und Rechte verwalten
@@ -29,7 +27,7 @@ Die Informationsarchitektur ist von Basecamp inspiriert; Namen, Ansichten, Farbe
 ## Technik
 
 | Bereich           | Technologie                                                    |
-| ----------------- | -------------------------------------------------------------- |
+|-------------------|----------------------------------------------------------------|
 | Backend           | PHP 8.5 / Laravel 13                                           |
 | Frontend          | Inertia.js 3 / Svelte 5 / TypeScript                           |
 | UI                | Tailwind CSS 4                                                 |

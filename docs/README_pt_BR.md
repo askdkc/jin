@@ -6,8 +6,6 @@
 
 Jin (陣) é um sistema colaborativo auto-hospedado para várias equipes trabalharem por projeto. Ele reúne mensagens, tarefas, agenda, arquivos, chat em tempo real, quadros de cartões e check-ins recorrentes em um único espaço de projeto.
 
-A arquitetura de informação foi inspirada no Basecamp, mas os nomes, as telas, as cores e os ícones são próprios. O [README em japonês](../README.md) é o guia operacional completo e canônico. Esta tradução cobre o produto, os requisitos, a instalação, os limites de segurança e os comandos de verificação.
-
 ## Principais recursos
 
 - Criar e alternar equipes, convidar integrantes e gerenciar permissões
@@ -29,7 +27,7 @@ A arquitetura de informação foi inspirada no Basecamp, mas os nomes, as telas,
 ## Tecnologias
 
 | Área           | Tecnologia                                                       |
-| -------------- | ---------------------------------------------------------------- |
+|----------------|------------------------------------------------------------------|
 | Backend        | PHP 8.5 / Laravel 13                                             |
 | Frontend       | Inertia.js 3 / Svelte 5 / TypeScript                             |
 | Interface      | Tailwind CSS 4                                                   |

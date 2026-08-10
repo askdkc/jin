@@ -1194,12 +1194,13 @@ configure_rabbitmq() {
         sudo sed -E -i.bak \
             -e '/^# Managed by jin\/setup\.sh$/d' \
             -e '/^[[:space:]]*ERL_EPMD_ADDRESS=/d' \
+            -e '/^[[:space:]]*NODENAME=/d' \
             "$env_file"
         sudo rm -f "$env_file.bak"
     else
         sudo touch "$env_file"
     fi
-    printf '\n# Managed by jin/setup.sh\nERL_EPMD_ADDRESS=127.0.0.1\n' \
+    printf '\n# Managed by jin/setup.sh\nERL_EPMD_ADDRESS=127.0.0.1\nNODENAME=rabbit@localhost\n' \
         | sudo tee -a "$env_file" >/dev/null
 
     sudo install -d -m 0755 "$(dirname "$epmd_socket_drop_in")"

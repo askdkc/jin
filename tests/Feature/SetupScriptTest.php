@@ -163,6 +163,7 @@ it('rebinds the systemd EPMD socket to loopback before starting RabbitMQ', funct
 
     expect($configureRabbitMq)->toContain(
         '/etc/systemd/system/epmd.socket.d/jin.conf',
+        'NODENAME=rabbit@localhost',
         '[Socket]\nListenStream=\nListenStream=127.0.0.1:4369\nListenStream=[::1]:4369\n',
         'sudo systemctl daemon-reload',
     )

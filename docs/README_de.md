@@ -133,6 +133,21 @@ cd /tmp/jin-installer
 
 Für Let's Encrypt `--email admin@example.com` ergänzen. `--no-ssl` ist nur für isolierte Umgebungen gedacht. Bei absichtlich passwortlosem sudo auf Aufforderung `--sudo-nopasswd` verwenden. Das erzeugte Datenbankpasswort liegt in `.env` und `/etc/jin/database-password` (`root:root`, Modus `0600`). Die PostgreSQL-Administratorrolle des Betriebssystembenutzers muss von `DB_USER` der Anwendung getrennt bleiben.
 
+Bei der ersten interaktiven Ausführung fragt das Installationsprogramm, ob der Zugriff auf Jin anhand der Quell-IP eingeschränkt werden soll. Wenn Sie ohne Eingabe die Eingabetaste drücken, wird `IP_RESTRICTION_ENABLED=false` gesetzt und der Zugriff von allen IP-Adressen erlaubt. Bei aktivierter Einschränkung geben Sie IP-Adressen oder CIDR-Bereiche durch Kommas getrennt ein. Um mehrere lokale Netze zuzulassen, verwenden Sie beispielsweise `192.168.1.0/24, 10.0.0.0/8`. Leerzeichen werden entfernt; anschließend werden die für Zustandsprüfungen und die interne ONLYOFFICE-Kommunikation benötigten Loopback-Adressen `127.0.0.1,::1` vorangestellt und das Ergebnis als `ALLOWED_IPS` in `.env` gespeichert.
+
+Danach zeigt das Installationsprogramm zehn Sprachen an und fragt nach der Standardsprache. Wählen Sie Japanisch, Englisch, Französisch, Deutsch, vereinfachtes Chinesisch, traditionelles Chinesisch, Spanisch, brasilianisches Portugiesisch, europäisches Portugiesisch oder Koreanisch anhand der Nummer oder des Locale-Codes. Ohne Eingabe wird Japanisch verwendet. Der gewählte Wert wird als `APP_LOCALE` in `.env` gespeichert.
+
+Ohne TTY gelten uneingeschränkter IP-Zugriff und Japanisch als Standard. Übergeben Sie für eine automatisierte Installation die folgenden Umgebungsvariablen. Auch die alleinige Angabe von `ALLOWED_IPS` aktiviert die IP-Einschränkung.
+
+```bash
+IP_RESTRICTION_ENABLED=true \
+ALLOWED_IPS='192.168.1.0/24, 10.0.0.0/8' \
+APP_LOCALE=de \
+./setup.sh --platform ubuntu --domain jin.example.com --app-dir /var/www/jin
+```
+
+Bei späteren Ausführungen werden `IP_RESTRICTION_ENABLED`, `ALLOWED_IPS` und `APP_LOCALE` aus der vorhandenen `.env` wiederverwendet; die Fragen werden nicht erneut gestellt.
+
 Prüfungen nach der Bereitstellung:
 
 ```bash

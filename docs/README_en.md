@@ -169,6 +169,21 @@ cd /tmp/jin-installer
 
 Add `--email admin@example.com` for Let's Encrypt registration and expiry notices. Use `--no-ssl` only for an isolated environment where a public certificate cannot be issued. If passwordless sudo is intentionally configured, rerun with `--sudo-nopasswd` when setup instructs you to do so.
 
+On the first interactive run, setup asks whether access to Jin should be restricted by source IP. Pressing Enter without typing anything sets `IP_RESTRICTION_ENABLED=false` and allows access from every IP address. When restriction is enabled, enter IP addresses or CIDR ranges separated by commas. For example, to allow multiple local networks, enter `192.168.1.0/24, 10.0.0.0/8`. Setup removes whitespace and prepends `127.0.0.1,::1`, which are required for its health checks and internal ONLYOFFICE traffic, before saving the result to `ALLOWED_IPS` in `.env`.
+
+Setup then displays ten languages and asks for the default. Select Japanese, English, French, German, Simplified Chinese, Traditional Chinese, Spanish, Brazilian Portuguese, European Portuguese, or Korean by number or locale code. Pressing Enter without a selection defaults to Japanese. The selected value is saved to `APP_LOCALE` in `.env`.
+
+Without a TTY, the defaults are unrestricted IP access and Japanese. For an automated installation, pass environment variables as follows. Supplying `ALLOWED_IPS` by itself also enables IP restriction.
+
+```bash
+IP_RESTRICTION_ENABLED=true \
+ALLOWED_IPS='192.168.1.0/24, 10.0.0.0/8' \
+APP_LOCALE=en \
+./setup.sh --platform ubuntu --domain jin.example.com --app-dir /var/www/jin
+```
+
+Subsequent runs reuse `IP_RESTRICTION_ENABLED`, `ALLOWED_IPS`, and `APP_LOCALE` from the existing `.env` and do not repeat these questions.
+
 The generated database password is stored in `.env` and in `/etc/jin/database-password` as `root:root` with mode `0600`. Setup also creates a PostgreSQL `LOGIN SUPERUSER` role matching the deployment OS user for local peer administration. Keep that role separate from the application's `DB_USER` and tightly control shell access to the deployment account.
 
 Post-deployment checks:

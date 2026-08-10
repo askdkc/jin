@@ -133,6 +133,21 @@ cd /tmp/jin-installer
 
 Ajoutez `--email admin@example.com` pour Let's Encrypt, `--no-ssl` uniquement dans un environnement isolé, et `--sudo-nopasswd` lorsque le script le demande pour une configuration sudo sans mot de passe. Le mot de passe de base de données généré est conservé dans `.env` et `/etc/jin/database-password` (`root:root`, mode `0600`). Le rôle PostgreSQL d'administration correspondant à l'utilisateur système doit rester distinct du `DB_USER` de l'application.
 
+Lors de la première exécution interactive, le programme d'installation demande si l'accès à Jin doit être limité selon l'adresse IP source. Appuyer sur Entrée sans rien saisir définit `IP_RESTRICTION_ENABLED=false` et autorise toutes les adresses IP. Si la restriction est activée, saisissez les adresses IP ou les plages CIDR séparées par des virgules. Pour autoriser plusieurs réseaux locaux, utilisez par exemple `192.168.1.0/24, 10.0.0.0/8`. Les espaces sont supprimés, puis `127.0.0.1,::1`, nécessaires aux contrôles d'état et aux communications internes avec ONLYOFFICE, sont ajoutées au début avant l'enregistrement dans `ALLOWED_IPS` du fichier `.env`.
+
+Le programme affiche ensuite dix langues et demande la langue par défaut. Sélectionnez le japonais, l'anglais, le français, l'allemand, le chinois simplifié, le chinois traditionnel, l'espagnol, le portugais brésilien, le portugais européen ou le coréen par numéro ou code de langue. Sans saisie, le japonais est utilisé. La valeur choisie est enregistrée dans `APP_LOCALE` du fichier `.env`.
+
+Sans TTY, les valeurs par défaut sont l'accès IP sans restriction et le japonais. Pour une installation automatisée, transmettez les variables d'environnement suivantes. Définir uniquement `ALLOWED_IPS` active également la restriction IP.
+
+```bash
+IP_RESTRICTION_ENABLED=true \
+ALLOWED_IPS='192.168.1.0/24, 10.0.0.0/8' \
+APP_LOCALE=fr \
+./setup.sh --platform ubuntu --domain jin.example.com --app-dir /var/www/jin
+```
+
+Les exécutions suivantes réutilisent `IP_RESTRICTION_ENABLED`, `ALLOWED_IPS` et `APP_LOCALE` du fichier `.env` existant et ne reposent pas ces questions.
+
 Vérifications après déploiement :
 
 ```bash

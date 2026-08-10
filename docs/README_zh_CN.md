@@ -133,6 +133,21 @@ cd /tmp/jin-installer
 
 如需 Let's Encrypt 注册和到期通知，请加入 `--email admin@example.com`。`--no-ssl` 仅适用于无法签发公共证书的隔离环境。若有意配置了免密码 sudo，请在安装程序提示时使用 `--sudo-nopasswd`。生成的数据库密码保存在 `.env` 和 `/etc/jin/database-password`（`root:root`、权限 `0600`）中。与部署系统用户同名的 PostgreSQL 管理角色必须和应用的 `DB_USER` 分离。
 
+首次交互式运行时，安装程序会询问是否按来源 IP 限制 Jin 的访问。直接按 Enter 而不输入任何内容时，将设置 `IP_RESTRICTION_ENABLED=false`，允许所有 IP 地址访问。启用限制后，请用逗号分隔输入 IP 地址或 CIDR 范围。例如，允许多个本地网络时可输入 `192.168.1.0/24, 10.0.0.0/8`。安装程序会移除空格，并在保存到 `.env` 的 `ALLOWED_IPS` 前自动加入健康检查和 ONLYOFFICE 内部通信所需的 `127.0.0.1,::1`。
+
+随后，安装程序会显示十种语言并要求选择默认语言。可通过编号或区域设置代码选择日语、英语、法语、德语、简体中文、繁体中文、西班牙语、巴西葡萄牙语、欧洲葡萄牙语或韩语。直接按 Enter 时默认使用日语。所选值会保存到 `.env` 的 `APP_LOCALE`。
+
+在没有 TTY 的环境中，默认允许所有 IP 访问并使用日语。自动安装时可传入以下环境变量。仅设置 `ALLOWED_IPS` 也会启用 IP 限制。
+
+```bash
+IP_RESTRICTION_ENABLED=true \
+ALLOWED_IPS='192.168.1.0/24, 10.0.0.0/8' \
+APP_LOCALE=zh_CN \
+./setup.sh --platform ubuntu --domain jin.example.com --app-dir /var/www/jin
+```
+
+后续运行会复用现有 `.env` 中的 `IP_RESTRICTION_ENABLED`、`ALLOWED_IPS` 和 `APP_LOCALE`，不会重复询问。
+
 部署后检查：
 
 ```bash

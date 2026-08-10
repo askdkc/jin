@@ -133,6 +133,21 @@ cd /tmp/jin-installer
 
 Adicione `--email admin@example.com` para o Let's Encrypt. Use `--no-ssl` somente em ambiente isolado. Quando sudo sem senha estiver configurado intencionalmente, use `--sudo-nopasswd` quando o instalador solicitar. A senha gerada do banco fica em `.env` e `/etc/jin/database-password` (`root:root`, modo `0600`). Mantenha o papel administrativo do PostgreSQL ligado ao usuário do sistema separado do `DB_USER` da aplicação.
 
+Na primeira execução interativa, o instalador pergunta se o acesso ao Jin deve ser restrito pelo IP de origem. Pressionar Enter sem digitar nada define `IP_RESTRICTION_ENABLED=false` e permite acesso de qualquer endereço IP. Se a restrição for ativada, informe endereços IP ou faixas CIDR separados por vírgulas. Para permitir várias redes locais, use por exemplo `192.168.1.0/24, 10.0.0.0/8`. O instalador remove os espaços e acrescenta `127.0.0.1,::1` no início, pois esses endereços são necessários para as verificações de integridade e a comunicação interna com o ONLYOFFICE, antes de salvar o resultado em `ALLOWED_IPS` no `.env`.
+
+Em seguida, o instalador exibe dez idiomas e solicita o idioma padrão. Selecione japonês, inglês, francês, alemão, chinês simplificado, chinês tradicional, espanhol, português do Brasil, português europeu ou coreano pelo número ou código de localidade. Pressionar Enter sem selecionar usa japonês. O valor escolhido é salvo em `APP_LOCALE` no `.env`.
+
+Sem TTY, os padrões são acesso IP irrestrito e japonês. Para uma instalação automatizada, passe as variáveis de ambiente abaixo. Informar apenas `ALLOWED_IPS` também ativa a restrição por IP.
+
+```bash
+IP_RESTRICTION_ENABLED=true \
+ALLOWED_IPS='192.168.1.0/24, 10.0.0.0/8' \
+APP_LOCALE=pt_BR \
+./setup.sh --platform ubuntu --domain jin.example.com --app-dir /var/www/jin
+```
+
+As execuções posteriores reutilizam `IP_RESTRICTION_ENABLED`, `ALLOWED_IPS` e `APP_LOCALE` do `.env` existente e não repetem essas perguntas.
+
 Verificações após a implantação:
 
 ```bash

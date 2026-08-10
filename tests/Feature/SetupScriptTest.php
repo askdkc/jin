@@ -930,6 +930,28 @@ it('documents the supported one-shot Ubuntu deployment contract', function () {
         ->not->toContain('PostgreSQL 17', 'setup_22.x', 'OFFICE_DOMAIN', '--office-domain');
 });
 
+it('documents access and locale setup in every translated README', function (string $path) {
+    $readme = (string) file_get_contents(base_path($path));
+
+    expect($readme)->toContain(
+        'IP_RESTRICTION_ENABLED=false',
+        'ALLOWED_IPS',
+        'APP_LOCALE',
+        '192.168.1.0/24, 10.0.0.0/8',
+        '127.0.0.1,::1',
+    );
+})->with([
+    'English' => 'docs/README_en.md',
+    'French' => 'docs/README_fr.md',
+    'German' => 'docs/README_de.md',
+    'Simplified Chinese' => 'docs/README_zh_CN.md',
+    'Traditional Chinese' => 'docs/README_zh_TW.md',
+    'Spanish' => 'docs/README_es.md',
+    'Brazilian Portuguese' => 'docs/README_pt_BR.md',
+    'European Portuguese' => 'docs/README_pt_PT.md',
+    'Korean' => 'docs/README_ko.md',
+]);
+
 it('keeps the ONLYOFFICE CI readiness counter defined', function () {
     $testsWorkflow = (string) file_get_contents(base_path('.github/workflows/tests.yml'));
 

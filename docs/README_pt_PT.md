@@ -133,6 +133,21 @@ cd /tmp/jin-installer
 
 Adicione `--email admin@example.com` para Let's Encrypt. Utilize `--no-ssl` apenas num ambiente isolado. Quando sudo sem palavra-passe estiver configurado de forma intencional, use `--sudo-nopasswd` quando o instalador indicar. A palavra-passe gerada da base de dados fica em `.env` e `/etc/jin/database-password` (`root:root`, modo `0600`). Mantenha o papel administrativo do PostgreSQL associado ao utilizador do sistema separado do `DB_USER` da aplicação.
 
+Na primeira execução interativa, o instalador pergunta se o acesso ao Jin deve ser restringido pelo IP de origem. Premir Enter sem introduzir nada define `IP_RESTRICTION_ENABLED=false` e permite o acesso a partir de qualquer endereço IP. Se a restrição for ativada, introduza endereços IP ou intervalos CIDR separados por vírgulas. Para permitir várias redes locais, utilize por exemplo `192.168.1.0/24, 10.0.0.0/8`. O instalador remove os espaços e acrescenta `127.0.0.1,::1` no início, pois estes endereços são necessários para as verificações de estado e a comunicação interna com o ONLYOFFICE, antes de guardar o resultado em `ALLOWED_IPS` no `.env`.
+
+Em seguida, o instalador apresenta dez idiomas e solicita o idioma predefinido. Selecione japonês, inglês, francês, alemão, chinês simplificado, chinês tradicional, espanhol, português do Brasil, português europeu ou coreano pelo número ou código de idioma. Premir Enter sem selecionar utiliza japonês. O valor escolhido é guardado em `APP_LOCALE` no `.env`.
+
+Sem TTY, as predefinições são acesso IP sem restrições e japonês. Para uma instalação automatizada, forneça as variáveis de ambiente abaixo. Definir apenas `ALLOWED_IPS` também ativa a restrição por IP.
+
+```bash
+IP_RESTRICTION_ENABLED=true \
+ALLOWED_IPS='192.168.1.0/24, 10.0.0.0/8' \
+APP_LOCALE=pt_PT \
+./setup.sh --platform ubuntu --domain jin.example.com --app-dir /var/www/jin
+```
+
+As execuções seguintes reutilizam `IP_RESTRICTION_ENABLED`, `ALLOWED_IPS` e `APP_LOCALE` do `.env` existente e não repetem estas perguntas.
+
 Verificações após a instalação:
 
 ```bash

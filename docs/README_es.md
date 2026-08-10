@@ -133,6 +133,21 @@ cd /tmp/jin-installer
 
 Añade `--email admin@example.com` para Let's Encrypt. Usa `--no-ssl` únicamente en un entorno aislado. Si sudo sin contraseña está configurado intencionadamente, usa `--sudo-nopasswd` cuando el instalador lo indique. La contraseña de base de datos generada se guarda en `.env` y `/etc/jin/database-password` (`root:root`, modo `0600`). Mantén el rol administrador de PostgreSQL del usuario del sistema separado del `DB_USER` de la aplicación.
 
+En la primera ejecución interactiva, el instalador pregunta si se debe restringir el acceso a Jin según la IP de origen. Pulsar Enter sin escribir nada establece `IP_RESTRICTION_ENABLED=false` y permite el acceso desde cualquier dirección IP. Si se activa la restricción, introduce direcciones IP o rangos CIDR separados por comas. Para permitir varias redes locales, usa por ejemplo `192.168.1.0/24, 10.0.0.0/8`. El instalador elimina los espacios y antepone `127.0.0.1,::1`, necesarios para las comprobaciones de estado y la comunicación interna con ONLYOFFICE, antes de guardar el resultado en `ALLOWED_IPS` dentro de `.env`.
+
+A continuación, el instalador muestra diez idiomas y solicita el predeterminado. Selecciona japonés, inglés, francés, alemán, chino simplificado, chino tradicional, español, portugués de Brasil, portugués europeo o coreano mediante el número o el código regional. Pulsar Enter sin elegir usa japonés. El valor seleccionado se guarda en `APP_LOCALE` dentro de `.env`.
+
+Sin TTY, los valores predeterminados son acceso IP sin restricciones y japonés. Para una instalación automatizada, pasa las siguientes variables de entorno. Definir únicamente `ALLOWED_IPS` también activa la restricción por IP.
+
+```bash
+IP_RESTRICTION_ENABLED=true \
+ALLOWED_IPS='192.168.1.0/24, 10.0.0.0/8' \
+APP_LOCALE=es \
+./setup.sh --platform ubuntu --domain jin.example.com --app-dir /var/www/jin
+```
+
+Las ejecuciones posteriores reutilizan `IP_RESTRICTION_ENABLED`, `ALLOWED_IPS` y `APP_LOCALE` del `.env` existente y no repiten estas preguntas.
+
 Comprobaciones posteriores:
 
 ```bash

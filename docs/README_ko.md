@@ -133,6 +133,21 @@ cd /tmp/jin-installer
 
 Let's Encrypt 등록과 만료 알림에는 `--email admin@example.com`을 추가합니다. `--no-ssl`은 공개 인증서를 발급할 수 없는 격리 환경에서만 사용하십시오. 의도적으로 비밀번호 없는 sudo를 구성했다면 설치 프로그램의 안내에 따라 `--sudo-nopasswd`를 사용합니다. 생성된 데이터베이스 비밀번호는 `.env`와 `/etc/jin/database-password`(`root:root`, 권한 `0600`)에 저장됩니다. 배포 OS 사용자와 같은 이름의 PostgreSQL 관리자 역할은 애플리케이션 `DB_USER`와 분리하십시오.
 
+최초 대화형 실행에서 설치 프로그램은 원본 IP를 기준으로 Jin 접근을 제한할지 묻습니다. 아무것도 입력하지 않고 Enter를 누르면 `IP_RESTRICTION_ENABLED=false`가 설정되어 모든 IP 주소의 접근을 허용합니다. 제한을 활성화한 경우 IP 주소 또는 CIDR 범위를 쉼표로 구분하여 입력하십시오. 여러 로컬 네트워크를 허용하려면 예를 들어 `192.168.1.0/24, 10.0.0.0/8`을 입력합니다. 설치 프로그램은 공백을 제거하고 상태 확인과 ONLYOFFICE 내부 통신에 필요한 `127.0.0.1,::1`을 앞에 자동으로 추가한 뒤 `.env`의 `ALLOWED_IPS`에 저장합니다.
+
+이어서 설치 프로그램은 열 가지 언어를 표시하고 기본 언어를 선택하도록 요청합니다. 번호 또는 로캘 코드로 일본어, 영어, 프랑스어, 독일어, 중국어 간체, 중국어 번체, 스페인어, 브라질 포르투갈어, 유럽 포르투갈어 또는 한국어를 선택하십시오. 선택 없이 Enter를 누르면 일본어가 기본값입니다. 선택한 값은 `.env`의 `APP_LOCALE`에 저장됩니다.
+
+TTY가 없는 환경에서는 IP 접근 제한 없음과 일본어가 기본값입니다. 자동 설치에서는 다음 환경 변수를 전달하십시오. `ALLOWED_IPS`만 지정해도 IP 제한이 활성화됩니다.
+
+```bash
+IP_RESTRICTION_ENABLED=true \
+ALLOWED_IPS='192.168.1.0/24, 10.0.0.0/8' \
+APP_LOCALE=ko \
+./setup.sh --platform ubuntu --domain jin.example.com --app-dir /var/www/jin
+```
+
+이후 실행에서는 기존 `.env`의 `IP_RESTRICTION_ENABLED`, `ALLOWED_IPS`, `APP_LOCALE`를 재사용하며 같은 질문을 반복하지 않습니다.
+
 배포 후 확인:
 
 ```bash

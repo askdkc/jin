@@ -395,7 +395,10 @@
                                             title={t('Download')}
                                             {...rest}
                                         >
-                                        <Download data-icon="icon" aria-hidden="true" />
+                                            <Download
+                                                data-icon="icon"
+                                                aria-hidden="true"
+                                            />
                                         </a>
                                     {/snippet}
                                 </Button>

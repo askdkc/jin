@@ -4,6 +4,10 @@
 
 Jin (陣) is self-hosted groupware for multiple teams working together on projects. It brings messages, to-dos, schedules, files, real-time chat, card tables, and recurring check-ins into one project workspace.
 
+<p align="center">
+  <img width="100%" alt="Jin service introduction" src="./assets/jin-service-introduction.gif" />
+</p>
+
 ## Ubuntu 24.04 / 26.04 production setup
 
 On amd64 Ubuntu Server 24.04 / 26.04, running `setup.sh` builds a complete public Jin environment. Laravel and the database do not need to be installed or configured manually.

@@ -4,6 +4,10 @@
 
 Jin（陣）は、複数のチームがプロジェクト単位で協調して仕事を進めるための、日本語グループウェアです。メッセージ、To-do、予定、資料庫、チャット、カードテーブル、定期チェックインを1つのプロジェクトに集約します。
 
+<p align="center">
+  <img width="100%" alt="Jinのサービス紹介" src="./docs/assets/jin-service-introduction.gif" />
+</p>
+
 ## Ubuntu Serverへ`setup.sh`でインストール
 
 Ubuntu Server 24.04 / 26.04（amd64）では、リポジトリの`setup.sh`を実行するだけでJinの公開環境を一括構築できます。Laravelやdatabaseを個別に手動セットアップする必要はありません。

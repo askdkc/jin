@@ -4,6 +4,10 @@
 
 Jin（陣）是一套可自行託管的專案協作群組軟體，讓多個團隊以專案為單位共同工作。它把訊息、待辦事項、行程、檔案、即時聊天、看板與定期檢查集中到同一個專案工作區。
 
+<p align="center">
+  <img width="100%" alt="Jin 服務介紹" src="./assets/jin-service-introduction.gif" />
+</p>
+
 ## Ubuntu 24.04 / 26.04 正式環境部署
 
 在 amd64 Ubuntu Server 24.04 / 26.04 上，執行 `setup.sh` 即可建置完整的 Jin 正式環境，不需要手動安裝或設定 Laravel 與資料庫。

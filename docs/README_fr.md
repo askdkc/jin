@@ -4,6 +4,10 @@
 
 Jin (陣) est un collecticiel auto-hébergé permettant à plusieurs équipes de travailler ensemble par projet. Il réunit messages, tâches, calendrier, fichiers, chat en temps réel, tableaux Kanban et points de suivi récurrents dans un même espace.
 
+<p align="center">
+  <img width="100%" alt="Présentation du service Jin" src="./assets/jin-service-introduction.gif" />
+</p>
+
 ## Production sur Ubuntu 24.04 / 26.04
 
 Sur Ubuntu Server 24.04 / 26.04 amd64, l'exécution de `setup.sh` construit un environnement public Jin complet. Laravel et la base de données ne nécessitent aucune installation ni configuration manuelle.

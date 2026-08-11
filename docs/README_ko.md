@@ -4,6 +4,10 @@
 
 Jin(陣)은 여러 팀이 프로젝트 단위로 협업할 수 있는 셀프 호스팅 그룹웨어입니다. 메시지, 할 일, 일정, 파일, 실시간 채팅, 카드 테이블, 정기 체크인을 하나의 프로젝트 작업 공간에 모읍니다.
 
+<p align="center">
+  <img width="100%" alt="Jin 서비스 소개" src="./assets/jin-service-introduction.gif" />
+</p>
+
 ## Ubuntu 24.04 / 26.04 운영 환경
 
 amd64 Ubuntu Server 24.04 / 26.04에서 `setup.sh`를 실행하면 완전한 Jin 운영 환경이 구성됩니다. Laravel과 데이터베이스를 수동으로 설치하거나 설정할 필요가 없습니다.

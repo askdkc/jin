@@ -187,6 +187,66 @@ it('manages a deploy-user peer rule and a root-only database password recovery f
     );
 });
 
+it('migrates the canonical-first legacy PostgreSQL peer include idempotently', function () {
+    $directory = sys_get_temp_dir().'/jin-pg-hba-'.bin2hex(random_bytes(8));
+    $hbaFile = $directory.'/pg_hba.conf';
+    $firstRunHbaFile = $directory.'/pg_hba.first.conf';
+    $secondRunHbaFile = $directory.'/pg_hba.second.conf';
+    $expectedHba = "include_if_exists \"jin-pg_hba.conf\"\nlocal all all trust\n";
+    mkdir($directory, 0700);
+    file_put_contents(
+        $hbaFile,
+        "include_if_exists \"jin-pg_hba.conf\"\ninclude_if_exists 'jin-pg_hba.conf'\nlocal all all trust\n",
+    );
+
+    $process = runSetupBash(<<<'BASH'
+source "$1"
+FIXTURE_HBA="$2"
+FIRST_RUN_HBA="$3"
+SECOND_RUN_HBA="$4"
+sudo() {
+    if [[ "${1:-}" == -u && "${2:-}" == postgres && "${3:-}" == psql ]]; then
+        shift 3
+        if [[ " $* " == *" SHOW hba_file "* ]]; then
+            printf '%s\n' "$FIXTURE_HBA"
+            return 0
+        fi
+
+        query="$(command cat)"
+        case "$query" in
+            *"SELECT coalesce"*) return 0 ;;
+            *"SELECT count(*)"*) printf '1\n'; return 0 ;;
+            *) return 1 ;;
+        esac
+    fi
+
+    if [[ "${1:-}" == chown ]]; then
+        return 0
+    fi
+
+    "$@"
+}
+systemctl() {
+    [[ "${1:-}" == reload && "${2:-}" == postgresql ]]
+}
+DEPLOY_USER=jindeploy
+PG_PORT=5432
+PG_SERVICE=postgresql
+configure_deploy_postgresql_peer_authentication
+cp "$FIXTURE_HBA" "$FIRST_RUN_HBA"
+configure_deploy_postgresql_peer_authentication
+cp "$FIXTURE_HBA" "$SECOND_RUN_HBA"
+BASH, base_path('setup.sh'), $hbaFile, $firstRunHbaFile, $secondRunHbaFile);
+
+    try {
+        expect($process->isSuccessful())->toBeTrue($process->getErrorOutput())
+            ->and(file_get_contents($firstRunHbaFile))->toBe($expectedHba)
+            ->and(file_get_contents($secondRunHbaFile))->toBe($expectedHba);
+    } finally {
+        (new Filesystem)->deleteDirectory($directory);
+    }
+});
+
 it('checks health without Bash 4 lowercase expansion', function () {
     $process = runSetupBash(<<<'BASH'
 source "$1"

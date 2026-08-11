@@ -1377,7 +1377,7 @@ resolve_ubuntu_operator_inputs() {
 }
 
 configure_deploy_postgresql_peer_authentication() {
-    local hba_directory hba_file hba_temp_file include_rule peer_file peer_rule_count peer_rule_errors
+    local hba_directory hba_file hba_temp_file include_rule legacy_include_rule peer_file peer_rule_count peer_rule_errors
 
     hba_file="$(sudo -u postgres psql -p "$PG_PORT" -Atqc 'SHOW hba_file' postgres)"
     [[ "$hba_file" == /* ]] || die "PostgreSQL returned an invalid hba_file path: $hba_file"
@@ -1385,17 +1385,23 @@ configure_deploy_postgresql_peer_authentication() {
     hba_directory="$(dirname -- "$hba_file")"
     peer_file="$hba_directory/jin-pg_hba.conf"
     include_rule='include_if_exists "jin-pg_hba.conf"'
+    legacy_include_rule="include_if_exists 'jin-pg_hba.conf'"
 
     printf '# Managed by Jin setup.sh\nlocal all %s peer\n' "$DEPLOY_USER" \
         | sudo tee "$peer_file" >/dev/null
     sudo chown postgres:postgres "$peer_file"
     sudo chmod 0640 "$peer_file"
 
-    if [[ "$(sudo sed -n '1p' "$hba_file")" != "$include_rule" ]]; then
+    if [[ "$(sudo sed -n '1p' "$hba_file")" != "$include_rule" ]] \
+        || sudo grep -Fqx "$legacy_include_rule" "$hba_file"; then
         hba_temp_file="$(sudo mktemp "${hba_file}.jin.XXXXXX")"
         if ! {
             printf '%s\n' "$include_rule"
-            sudo awk -v include_rule="$include_rule" '$0 != include_rule { print }' "$hba_file"
+            sudo awk \
+                -v include_rule="$include_rule" \
+                -v legacy_include_rule="$legacy_include_rule" \
+                '$0 != include_rule && $0 != legacy_include_rule { print }' \
+                "$hba_file"
         } | sudo tee "$hba_temp_file" >/dev/null; then
             sudo rm -f "$hba_temp_file"
             die "Could not add the Jin peer authentication include to $hba_file"

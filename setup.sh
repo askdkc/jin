@@ -1850,12 +1850,12 @@ configure_rabbitmq() {
     printf '# Managed by jin/setup.sh\n[Socket]\nListenStream=\nListenStream=127.0.0.1:4369\nListenStream=[::1]:4369\n' \
         | sudo tee "$epmd_socket_drop_in" >/dev/null
 
+    sudo systemctl daemon-reload
     sudo systemctl stop rabbitmq-server epmd.service epmd.socket || true
     for unit in rabbitmq-server epmd.service epmd.socket; do
         sudo systemctl is-active --quiet "$unit" \
             && die "Could not stop ${unit} before rebinding EPMD"
     done
-    sudo systemctl daemon-reload
     sudo systemctl enable --now epmd.socket
     sudo systemctl enable rabbitmq-server
     sudo systemctl restart rabbitmq-server
@@ -2633,6 +2633,38 @@ restrict_ubuntu_onlyoffice_listener() {
         || die "Could not configure ONLYOFFICE on IPv4 loopback port $ONLYOFFICE_PORT"
 }
 
+maintain_onlyoffice_package() {
+    local action="$1"
+
+    [[ "$action" == install || "$action" == repair ]] \
+        || die "Unsupported ONLYOFFICE package maintenance action: $action"
+    sudo env DEBIAN_FRONTEND=noninteractive bash -s -- "$action" <<'ROOT'
+set -euo pipefail
+
+action="$1"
+sudoers_file=/etc/sudoers.d/documentserver
+
+if [[ "$action" == install ]]; then
+    apt-get -o DPkg::Lock::Timeout=300 install -y onlyoffice-documentserver
+fi
+
+if [[ -f "$sudoers_file" ]]; then
+    if grep -Eq '^[[:space:]]*Defaults:ds[[:space:]]+!requiretty[[:space:]]*$' "$sudoers_file"; then
+        cp -a "$sudoers_file" "${sudoers_file}.jin.bak"
+        sed -E -i '/^[[:space:]]*Defaults:ds[[:space:]]+!requiretty[[:space:]]*$/d' "$sudoers_file"
+    fi
+
+    if ! /usr/sbin/visudo -cf "$sudoers_file" >/dev/null; then
+        if [[ -f "${sudoers_file}.jin.bak" ]]; then
+            mv -f "${sudoers_file}.jin.bak" "$sudoers_file"
+        fi
+        exit 1
+    fi
+    rm -f "${sudoers_file}.jin.bak"
+fi
+ROOT
+}
+
 configure_ubuntu_onlyoffice_deployment() {
     local local_json=/etc/onlyoffice/documentserver/local.json
     local keyring=/usr/share/keyrings/onlyoffice.gpg
@@ -2655,7 +2687,7 @@ configure_ubuntu_onlyoffice_deployment() {
             | sudo debconf-set-selections
         printf 'onlyoffice-documentserver onlyoffice/jwt-secret password %s\n' "$JWT_SECRET" \
             | sudo debconf-set-selections
-        apt_get_with_lock_wait install -y onlyoffice-documentserver
+        maintain_onlyoffice_package install
     fi
 
     [[ -f "$local_json" ]] || die "Could not find $local_json after ONLYOFFICE installation"
@@ -2800,6 +2832,8 @@ setup_ubuntu() {
     [[ "${ID:-}" == ubuntu ]] || die "This Linux setup supports Ubuntu only"
     set_ubuntu_package_matrix \
         || die "Unsupported Ubuntu version: ${VERSION_ID:-unknown} (supported: 24.04, 26.04)"
+    maintain_onlyoffice_package repair \
+        || die "Could not repair the ONLYOFFICE sudoers configuration"
     VERSION_CODENAME="${VERSION_CODENAME:-$(lsb_release --codename --short 2>/dev/null || true)}"
     architecture="$(dpkg --print-architecture)"
     [[ "$architecture" == amd64 ]] \

@@ -165,7 +165,10 @@ jobs:
               --app-dir /var/www/jin \
               --repo file:///workspace/jin \
               --sudo-nopasswd \
-              --no-ssl
+              --no-ssl \
+              2>&1 | tee /tmp/jin-setup-first.log
+            ! grep -Fq 'drop-ins of epmd.socket changed on disk' /tmp/jin-setup-first.log
+            ! grep -Fq "unknown setting: 'requiretty'" /tmp/jin-setup-first.log
             jwt_first="$(sed -n "s/^ONLYOFFICE_JWT_SECRET=//p" /var/www/jin/.env)"
             reverb_key_first="$(sed -n "s/^REVERB_APP_KEY=//p" /var/www/jin/.env)"
             reverb_secret_first="$(sed -n "s/^REVERB_APP_SECRET=//p" /var/www/jin/.env)"
@@ -199,6 +202,10 @@ jobs:
             [[ "$(stat -c '%U:%G:%a' /etc/jin/database-password)" == root:root:600 ]]
             test -x /var/www/jin/.venv-file-content/bin/markitdown
             systemctl is-active --quiet rabbitmq-server
+            [[ "$(systemctl show --property NeedDaemonReload --value epmd.socket)" == no ]]
+            test -f /etc/sudoers.d/documentserver
+            ! grep -Eq '^[[:space:]]*Defaults:ds[[:space:]]+!requiretty[[:space:]]*$' /etc/sudoers.d/documentserver
+            visudo -c >/dev/null
             for rabbit_port in 5672 25672 4369; do
               ss -H -ltn | awk -v suffix=":${rabbit_port}" '
                 length($4) >= length(suffix) && substr($4, length($4) - length(suffix) + 1) == suffix {
@@ -222,7 +229,10 @@ jobs:
               --app-dir /var/www/jin \
               --repo file:///workspace/jin \
               --sudo-nopasswd \
-              --no-ssl
+              --no-ssl \
+              2>&1 | tee /tmp/jin-setup-second.log
+            ! grep -Fq 'drop-ins of epmd.socket changed on disk' /tmp/jin-setup-second.log
+            ! grep -Fq "unknown setting: 'requiretty'" /tmp/jin-setup-second.log
             jwt_second="$(sed -n "s/^ONLYOFFICE_JWT_SECRET=//p" /var/www/jin/.env)"
             reverb_key_second="$(sed -n "s/^REVERB_APP_KEY=//p" /var/www/jin/.env)"
             reverb_secret_second="$(sed -n "s/^REVERB_APP_SECRET=//p" /var/www/jin/.env)"

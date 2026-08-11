@@ -544,6 +544,7 @@ it('rebinds the systemd EPMD socket to loopback before starting RabbitMQ', funct
         ->and($end)->not->toBeFalse();
 
     $configureRabbitMq = substr($setup, $start, $end - $start);
+    $reloadPosition = strpos($configureRabbitMq, 'sudo systemctl daemon-reload');
     $stopPosition = strpos($configureRabbitMq, 'sudo systemctl stop rabbitmq-server epmd.service epmd.socket');
     $startEpmdPosition = strpos($configureRabbitMq, 'sudo systemctl enable --now epmd.socket');
     $startRabbitMqPosition = strpos($configureRabbitMq, 'sudo systemctl restart rabbitmq-server');
@@ -554,11 +555,38 @@ it('rebinds the systemd EPMD socket to loopback before starting RabbitMQ', funct
         '[Socket]\nListenStream=\nListenStream=127.0.0.1:4369\nListenStream=[::1]:4369\n',
         'sudo systemctl daemon-reload',
     )
+        ->and($reloadPosition)->not->toBeFalse()
         ->and($stopPosition)->not->toBeFalse()
         ->and($startEpmdPosition)->not->toBeFalse()
         ->and($startRabbitMqPosition)->not->toBeFalse()
+        ->and($reloadPosition)->toBeLessThan($stopPosition)
         ->and($stopPosition)->toBeLessThan($startEpmdPosition)
         ->and($startEpmdPosition)->toBeLessThan($startRabbitMqPosition);
+});
+
+it('repairs the unsupported ONLYOFFICE requiretty sudoers setting in the install transaction', function () {
+    $setup = (string) file_get_contents(base_path('setup.sh'));
+    $start = strpos($setup, 'maintain_onlyoffice_package() {');
+    $end = strpos($setup, "\n}\n\nconfigure_ubuntu_onlyoffice_deployment()", $start);
+
+    expect($start)->not->toBeFalse()
+        ->and($end)->not->toBeFalse();
+
+    $maintenance = substr($setup, $start, $end - $start);
+    $installPosition = strpos($maintenance, 'apt-get -o DPkg::Lock::Timeout=300 install -y onlyoffice-documentserver');
+    $repairPosition = strpos($maintenance, "sed -E -i '/^[[:space:]]*Defaults:ds");
+    $validationPosition = strpos($maintenance, '/usr/sbin/visudo -cf "$sudoers_file"');
+
+    expect($maintenance)->toContain(
+        'sudoers_file=/etc/sudoers.d/documentserver',
+        '!requiretty',
+        'mv -f "${sudoers_file}.jin.bak" "$sudoers_file"',
+    )
+        ->and($installPosition)->not->toBeFalse()
+        ->and($repairPosition)->not->toBeFalse()
+        ->and($validationPosition)->not->toBeFalse()
+        ->and($installPosition)->toBeLessThan($repairPosition)
+        ->and($repairPosition)->toBeLessThan($validationPosition);
 });
 
 it('checks the Supervisor control API without requiring managed programs to run', function () {

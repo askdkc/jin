@@ -171,7 +171,7 @@ it('manages a deploy-user peer rule and a root-only database password recovery f
     $setupWorkflow = (string) file_get_contents(base_path('.github/workflows/setup-smoke.yml'));
 
     expect($setup)->toContain(
-        "include_if_exists 'jin-pg_hba.conf'",
+        'include_if_exists "jin-pg_hba.conf"',
         'local all %s peer',
         'CREATE ROLE %I LOGIN SUPERUSER',
         'psql --no-password',

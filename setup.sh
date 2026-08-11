@@ -1384,7 +1384,7 @@ configure_deploy_postgresql_peer_authentication() {
     sudo test -f "$hba_file" || die "PostgreSQL hba_file does not exist: $hba_file"
     hba_directory="$(dirname -- "$hba_file")"
     peer_file="$hba_directory/jin-pg_hba.conf"
-    include_rule="include_if_exists 'jin-pg_hba.conf'"
+    include_rule='include_if_exists "jin-pg_hba.conf"'
 
     printf '# Managed by Jin setup.sh\nlocal all %s peer\n' "$DEPLOY_USER" \
         | sudo tee "$peer_file" >/dev/null

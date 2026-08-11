@@ -415,6 +415,8 @@ export type ActivityItem = {
     actorAvatar: string | null;
     subjectLabel: string;
     subjectId: number | null;
+    todoId: number | null;
+    todoListId: number | null;
     createdAt: string | null;
     project: ProjectTool;
 };

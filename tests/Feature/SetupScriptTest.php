@@ -8,7 +8,7 @@ function setupTestEnvironment(): array
     $environment = getenv();
 
     foreach (array_keys($environment) as $key) {
-        if (str_starts_with($key, 'ONLYOFFICE_') || in_array($key, [
+        if (str_starts_with($key, 'ONLYOFFICE_') || str_starts_with($key, 'MAIL_') || in_array($key, [
             'APP_DIR',
             'APP_DOMAIN',
             'APP_INTERNAL_PORT',
@@ -21,6 +21,7 @@ function setupTestEnvironment(): array
             'DEPLOY_USER',
             'DOMAIN',
             'EMAIL',
+            'EMAIL_VERIFICATION_ENABLED',
             'ENV_FILE',
             'INTERNAL_PORT_EXPLICIT',
             'IP_RESTRICTION_ENABLED',
@@ -101,6 +102,218 @@ BASH, base_path('setup.sh'));
             'domain=jin.example.com',
             'email=admin@example.com',
         );
+});
+
+it('enables email verification and writes prompted SMTP settings', function () {
+    $directory = sys_get_temp_dir().'/jin-setup-'.bin2hex(random_bytes(8));
+    mkdir($directory.'/app/Models', 0700, true);
+    copy(base_path('app/Models/User.php'), $directory.'/app/Models/User.php');
+    file_put_contents($directory.'/.env', implode("\n", [
+        'MAIL_MAILER=log',
+        'MAIL_SCHEME=null',
+        'MAIL_HOST=127.0.0.1',
+        'MAIL_PORT=2525',
+        'MAIL_USERNAME=null',
+        'MAIL_PASSWORD=null',
+        'MAIL_FROM_ADDRESS="hello@example.com"',
+        'MAIL_FROM_NAME="${APP_NAME}"',
+        '',
+    ]));
+
+    $process = runSetupBash(<<<'BASH'
+source "$1"
+setup_input_is_interactive() { return 0; }
+APP_DIR="$2"
+ENV_FILE="$APP_DIR/.env"
+EMAIL_VERIFICATION_OVERRIDE=""
+resolve_email_verification <<'INPUT'
+y
+smtp.example.net
+smtp
+
+mailer-user
+mailer-secret
+noreply@jin.test
+Jin Mail
+INPUT
+configure_email_verification
+BASH, base_path('setup.sh'), $directory);
+
+    try {
+        $environment = (string) file_get_contents($directory.'/.env');
+        $userModel = (string) file_get_contents($directory.'/app/Models/User.php');
+
+        expect($process->isSuccessful())->toBeTrue($process->getErrorOutput())
+            ->and($process->getOutput())->toContain(
+                'Email verification requires a working external SMTP account.',
+                'SMTP host:',
+                'SMTP password:',
+            )->not->toContain('mailer-secret')
+            ->and($environment)->toContain(
+                'EMAIL_VERIFICATION_ENABLED=true',
+                'MAIL_MAILER=smtp',
+                'MAIL_SCHEME=smtp',
+                'MAIL_HOST="smtp.example.net"',
+                'MAIL_PORT=587',
+                'MAIL_USERNAME="mailer-user"',
+                'MAIL_PASSWORD="mailer-secret"',
+                'MAIL_FROM_ADDRESS="noreply@jin.test"',
+                'MAIL_FROM_NAME="Jin Mail"',
+            )
+            ->and($userModel)->toContain('implements MustVerifyEmail, PasskeyUser')
+            ->not->toContain('implements /* MustVerifyEmail, */ PasskeyUser');
+    } finally {
+        (new Filesystem)->deleteDirectory($directory);
+    }
+});
+
+it('disables email verification in the User model when SMTP is not used', function () {
+    $directory = sys_get_temp_dir().'/jin-setup-'.bin2hex(random_bytes(8));
+    mkdir($directory.'/app/Models', 0700, true);
+    copy(base_path('app/Models/User.php'), $directory.'/app/Models/User.php');
+    file_put_contents($directory.'/.env', "MAIL_MAILER=log\n");
+
+    $process = runSetupBash(<<<'BASH'
+source "$1"
+setup_input_is_interactive() { return 0; }
+APP_DIR="$2"
+ENV_FILE="$APP_DIR/.env"
+EMAIL_VERIFICATION_OVERRIDE=""
+resolve_email_verification <<'INPUT'
+n
+INPUT
+configure_email_verification
+restore_user_email_verification_for_update
+grep -Fq 'implements MustVerifyEmail, PasskeyUser' "$APP_DIR/app/Models/User.php"
+apply_persisted_email_verification_model
+php -r '
+require $argv[1];
+require $argv[2];
+exit((new App\Models\User) instanceof Illuminate\Contracts\Auth\MustVerifyEmail ? 1 : 0);
+' "$3" "$APP_DIR/app/Models/User.php"
+BASH, base_path('setup.sh'), $directory, base_path('vendor/autoload.php'));
+
+    try {
+        $environment = (string) file_get_contents($directory.'/.env');
+        $userModel = (string) file_get_contents($directory.'/app/Models/User.php');
+
+        expect($process->isSuccessful())->toBeTrue($process->getErrorOutput())
+            ->and($environment)->toContain('EMAIL_VERIFICATION_ENABLED=false')
+            ->and($userModel)->toContain('implements /* MustVerifyEmail, */ PasskeyUser')
+            ->not->toContain('implements MustVerifyEmail, PasskeyUser');
+    } finally {
+        (new Filesystem)->deleteDirectory($directory);
+    }
+});
+
+it('restores email verification from an existing complete SMTP configuration', function () {
+    $directory = sys_get_temp_dir().'/jin-setup-'.bin2hex(random_bytes(8));
+    mkdir($directory.'/app/Models', 0700, true);
+    $userModel = str_replace(
+        'implements MustVerifyEmail, PasskeyUser',
+        'implements /* MustVerifyEmail, */ PasskeyUser',
+        (string) file_get_contents(base_path('app/Models/User.php')),
+    );
+    file_put_contents($directory.'/app/Models/User.php', $userModel);
+    file_put_contents($directory.'/.env', implode("\n", [
+        'EMAIL_VERIFICATION_ENABLED=true',
+        'MAIL_MAILER=smtp',
+        'MAIL_SCHEME=smtps',
+        'MAIL_HOST=smtp.example.net',
+        'MAIL_PORT=465',
+        'MAIL_USERNAME=mailer-user',
+        'MAIL_PASSWORD=mailer-secret',
+        'MAIL_FROM_ADDRESS=noreply@jin.test',
+        'MAIL_FROM_NAME=Jin',
+        '',
+    ]));
+
+    $process = runSetupBash(<<<'BASH'
+source "$1"
+setup_input_is_interactive() { return 1; }
+APP_DIR="$2"
+ENV_FILE="$APP_DIR/.env"
+EMAIL_VERIFICATION_OVERRIDE=""
+resolve_email_verification
+configure_email_verification
+BASH, base_path('setup.sh'), $directory);
+
+    try {
+        $userModel = (string) file_get_contents($directory.'/app/Models/User.php');
+
+        expect($process->isSuccessful())->toBeTrue($process->getErrorOutput())
+            ->and($userModel)->toContain('implements MustVerifyEmail, PasskeyUser')
+            ->not->toContain('implements /* MustVerifyEmail, */ PasskeyUser');
+    } finally {
+        (new Filesystem)->deleteDirectory($directory);
+    }
+});
+
+it('rejects non-interactive email verification without complete SMTP settings', function () {
+    $directory = sys_get_temp_dir().'/jin-setup-'.bin2hex(random_bytes(8));
+    mkdir($directory, 0700);
+    file_put_contents($directory.'/.env', "MAIL_MAILER=log\n");
+
+    $process = runSetupBash(<<<'BASH'
+source "$1"
+setup_input_is_interactive() { return 1; }
+ENV_FILE="$2/.env"
+EMAIL_VERIFICATION_OVERRIDE=true
+resolve_email_verification
+BASH, base_path('setup.sh'), $directory);
+
+    try {
+        expect($process->isSuccessful())->toBeFalse()
+            ->and($process->getErrorOutput())->toContain(
+                'Email verification is enabled, but .env does not contain a complete SMTP configuration',
+            );
+    } finally {
+        (new Filesystem)->deleteDirectory($directory);
+    }
+});
+
+it('accepts complete non-interactive SMTP overrides', function () {
+    $directory = sys_get_temp_dir().'/jin-setup-'.bin2hex(random_bytes(8));
+    mkdir($directory.'/app/Models', 0700, true);
+    copy(base_path('app/Models/User.php'), $directory.'/app/Models/User.php');
+    file_put_contents($directory.'/.env', "MAIL_MAILER=log\n");
+
+    $process = runSetupBash(<<<'BASH'
+source "$1"
+setup_input_is_interactive() { return 1; }
+APP_DIR="$2"
+ENV_FILE="$APP_DIR/.env"
+EMAIL_VERIFICATION_OVERRIDE=true
+MAIL_HOST=smtp.example.net
+MAIL_PORT=465
+MAIL_SCHEME=smtps
+MAIL_USERNAME=mailer-user
+MAIL_PASSWORD=mailer-secret
+MAIL_FROM_ADDRESS=noreply@jin.test
+MAIL_FROM_NAME='Jin SMTP'
+resolve_email_verification
+configure_email_verification
+BASH, base_path('setup.sh'), $directory);
+
+    try {
+        $environment = (string) file_get_contents($directory.'/.env');
+
+        expect($process->isSuccessful())->toBeTrue($process->getErrorOutput())
+            ->and($process->getOutput())->not->toContain('Enable email verification?')
+            ->and($environment)->toContain(
+                'EMAIL_VERIFICATION_ENABLED=true',
+                'MAIL_MAILER=smtp',
+                'MAIL_SCHEME=smtps',
+                'MAIL_HOST="smtp.example.net"',
+                'MAIL_PORT=465',
+                'MAIL_USERNAME="mailer-user"',
+                'MAIL_PASSWORD="mailer-secret"',
+                'MAIL_FROM_ADDRESS="noreply@jin.test"',
+                'MAIL_FROM_NAME="Jin SMTP"',
+            );
+    } finally {
+        (new Filesystem)->deleteDirectory($directory);
+    }
 });
 
 it('requires the default Ubuntu target to be a cloned repository', function () {

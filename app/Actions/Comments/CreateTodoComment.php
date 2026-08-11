@@ -55,6 +55,7 @@ class CreateTodoComment
             $project,
             MentionNotification::Todo,
             $todo->title,
+            $todo->id,
         );
 
         return $comment;

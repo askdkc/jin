@@ -9,6 +9,7 @@ use App\Models\Team;
 use App\Models\TeamInvitation;
 use App\Models\Todo;
 use App\Models\User;
+use App\Support\ActivityNavigation;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -83,6 +84,19 @@ class DashboardController extends Controller
             ],
         ];
         $canInviteMembers = Gate::allows('inviteMember', $currentTeam);
+        $recentActivities = Activity::query()
+            ->select(['id', 'project_id', 'actor_id', 'type', 'subject_type', 'subject_id', 'metadata', 'created_at'])
+            ->with(['actor:id,name', 'project:id,team_id,name'])
+            ->whereHas('project', fn (Builder $query) => $query
+                ->whereIn(
+                    'projects.id',
+                    Project::query()->visibleTo($user, $currentTeam)->select('projects.id'),
+                )
+                ->whereNull('archived_at'))
+            ->latest('id')
+            ->limit(30)
+            ->get();
+        $todoCommentTargets = ActivityNavigation::todoCommentTargets($recentActivities);
 
         return Inertia::render('Dashboard', [
             'pendingInvitations' => $pendingInvitations,
@@ -140,18 +154,7 @@ class DashboardController extends Controller
                 ->orderBy('name')
                 ->get(['id', 'name'])
                 ->map(fn ($folder): array => ['id' => $folder->id, 'name' => $folder->name]),
-            'recentActivities' => Activity::query()
-                ->select(['id', 'project_id', 'actor_id', 'type', 'subject_id', 'metadata', 'created_at'])
-                ->with(['actor:id,name', 'project:id,team_id,name'])
-                ->whereHas('project', fn (Builder $query) => $query
-                    ->whereIn(
-                        'projects.id',
-                        Project::query()->visibleTo($user, $currentTeam)->select('projects.id'),
-                    )
-                    ->whereNull('archived_at'))
-                ->latest('id')
-                ->limit(30)
-                ->get()
+            'recentActivities' => $recentActivities
                 ->map(fn (Activity $activity): array => [
                     'id' => $activity->id,
                     'type' => $activity->type->value,
@@ -162,6 +165,8 @@ class DashboardController extends Controller
                     'subjectId' => ($activity->metadata['subjectDeleted'] ?? false)
                         ? null
                         : $activity->subject_id,
+                    'todoId' => $todoCommentTargets[$activity->id]['todoId'] ?? null,
+                    'todoListId' => $todoCommentTargets[$activity->id]['todoListId'] ?? null,
                     'createdAt' => $activity->created_at?->toISOString(),
                     'project' => [
                         'id' => $activity->project->id,

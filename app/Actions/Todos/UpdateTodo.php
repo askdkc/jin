@@ -66,6 +66,7 @@ class UpdateTodo
                 $project,
                 MentionNotification::Todo,
                 $todo->title,
+                $todo->id,
             );
         }
 

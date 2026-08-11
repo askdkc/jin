@@ -36,6 +36,19 @@ export const activityHref = (teamSlug: string, activity: ActivityItem) => {
         case 'messages':
             return MessageBoardController.index(projectArguments);
         case 'todos':
+            if (
+                activity.type === 'todo.comment.created' &&
+                activity.todoId !== null &&
+                activity.todoListId !== null
+            ) {
+                return ProjectTodoController.show([
+                    teamSlug,
+                    activity.project.id,
+                    activity.todoListId,
+                    activity.todoId,
+                ]);
+            }
+
             return ProjectTodoController.index(projectArguments);
         case 'schedule':
             return ScheduleEventController.index(projectArguments);

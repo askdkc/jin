@@ -8,12 +8,50 @@ use App\Models\Todo;
 use App\Models\TodoList;
 use App\Models\TodoReminderDelivery;
 use App\Models\User;
+use App\Notifications\MentionNotification;
 use App\Notifications\TodoActivityNotification;
 use App\Support\TodoReminderDispatcher;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
 use Inertia\Testing\AssertableInertia as Assert;
+
+test('to-do notification mail opens the specific to-do detail', function () {
+    $actor = User::factory()->create();
+    $recipient = User::factory()->create();
+    $team = Team::factory()->create();
+    $project = Project::factory()->for($team)->for($actor, 'creator')->create();
+    $list = TodoList::factory()->for($project)->create();
+    $todo = Todo::factory()->for($list, 'todoList')->for($actor, 'creator')->create();
+
+    $mail = (new TodoActivityNotification(
+        TodoActivityNotification::Commented,
+        $actor,
+        $project,
+        $todo,
+    ))->toMail($recipient);
+
+    expect($mail->actionUrl)->toBe(route('projects.todos.show', [$team, $project, $list, $todo]));
+});
+
+test('to-do mention mail opens the specific to-do detail', function () {
+    $actor = User::factory()->create();
+    $recipient = User::factory()->create();
+    $team = Team::factory()->create();
+    $project = Project::factory()->for($team)->for($actor, 'creator')->create();
+    $list = TodoList::factory()->for($project)->create();
+    $todo = Todo::factory()->for($list, 'todoList')->for($actor, 'creator')->create();
+
+    $mail = (new MentionNotification(
+        MentionNotification::Todo,
+        $actor,
+        $project,
+        $todo->title,
+        $todo->id,
+    ))->toMail($recipient);
+
+    expect($mail->actionUrl)->toBe(route('projects.todos.show', [$team, $project, $list, $todo]));
+});
 
 test('todo assignment comments and completion notify related users except the actor', function () {
     Notification::fake();

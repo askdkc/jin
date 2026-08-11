@@ -122,9 +122,6 @@
             q: String(formData.get('q') ?? ''),
         });
     };
-    const canComment = (activity: ActivityItem): boolean =>
-        activity.target === 'messages' || activity.target === 'todos';
-
     const getActivityGroups = (): ActivityGroup[] => {
         const grouped: Array<{
             key: string;
@@ -482,22 +479,6 @@
                                                     >
                                                         {activity.subjectLabel}
                                                     </Link>
-                                                    {#if canComment(activity)}
-                                                        <Link
-                                                            href={activityHref(
-                                                                currentTeam.slug,
-                                                                activity,
-                                                            )}
-                                                            class="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-sky-700 dark:text-slate-400 dark:hover:text-sky-400"
-                                                        >
-                                                            <MessageCircle
-                                                                class="size-3"
-                                                            />
-                                                            {t(
-                                                                'View and comment',
-                                                            )}
-                                                        </Link>
-                                                    {/if}
                                                 </article>
                                             </li>
                                         {/each}

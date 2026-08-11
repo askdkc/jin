@@ -150,7 +150,8 @@ test('every todo notification reply runs the complete todo comment workflow', fu
         $mentioned,
         MentionNotification::class,
         fn (MentionNotification $notification): bool => $notification->type === MentionNotification::Todo
-            && $notification->title === $todo->title,
+            && $notification->title === $todo->title
+            && $notification->targetId === $todo->id,
     );
 })->with([
     'assigned' => TodoActivityNotification::Assigned,

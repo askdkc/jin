@@ -298,6 +298,17 @@ valid_http_url() {
     valid_local_hostname "$host"
 }
 
+valid_email_address() {
+    [[ "$1" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]
+}
+
+valid_mail_from_address() {
+    valid_email_address "$1" || return 1
+    case "$1" in
+        *@example.com|*@example.net|*@example.org) return 1 ;;
+    esac
+}
+
 read_env() {
     local key="$1" file="${2:-$ENV_FILE}" value
 
@@ -324,6 +335,317 @@ set_env() {
 
 setup_input_is_interactive() {
     [[ -t 0 ]]
+}
+
+smtp_value_is_configured() {
+    [[ -n "$1" ]] && ! is_placeholder_value "$1" && [[ "$1" != null ]]
+}
+
+load_existing_smtp_settings() {
+    TARGET_MAIL_HOST="$(read_env MAIL_HOST "$ENV_FILE")"
+    TARGET_MAIL_PORT="$(read_env MAIL_PORT "$ENV_FILE")"
+    TARGET_MAIL_SCHEME="$(read_env MAIL_SCHEME "$ENV_FILE")"
+    TARGET_MAIL_USERNAME="$(read_env MAIL_USERNAME "$ENV_FILE")"
+    TARGET_MAIL_PASSWORD="$(read_env MAIL_PASSWORD "$ENV_FILE")"
+    TARGET_MAIL_FROM_ADDRESS="$(read_env MAIL_FROM_ADDRESS "$ENV_FILE")"
+    TARGET_MAIL_FROM_NAME="$(read_env MAIL_FROM_NAME "$ENV_FILE")"
+}
+
+validate_smtp_settings() {
+    smtp_value_is_configured "$TARGET_MAIL_HOST" \
+        && [[ "$TARGET_MAIL_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]*$ ]] \
+        && [[ "$TARGET_MAIL_HOST" != 127.0.0.1 ]] \
+        && valid_port "$TARGET_MAIL_PORT" \
+        && [[ "$TARGET_MAIL_SCHEME" == smtp || "$TARGET_MAIL_SCHEME" == smtps ]] \
+        && smtp_value_is_configured "$TARGET_MAIL_USERNAME" \
+        && smtp_value_is_configured "$TARGET_MAIL_PASSWORD" \
+        && [[ "$TARGET_MAIL_PASSWORD" != *$'\n'* && "$TARGET_MAIL_PASSWORD" != *$'\r'* ]] \
+        && valid_mail_from_address "$TARGET_MAIL_FROM_ADDRESS" \
+        && [[ -n "$TARGET_MAIL_FROM_NAME" ]] \
+        && [[ "$TARGET_MAIL_FROM_NAME" != *$'\n'* && "$TARGET_MAIL_FROM_NAME" != *$'\r'* ]]
+}
+
+smtp_environment_is_configured() {
+    [[ "$(read_env MAIL_MAILER "$ENV_FILE")" == smtp ]] || return 1
+    load_existing_smtp_settings
+    validate_smtp_settings
+}
+
+prompt_email_verification() {
+    local default_enabled="$1" input prompt
+
+    printf '\nEmail verification\n'
+    printf '%s\n' 'Email verification requires a working external SMTP account.'
+    if [[ "$default_enabled" == true ]]; then
+        prompt='Enable email verification? [Y/n]: '
+    else
+        prompt='Enable email verification? [y/N]: '
+    fi
+
+    while true; do
+        printf '%s' "$prompt"
+        IFS= read -r input || input=""
+        case "$input" in
+            '')
+                TARGET_EMAIL_VERIFICATION_ENABLED="$default_enabled"
+                return 0
+                ;;
+            y|Y|yes|Yes|YES)
+                TARGET_EMAIL_VERIFICATION_ENABLED=true
+                return 0
+                ;;
+            n|N|no|No|NO)
+                TARGET_EMAIL_VERIFICATION_ENABLED=false
+                return 0
+                ;;
+            *)
+                warn "Enter y or n"
+                ;;
+        esac
+    done
+}
+
+prompt_smtp_settings() {
+    local input default_port
+    local existing_password=0
+
+    load_existing_smtp_settings
+    if ! smtp_value_is_configured "$TARGET_MAIL_HOST" || [[ "$TARGET_MAIL_HOST" == 127.0.0.1 ]]; then
+        TARGET_MAIL_HOST=""
+        TARGET_MAIL_PORT=""
+    fi
+    [[ "$TARGET_MAIL_SCHEME" == smtp || "$TARGET_MAIL_SCHEME" == smtps ]] \
+        || TARGET_MAIL_SCHEME=smtp
+    valid_port "$TARGET_MAIL_PORT" || TARGET_MAIL_PORT=""
+    smtp_value_is_configured "$TARGET_MAIL_USERNAME" || TARGET_MAIL_USERNAME=""
+    if smtp_value_is_configured "$TARGET_MAIL_PASSWORD"; then
+        existing_password=1
+    else
+        TARGET_MAIL_PASSWORD=""
+    fi
+    valid_mail_from_address "$TARGET_MAIL_FROM_ADDRESS" || TARGET_MAIL_FROM_ADDRESS=""
+    if [[ -z "$TARGET_MAIL_FROM_NAME" || "$TARGET_MAIL_FROM_NAME" == "\${APP_NAME}" ]]; then
+        TARGET_MAIL_FROM_NAME=Jin
+    fi
+
+    printf '%s\n' 'Enter the SMTP settings. The password input is hidden and values are stored in .env.'
+    while true; do
+        if [[ -n "$TARGET_MAIL_HOST" ]]; then
+            printf 'SMTP host [%s]: ' "$TARGET_MAIL_HOST"
+        else
+            printf 'SMTP host: '
+        fi
+        IFS= read -r input || die "Could not read the SMTP host"
+        [[ -z "$input" ]] || TARGET_MAIL_HOST="$input"
+        if smtp_value_is_configured "$TARGET_MAIL_HOST" \
+            && [[ "$TARGET_MAIL_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]*$ ]] \
+            && [[ "$TARGET_MAIL_HOST" != 127.0.0.1 ]]; then
+            break
+        fi
+        warn "Enter an external SMTP hostname or IP address"
+    done
+
+    while true; do
+        printf 'SMTP scheme (smtp or smtps) [%s]: ' "$TARGET_MAIL_SCHEME"
+        IFS= read -r input || die "Could not read the SMTP scheme"
+        [[ -z "$input" ]] || TARGET_MAIL_SCHEME="$input"
+        [[ "$TARGET_MAIL_SCHEME" == smtp || "$TARGET_MAIL_SCHEME" == smtps ]] && break
+        warn "Enter smtp or smtps"
+    done
+
+    default_port=587
+    [[ "$TARGET_MAIL_SCHEME" == smtps ]] && default_port=465
+    TARGET_MAIL_PORT="${TARGET_MAIL_PORT:-$default_port}"
+    while true; do
+        printf 'SMTP port [%s]: ' "$TARGET_MAIL_PORT"
+        IFS= read -r input || die "Could not read the SMTP port"
+        [[ -z "$input" ]] || TARGET_MAIL_PORT="$input"
+        valid_port "$TARGET_MAIL_PORT" && break
+        warn "Enter an SMTP port from 1 to 65535"
+    done
+
+    while true; do
+        if [[ -n "$TARGET_MAIL_USERNAME" ]]; then
+            printf 'SMTP username [%s]: ' "$TARGET_MAIL_USERNAME"
+        else
+            printf 'SMTP username: '
+        fi
+        IFS= read -r input || die "Could not read the SMTP username"
+        [[ -z "$input" ]] || TARGET_MAIL_USERNAME="$input"
+        smtp_value_is_configured "$TARGET_MAIL_USERNAME" && break
+        warn "SMTP username is required"
+    done
+
+    while true; do
+        if [[ "$existing_password" -eq 1 ]]; then
+            printf 'SMTP password [press Enter to keep the current value]: '
+        else
+            printf 'SMTP password: '
+        fi
+        IFS= read -r -s input || die "Could not read the SMTP password"
+        printf '\n'
+        if [[ -n "$input" ]]; then
+            TARGET_MAIL_PASSWORD="$input"
+            MAIL_PASSWORD_WRITE_REQUIRED=1
+        fi
+        smtp_value_is_configured "$TARGET_MAIL_PASSWORD" \
+            && [[ "$TARGET_MAIL_PASSWORD" != *$'\n'* && "$TARGET_MAIL_PASSWORD" != *$'\r'* ]] \
+            && break
+        warn "SMTP password is required and cannot contain newlines"
+    done
+
+    while true; do
+        if [[ -n "$TARGET_MAIL_FROM_ADDRESS" ]]; then
+            printf 'From email address [%s]: ' "$TARGET_MAIL_FROM_ADDRESS"
+        else
+            printf 'From email address: '
+        fi
+        IFS= read -r input || die "Could not read the From email address"
+        [[ -z "$input" ]] || TARGET_MAIL_FROM_ADDRESS="$input"
+        valid_mail_from_address "$TARGET_MAIL_FROM_ADDRESS" && break
+        warn "Enter a valid non-example From email address"
+    done
+
+    while true; do
+        printf 'From name [%s]: ' "$TARGET_MAIL_FROM_NAME"
+        IFS= read -r input || die "Could not read the From name"
+        [[ -z "$input" ]] || TARGET_MAIL_FROM_NAME="$input"
+        if [[ -n "$TARGET_MAIL_FROM_NAME" \
+            && "$TARGET_MAIL_FROM_NAME" != *$'\n'* \
+            && "$TARGET_MAIL_FROM_NAME" != *$'\r'* ]]; then
+            break
+        fi
+        warn "From name is required and cannot contain newlines"
+    done
+
+    validate_smtp_settings || die "The SMTP settings are incomplete or invalid"
+    SMTP_SETTINGS_WRITE_REQUIRED=1
+}
+
+smtp_override_is_requested() {
+    [[ -n "${MAIL_HOST:-}${MAIL_PORT:-}${MAIL_SCHEME:-}${MAIL_USERNAME:-}${MAIL_PASSWORD:-}${MAIL_FROM_ADDRESS:-}${MAIL_FROM_NAME:-}" ]]
+}
+
+load_smtp_overrides() {
+    [[ -n "${MAIL_HOST:-}" && -n "${MAIL_PORT:-}" && -n "${MAIL_USERNAME:-}" \
+        && -n "${MAIL_PASSWORD:-}" && -n "${MAIL_FROM_ADDRESS:-}" ]] \
+        || die "MAIL_HOST, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD, and MAIL_FROM_ADDRESS are required when enabling email verification non-interactively"
+
+    TARGET_MAIL_HOST="$MAIL_HOST"
+    TARGET_MAIL_PORT="$MAIL_PORT"
+    TARGET_MAIL_SCHEME="${MAIL_SCHEME:-smtp}"
+    TARGET_MAIL_USERNAME="$MAIL_USERNAME"
+    TARGET_MAIL_PASSWORD="$MAIL_PASSWORD"
+    TARGET_MAIL_FROM_ADDRESS="$MAIL_FROM_ADDRESS"
+    TARGET_MAIL_FROM_NAME="${MAIL_FROM_NAME:-Jin}"
+    validate_smtp_settings || die "The SMTP environment overrides are incomplete or invalid"
+    SMTP_SETTINGS_WRITE_REQUIRED=1
+    MAIL_PASSWORD_WRITE_REQUIRED=1
+}
+
+resolve_email_verification() {
+    local configured_value default_enabled=false selection_was_prompted=0
+
+    TARGET_EMAIL_VERIFICATION_ENABLED=""
+    SMTP_SETTINGS_WRITE_REQUIRED=0
+    MAIL_PASSWORD_WRITE_REQUIRED=0
+    configured_value="$(read_env EMAIL_VERIFICATION_ENABLED "$ENV_FILE")"
+
+    if [[ -n "${EMAIL_VERIFICATION_OVERRIDE:-}" ]]; then
+        TARGET_EMAIL_VERIFICATION_ENABLED="$(normalize_boolean "$EMAIL_VERIFICATION_OVERRIDE")" \
+            || die "EMAIL_VERIFICATION_ENABLED must be true, false, 1, or 0"
+    elif [[ -n "$configured_value" ]]; then
+        TARGET_EMAIL_VERIFICATION_ENABLED="$(normalize_boolean "$configured_value")" \
+            || die "Existing EMAIL_VERIFICATION_ENABLED must be true, false, 1, or 0"
+    elif setup_input_is_interactive; then
+        smtp_environment_is_configured && default_enabled=true
+        prompt_email_verification "$default_enabled"
+        selection_was_prompted=1
+    elif smtp_environment_is_configured; then
+        TARGET_EMAIL_VERIFICATION_ENABLED=true
+    else
+        TARGET_EMAIL_VERIFICATION_ENABLED=false
+    fi
+
+    [[ "$TARGET_EMAIL_VERIFICATION_ENABLED" == true ]] || return 0
+
+    if smtp_override_is_requested; then
+        load_smtp_overrides
+    elif [[ "$selection_was_prompted" -eq 1 ]]; then
+        prompt_smtp_settings
+    elif ! smtp_environment_is_configured; then
+        if setup_input_is_interactive; then
+            printf '\nEmail verification requires SMTP configuration.\n'
+            prompt_smtp_settings
+        else
+            die "Email verification is enabled, but .env does not contain a complete SMTP configuration"
+        fi
+    fi
+}
+
+toggle_user_email_verification_model() {
+    local enabled="$1" model_file="${USER_MODEL_FILE:-$APP_DIR/app/Models/User.php}"
+
+    [[ -f "$model_file" ]] || return 1
+    if [[ "$enabled" == true ]]; then
+        sed -E -i.bak 's|implements[[:space:]]+/\*[[:space:]]*MustVerifyEmail,[[:space:]]*\*/[[:space:]]+PasskeyUser|implements MustVerifyEmail, PasskeyUser|' "$model_file" \
+            || { rm -f "${model_file}.bak"; return 1; }
+        rm -f "${model_file}.bak"
+        [[ "$(grep -Ec '^class User extends Authenticatable implements MustVerifyEmail, PasskeyUser$' "$model_file")" -eq 1 ]] \
+            || return 1
+    else
+        sed -E -i.bak 's|implements[[:space:]]+MustVerifyEmail,[[:space:]]+PasskeyUser|implements /* MustVerifyEmail, */ PasskeyUser|' "$model_file" \
+            || { rm -f "${model_file}.bak"; return 1; }
+        rm -f "${model_file}.bak"
+        [[ "$(grep -Ec '^class User extends Authenticatable implements /\* MustVerifyEmail, \*/ PasskeyUser$' "$model_file")" -eq 1 ]] \
+            || return 1
+    fi
+}
+
+set_user_email_verification_model() {
+    local enabled="$1" model_file="${USER_MODEL_FILE:-$APP_DIR/app/Models/User.php}"
+
+    toggle_user_email_verification_model "$enabled" \
+        || die "Could not configure MustVerifyEmail in $model_file"
+    if [[ "$enabled" == true ]]; then
+        log "Email verification enabled in the User model"
+    else
+        log "Email verification disabled in the User model"
+    fi
+}
+
+restore_user_email_verification_for_update() {
+    [[ -f "${USER_MODEL_FILE:-$APP_DIR/app/Models/User.php}" ]] || return 0
+    toggle_user_email_verification_model true
+}
+
+apply_persisted_email_verification_model() {
+    local configured_value
+
+    [[ -f "${ENV_FILE:-}" && -f "${USER_MODEL_FILE:-$APP_DIR/app/Models/User.php}" ]] || return 0
+    configured_value="$(read_env EMAIL_VERIFICATION_ENABLED "$ENV_FILE")" || return 1
+    [[ -n "$configured_value" ]] || return 0
+    configured_value="$(normalize_boolean "$configured_value")" || return 1
+    toggle_user_email_verification_model "$configured_value"
+}
+
+configure_email_verification() {
+    set_env EMAIL_VERIFICATION_ENABLED "$TARGET_EMAIL_VERIFICATION_ENABLED" "$ENV_FILE"
+
+    if [[ "$TARGET_EMAIL_VERIFICATION_ENABLED" == true && "$SMTP_SETTINGS_WRITE_REQUIRED" -eq 1 ]]; then
+        set_env MAIL_MAILER smtp "$ENV_FILE"
+        set_env MAIL_SCHEME "$TARGET_MAIL_SCHEME" "$ENV_FILE"
+        set_env MAIL_HOST "$(dotenv_quote "$TARGET_MAIL_HOST")" "$ENV_FILE"
+        set_env MAIL_PORT "$TARGET_MAIL_PORT" "$ENV_FILE"
+        set_env MAIL_USERNAME "$(dotenv_quote "$TARGET_MAIL_USERNAME")" "$ENV_FILE"
+        if [[ "$MAIL_PASSWORD_WRITE_REQUIRED" -eq 1 ]]; then
+            set_env MAIL_PASSWORD "$(dotenv_quote "$TARGET_MAIL_PASSWORD")" "$ENV_FILE"
+        fi
+        set_env MAIL_FROM_ADDRESS "$(dotenv_quote "$TARGET_MAIL_FROM_ADDRESS")" "$ENV_FILE"
+        set_env MAIL_FROM_NAME "$(dotenv_quote "$TARGET_MAIL_FROM_NAME")" "$ENV_FILE"
+    fi
+
+    set_user_email_verification_model "$TARGET_EMAIL_VERIFICATION_ENABLED"
 }
 
 normalize_ip_allowlist() {
@@ -1372,7 +1694,7 @@ resolve_ubuntu_operator_inputs() {
             die "Invalid application domain: $APP_DOMAIN"
         fi
     fi
-    [[ -z "$EMAIL" || "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] \
+    [[ -z "$EMAIL" ]] || valid_email_address "$EMAIL" \
         || die "Invalid email: $EMAIL"
 }
 
@@ -1811,6 +2133,8 @@ cleanup_jin_deployment() {
     local status=$?
 
     set +e
+    apply_persisted_email_verification_model \
+        || warn "Could not restore the configured User email-verification state"
     if [[ "$status" -ne 0 && "$JIN_NGINX_BACKUP_READY" -eq 1 ]]; then
         if [[ "${JIN_SETUP_DIAGNOSTICS:-0}" == 1 ]]; then
             diagnose_jin_nginx_failure
@@ -2576,6 +2900,7 @@ setup_ubuntu() {
 
     if [[ -d "$APP_DIR/.git" ]]; then
         prepare_jin_update
+        restore_user_email_verification_for_update
     fi
     ensure_jin_repository
     APP_DIR="$(CDPATH= cd -- "$APP_DIR" && pwd -P)"
@@ -2588,6 +2913,8 @@ setup_ubuntu() {
     sudo chmod o-rwx "$ENV_FILE"
     resolve_ubuntu_access_and_locale "$env_file_created"
     configure_access_and_locale_environment
+    resolve_email_verification
+    configure_email_verification
 
     DB_NAME="${DB_NAME:-jin}"
     DB_USER="${DB_USER:-jin}"
@@ -2743,6 +3070,11 @@ Non-interactive Ubuntu environment overrides:
   IP_RESTRICTION_ENABLED       true/false; defaults to false on first setup
   ALLOWED_IPS                  Comma-separated IP/CIDR list; implies true when set
   APP_LOCALE                   ja, en, fr, de, zh_CN, zh_TW, es, pt_BR, pt_PT, or ko
+  EMAIL_VERIFICATION_ENABLED   true/false; defaults to false without interactive input
+  MAIL_HOST, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD, MAIL_FROM_ADDRESS
+                               Required when enabling email verification non-interactively
+  MAIL_SCHEME                  smtp (default) or smtps
+  MAIL_FROM_NAME               Sender name (default: Jin)
 
 Ubuntu installs PHP 8.5/FPM, Composer, Node.js 24+, PostgreSQL 16 with
 postgresql-16-pgroonga on Ubuntu 24.04 or PostgreSQL 18 with
@@ -2770,6 +3102,7 @@ main() {
     IP_RESTRICTION_OVERRIDE="${IP_RESTRICTION_ENABLED:-}"
     ALLOWED_IPS_OVERRIDE="${ALLOWED_IPS:-}"
     APP_LOCALE_OVERRIDE="${APP_LOCALE:-}"
+    EMAIL_VERIFICATION_OVERRIDE="${EMAIL_VERIFICATION_ENABLED:-}"
     TARGET_DOCUMENT_SERVER_URL="${ONLYOFFICE_DOCUMENT_SERVER_URL:-}"
     TARGET_PUBLIC_URL="${ONLYOFFICE_PUBLIC_URL:-}"
     TARGET_INTERNAL_URL="${APP_ONLYOFFICE_INTERNAL_URL:-}"
@@ -2895,6 +3228,8 @@ main() {
     case "$PLATFORM" in
         macos)
             resolve_app_values
+            resolve_email_verification
+            configure_email_verification
             setup_macos
             log "Provisioning complete."
             log "Environment: $ENV_FILE"

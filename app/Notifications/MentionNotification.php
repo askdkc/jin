@@ -3,9 +3,11 @@
 namespace App\Notifications;
 
 use App\Models\Project;
+use App\Models\Todo;
 use App\Models\User;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use Illuminate\Support\Collection;
@@ -93,6 +95,7 @@ class MentionNotification extends Notification implements ShouldQueue
                 'project' => $this->project,
                 'channel' => $this->chatChannelId,
             ]),
+            self::Todo => $this->todoUrl(),
             default => route('projects.todos.index', [$this->project->team, $this->project]),
         };
 
@@ -125,6 +128,7 @@ class MentionNotification extends Notification implements ShouldQueue
             'chatChannelId' => $this->type === self::Chat ? $this->chatChannelId : null,
             'chatChannelName' => $this->type === self::Chat ? Str::after($this->title, '#') : null,
             'chatMessageExcerpt' => $this->type === self::Chat ? $this->chatMessageExcerpt : null,
+            'todoId' => $this->type === self::Todo ? $this->targetId : null,
             'actorName' => $this->actor->name,
         ];
     }
@@ -132,5 +136,22 @@ class MentionNotification extends Notification implements ShouldQueue
     public function broadcastType(): string
     {
         return $this->type;
+    }
+
+    private function todoUrl(): string
+    {
+        $todo = Todo::query()
+            ->select(['id', 'todo_list_id'])
+            ->whereHas('todoList', fn (Builder $query) => $query->where('project_id', $this->project->id))
+            ->find($this->targetId);
+
+        return $todo
+            ? route('projects.todos.show', [
+                $this->project->team,
+                $this->project,
+                $todo->todo_list_id,
+                $todo,
+            ])
+            : route('projects.todos.index', [$this->project->team, $this->project]);
     }
 }

@@ -201,6 +201,7 @@ class CommentController extends Controller
             $project,
             MentionNotification::Todo,
             $todo->title,
+            $todo->id,
         );
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Comment updated.')]);

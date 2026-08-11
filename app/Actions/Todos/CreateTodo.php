@@ -78,6 +78,7 @@ class CreateTodo
             $project,
             MentionNotification::Todo,
             $todo->title,
+            $todo->id,
         );
 
         return $todo;

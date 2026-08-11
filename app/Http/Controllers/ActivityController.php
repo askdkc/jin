@@ -7,6 +7,7 @@ use App\Models\Activity;
 use App\Models\Project;
 use App\Models\Team;
 use App\Models\User;
+use App\Support\ActivityNavigation;
 use Illuminate\Database\Eloquent\Builder;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -26,7 +27,7 @@ class ActivityController extends Controller
             ->whereNull('archived_at');
 
         $activities = Activity::query()
-            ->select(['id', 'project_id', 'actor_id', 'type', 'subject_id', 'metadata', 'created_at'])
+            ->select(['id', 'project_id', 'actor_id', 'type', 'subject_type', 'subject_id', 'metadata', 'created_at'])
             ->with(['actor:id,name,avatar_path', 'project:id,team_id,name'])
             ->whereIn('project_id', (clone $visibleProjects)->select('projects.id'))
             ->when($projectId !== null, fn (Builder $query) => $query->where('project_id', $projectId))
@@ -39,7 +40,9 @@ class ActivityController extends Controller
             }))
             ->latest('id')
             ->limit(50)
-            ->get()
+            ->get();
+        $todoCommentTargets = ActivityNavigation::todoCommentTargets($activities);
+        $activities = $activities
             ->map(fn (Activity $activity): array => [
                 'id' => $activity->id,
                 'type' => $activity->type->value,
@@ -51,6 +54,8 @@ class ActivityController extends Controller
                 'subjectId' => ($activity->metadata['subjectDeleted'] ?? false)
                     ? null
                     : $activity->subject_id,
+                'todoId' => $todoCommentTargets[$activity->id]['todoId'] ?? null,
+                'todoListId' => $todoCommentTargets[$activity->id]['todoListId'] ?? null,
                 'createdAt' => $activity->created_at?->toISOString(),
                 'project' => [
                     'id' => $activity->project->id,

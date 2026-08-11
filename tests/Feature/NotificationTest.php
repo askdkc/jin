@@ -158,7 +158,7 @@ test('users cannot open another users notification', function () {
     expect($notification->fresh()->read_at)->toBeNull();
 });
 
-test('opening a to-do notification redirects to the specific to-do', function () {
+test('opening a to-do notification redirects to the specific to-do', function (string $type) {
     $actor = User::factory()->create();
     $recipient = User::factory()->create();
     $team = Team::factory()->create();
@@ -169,12 +169,43 @@ test('opening a to-do notification redirects to the specific to-do', function ()
     $list = TodoList::factory()->for($project)->create();
     $todo = Todo::factory()->for($list, 'todoList')->for($actor, 'creator')->create();
     $recipient->notify(new TodoActivityNotification(
-        TodoActivityNotification::Assigned,
+        $type,
         $actor,
         $project,
         $todo,
     ));
     $notification = $recipient->notifications()->firstOrFail();
+
+    $this->actingAs($recipient)
+        ->patch(route('notifications.open', [$team, $notification]))
+        ->assertRedirect(route('projects.todos.show', [$team, $project, $list, $todo]));
+
+    expect($notification->fresh()->read_at)->not->toBeNull();
+})->with([
+    'assigned' => TodoActivityNotification::Assigned,
+    'commented' => TodoActivityNotification::Commented,
+]);
+
+test('opening a to-do mention redirects to the specific to-do', function () {
+    $actor = User::factory()->create();
+    $recipient = User::factory()->create();
+    $team = Team::factory()->create();
+    $team->members()->attach($actor, ['role' => TeamRole::Owner->value]);
+    $team->members()->attach($recipient, ['role' => TeamRole::Member->value]);
+    $project = Project::factory()->for($team)->for($actor, 'creator')->create();
+    $project->members()->attach($recipient);
+    $list = TodoList::factory()->for($project)->create();
+    $todo = Todo::factory()->for($list, 'todoList')->for($actor, 'creator')->create();
+    $recipient->notify(new MentionNotification(
+        MentionNotification::Todo,
+        $actor,
+        $project,
+        $todo->title,
+        $todo->id,
+    ));
+    $notification = $recipient->notifications()->firstOrFail();
+
+    expect($notification->data['todoId'])->toBe($todo->id);
 
     $this->actingAs($recipient)
         ->patch(route('notifications.open', [$team, $notification]))

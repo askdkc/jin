@@ -95,7 +95,12 @@ class TodoActivityNotification extends Notification implements ShouldQueue
         return (new MailMessage)
             ->subject($this->todo->title)
             ->line($line)
-            ->action(__('View to-do'), route('projects.todos.index', [$this->project->team, $this->project]));
+            ->action(__('View to-do'), route('projects.todos.show', [
+                $this->project->team,
+                $this->project,
+                $this->todo->todo_list_id,
+                $this->todo,
+            ]));
     }
 
     /**

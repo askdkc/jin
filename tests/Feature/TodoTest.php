@@ -363,7 +363,23 @@ test('project participants can discuss todos while only authors and managers can
         ->assertInertia(fn (Assert $page) => $page
             ->where('activities.0.type', ActivityType::TodoCommentCreated->value)
             ->where('activities.0.target', 'todos')
-            ->where('activities.0.subjectLabel', '公開前チェック'));
+            ->where('activities.0.subjectLabel', '公開前チェック')
+            ->where('activities.0.todoId', $todo->id)
+            ->where('activities.0.todoListId', $list->id));
+
+    $this->get(route('projects.show', [$team, $project]))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('activity.latest.0.type', ActivityType::TodoCommentCreated->value)
+            ->where('activity.latest.0.todoId', $todo->id)
+            ->where('activity.latest.0.todoListId', $list->id));
+
+    $this->get(route('dashboard', $team))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('recentActivities.0.type', ActivityType::TodoCommentCreated->value)
+            ->where('recentActivities.0.todoId', $todo->id)
+            ->where('recentActivities.0.todoListId', $list->id));
 
     $this->actingAs($otherMember)
         ->delete(route('projects.todos.comments.destroy', [$team, $project, $list, $todo, $comment]))

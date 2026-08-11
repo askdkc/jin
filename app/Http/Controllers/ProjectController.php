@@ -22,6 +22,7 @@ use App\Models\Team;
 use App\Models\TeamAuditLog;
 use App\Models\Todo;
 use App\Models\User;
+use App\Support\ActivityNavigation;
 use App\Support\RichText;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\Relation;
@@ -486,17 +487,20 @@ class ProjectController extends Controller
     /** @return array{activeLastSevenDays: int, latest: mixed} */
     private function projectActivity(Project $project): array
     {
+        $activities = $project->activities()
+            ->with('actor:id,name,avatar_path')
+            ->latest('id')
+            ->limit(5)
+            ->get();
+        $todoCommentTargets = ActivityNavigation::todoCommentTargets($activities);
+
         return [
             'activeLastSevenDays' => $project->activities()
                 ->where('created_at', '>=', now()->subDays(7))
                 ->whereNotNull('actor_id')
                 ->distinct('actor_id')
                 ->count('actor_id'),
-            'latest' => $project->activities()
-                ->with('actor:id,name,avatar_path')
-                ->latest('id')
-                ->limit(5)
-                ->get()
+            'latest' => $activities
                 ->map(fn (Activity $activity): array => [
                     'id' => $activity->id,
                     'type' => $activity->type->value,
@@ -508,6 +512,8 @@ class ProjectController extends Controller
                     'subjectId' => ($activity->metadata['subjectDeleted'] ?? false)
                         ? null
                         : $activity->subject_id,
+                    'todoId' => $todoCommentTargets[$activity->id]['todoId'] ?? null,
+                    'todoListId' => $todoCommentTargets[$activity->id]['todoListId'] ?? null,
                     'createdAt' => $activity->created_at?->toISOString(),
                     'project' => [
                         'id' => $project->id,

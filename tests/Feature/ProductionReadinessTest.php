@@ -4,6 +4,10 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 
 beforeEach(function () {
+    DB::shouldReceive('selectOne')
+        ->byDefault()
+        ->andReturn((object) ['installed' => true]);
+
     config([
         'app.env' => 'production',
         'app.debug' => false,
@@ -158,7 +162,7 @@ test('enabled file content search requires pgroonga', function () {
         ->andReturn((object) ['installed' => false]);
 
     $this->artisan('app:production-check')
-        ->expectsOutput('PGroonga extension must be installed when file-content search is enabled.')
+        ->expectsOutput('PGroonga extension must be installed for PostgreSQL full-text search.')
         ->assertFailed();
 });
 

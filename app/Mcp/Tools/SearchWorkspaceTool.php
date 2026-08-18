@@ -8,8 +8,10 @@ use App\Models\MessageBoardPost;
 use App\Models\Project;
 use App\Models\StoredFile;
 use App\Models\Todo;
+use App\Support\FullTextSearch;
 use App\Support\RichText;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Str;
 use Laravel\Mcp\Request;
 use Laravel\Mcp\Response;
@@ -19,7 +21,10 @@ use Laravel\Mcp\Server\Tool;
 #[Description('JIN全体のプロジェクト、任務、掲示、ドキュメント、ファイルを認証済み利用者の権限範囲内で横断検索します。')]
 class SearchWorkspaceTool extends Tool
 {
-    public function __construct(private McpContext $context) {}
+    public function __construct(
+        private McpContext $context,
+        private FullTextSearch $fullTextSearch,
+    ) {}
 
     public function handle(Request $request): Response
     {
@@ -38,42 +43,44 @@ class SearchWorkspaceTool extends Tool
             ->visibleTo($user, $team)
             ->whereNull('archived_at')
             ->select('projects.id');
-        $search = '%'.addcslashes($input['query'], '%_\\').'%';
+        $search = (string) $input['query'];
         $projects = Project::query()
             ->whereIn('id', clone $projectIds)
-            ->where(fn ($query) => $query
-                ->where('name', 'like', $search)
-                ->orWhere('description', 'like', $search))
+            ->where(function (Builder $query) use ($search): void {
+                $this->fullTextSearch->apply($query, FullTextSearch::PROJECTS, $search);
+            })
             ->limit(10)
             ->get(['id', 'name', 'description']);
         $todos = Todo::query()
             ->with('todoList.project:id,name')
             ->whereHas('todoList', fn ($query) => $query->whereIn('project_id', clone $projectIds))
-            ->where(fn ($query) => $query
-                ->where('title', 'like', $search)
-                ->orWhere('details', 'like', $search))
+            ->where(function (Builder $query) use ($search): void {
+                $this->fullTextSearch->apply($query, FullTextSearch::TODOS, $search);
+            })
             ->limit(10)
             ->get();
         $messages = MessageBoardPost::query()
             ->with('project:id,name')
             ->whereIn('project_id', clone $projectIds)
-            ->where(fn ($query) => $query
-                ->where('title', 'like', $search)
-                ->orWhere('body', 'like', $search))
+            ->where(function (Builder $query) use ($search): void {
+                $this->fullTextSearch->apply($query, FullTextSearch::MESSAGE_BOARD_POSTS, $search);
+            })
             ->limit(10)
             ->get();
         $documents = Document::query()
             ->with('project:id,name')
             ->whereIn('project_id', clone $projectIds)
-            ->where(fn ($query) => $query
-                ->where('title', 'like', $search)
-                ->orWhere('body', 'like', $search))
+            ->where(function (Builder $query) use ($search): void {
+                $this->fullTextSearch->apply($query, FullTextSearch::DOCUMENTS, $search);
+            })
             ->limit(10)
             ->get();
         $files = StoredFile::query()
             ->with('project:id,name')
             ->whereIn('project_id', clone $projectIds)
-            ->where('original_name', 'like', $search)
+            ->where(function (Builder $query) use ($search): void {
+                $this->fullTextSearch->apply($query, FullTextSearch::STORED_FILES, $search);
+            })
             ->limit(10)
             ->get();
 

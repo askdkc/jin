@@ -63,9 +63,10 @@ Artisan::command('app:production-check', function (): int {
             return $executableFinder->find($path) === null;
         },
     ) === [];
+    $pgroongaRequired = config('database.default') === 'pgsql';
     $pgroongaInstalled = false;
 
-    if ($storedFileContentEnabled && config('database.default') === 'pgsql') {
+    if ($pgroongaRequired) {
         try {
             $extension = DB::selectOne(<<<'SQL'
                 SELECT EXISTS (
@@ -126,7 +127,7 @@ Artisan::command('app:production-check', function (): int {
                 && $storedFileContentMaxIndexedBytes <= $storedFileContentMaxOutputBytes),
         'Queue retry_after must exceed STORED_FILE_CONTENT_JOB_TIMEOUT.' => ! $storedFileContentEnabled
             || $queueRetryAfter > $storedFileContentJobTimeout,
-        'PGroonga extension must be installed when file-content search is enabled.' => ! $storedFileContentEnabled
+        'PGroonga extension must be installed for PostgreSQL full-text search.' => ! $pgroongaRequired
             || $pgroongaInstalled,
         'ONLYOFFICE configuration must be complete when enabled.' => ! $onlyOfficeEnabled
             || (filter_var(config('onlyoffice.document_server_url'), FILTER_VALIDATE_URL) !== false

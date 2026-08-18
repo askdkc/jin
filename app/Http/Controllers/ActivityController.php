@@ -8,12 +8,15 @@ use App\Models\Project;
 use App\Models\Team;
 use App\Models\User;
 use App\Support\ActivityNavigation;
+use App\Support\FullTextSearch;
 use Illuminate\Database\Eloquent\Builder;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class ActivityController extends Controller
 {
+    public function __construct(private FullTextSearch $fullTextSearch) {}
+
     public function __invoke(ActivityIndexRequest $request, Team $currentTeam): Response
     {
         $filters = $request->validated();
@@ -32,12 +35,39 @@ class ActivityController extends Controller
             ->whereIn('project_id', (clone $visibleProjects)->select('projects.id'))
             ->when($projectId !== null, fn (Builder $query) => $query->where('project_id', $projectId))
             ->when($actorId !== null, fn (Builder $query) => $query->where('actor_id', $actorId))
-            ->when($search !== null, fn (Builder $query) => $query->where(function (Builder $searchQuery) use ($search): void {
-                $searchQuery
-                    ->where('metadata->label', 'like', "%{$search}%")
-                    ->orWhereHas('actor', fn (Builder $actorQuery) => $actorQuery->where('name', 'like', "%{$search}%"))
-                    ->orWhereHas('project', fn (Builder $projectQuery) => $projectQuery->where('name', 'like', "%{$search}%"));
-            }))
+            ->when($search !== null, function (Builder $query) use ($search): void {
+                $query->where(function (Builder $searchQuery) use ($search): void {
+                    $this->fullTextSearch->apply(
+                        $searchQuery,
+                        FullTextSearch::ACTIVITIES,
+                        $search,
+                    );
+                    $searchQuery->orWhereIn(
+                        'actor_id',
+                        User::query()
+                            ->where(function (Builder $actorQuery) use ($search): void {
+                                $this->fullTextSearch->apply(
+                                    $actorQuery,
+                                    FullTextSearch::USERS,
+                                    $search,
+                                );
+                            })
+                            ->select('users.id'),
+                    );
+                    $searchQuery->orWhereIn(
+                        'project_id',
+                        Project::query()
+                            ->where(function (Builder $projectQuery) use ($search): void {
+                                $this->fullTextSearch->apply(
+                                    $projectQuery,
+                                    FullTextSearch::PROJECTS,
+                                    $search,
+                                );
+                            })
+                            ->select('projects.id'),
+                    );
+                });
+            })
             ->latest('id')
             ->limit(50)
             ->get();

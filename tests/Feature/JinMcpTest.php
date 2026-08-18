@@ -89,6 +89,34 @@ test('jin mcp reads searches and creates todos inside the authenticated users pe
         ->and($project->chatMessages()->firstOrFail()->body)->toBe('AIからの会話');
 });
 
+test('jin mcp treats SQL and full text syntax characters as literal search text', function () {
+    $owner = User::factory()->create();
+    $team = Team::factory()->create(['slug' => 'mcp-literal-search']);
+    $team->members()->attach($owner, ['role' => TeamRole::Owner->value]);
+    $project = Project::factory()->for($team)->for($owner, 'creator')->create([
+        'name' => '記号 %_ "quoted" workspace',
+    ]);
+    $project->members()->attach($owner);
+    $list = TodoList::factory()->for($project)->create();
+    Todo::factory()->for($list)->for($owner, 'creator')->create([
+        'title' => '記号 %_ "quoted" todo',
+    ]);
+
+    $searchResponse = JinServer::actingAs($owner)->tool(SearchWorkspaceTool::class, [
+        'team_slug' => $team->slug,
+        'query' => '%_ "quoted"',
+    ]);
+    $searchResponse->assertHasNoErrors()->assertSee([
+        '記号 %_ \\"quoted\\" workspace',
+        '記号 %_ \\"quoted\\" todo',
+    ]);
+
+    JinServer::actingAs($owner)->tool(SearchWorkspaceTool::class, [
+        'team_slug' => $team->slug,
+        'query' => "not-found\0term",
+    ])->assertHasNoErrors();
+});
+
 test('jin mcp requires an authenticated actor who belongs to the requested team', function () {
     $member = User::factory()->create();
     $outsider = User::factory()->create();

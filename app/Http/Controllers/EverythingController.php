@@ -15,6 +15,7 @@ use App\Models\Team;
 use App\Models\Todo;
 use App\Models\TodoList;
 use App\Models\User;
+use App\Support\FullTextSearch;
 use App\Support\OnlyOfficeDocumentTypeResolver;
 use App\Support\RichText;
 use App\Support\StoredFileContentSearch;
@@ -33,6 +34,7 @@ class EverythingController extends Controller
 {
     public function __construct(
         private OnlyOfficeDocumentTypeResolver $onlyOfficeDocumentTypeResolver,
+        private FullTextSearch $fullTextSearch,
         private StoredFileContentSearch $storedFileContentSearch,
         private StoredFileContentSnippet $storedFileContentSnippet,
     ) {}
@@ -188,7 +190,7 @@ class EverythingController extends Controller
             ])
             ->selectRaw('? as type, NULL as route_parent_id, NULL as route_resource_id', ['message']);
 
-        $this->applySearch($query, $search, ['message_board_posts.title', 'message_board_posts.body']);
+        $this->applySearch($query, $search, FullTextSearch::MESSAGE_BOARD_POSTS);
 
         return $this->scopeProjectAccess($query, $team, $user, $projectId);
     }
@@ -210,7 +212,7 @@ class EverythingController extends Controller
             ->addSelect('todos.todo_list_id as route_parent_id')
             ->selectRaw('COALESCE(todos.parent_id, todos.id) as route_resource_id');
 
-        $this->applySearch($query, $search, ['todos.title', 'todos.details']);
+        $this->applySearch($query, $search, FullTextSearch::TODOS);
 
         return $this->scopeProjectAccess($query, $team, $user, $projectId);
     }
@@ -237,7 +239,7 @@ class EverythingController extends Controller
                 'chat_messages.id as route_resource_id',
             ]);
 
-        $this->applySearch($query, $search, ['chat_messages.body']);
+        $this->applySearch($query, $search, FullTextSearch::CHAT_MESSAGES);
 
         return $this->scopeProjectAccess($query, $team, $user, $projectId);
     }
@@ -256,7 +258,7 @@ class EverythingController extends Controller
             ])
             ->selectRaw('? as type, NULL as route_parent_id, NULL as route_resource_id', ['document']);
 
-        $this->applySearch($query, $search, ['documents.title', 'documents.body']);
+        $this->applySearch($query, $search, FullTextSearch::DOCUMENTS);
 
         return $this->scopeProjectAccess($query, $team, $user, $projectId);
     }
@@ -283,10 +285,10 @@ class EverythingController extends Controller
 
         if ($search !== null) {
             $query->where(function (Builder $searchQuery) use ($search): void {
-                $searchQuery->where(
-                    'stored_files.original_name',
-                    'like',
-                    "%{$search}%",
+                $this->fullTextSearch->apply(
+                    $searchQuery,
+                    FullTextSearch::STORED_FILES,
+                    $search,
                 );
                 $this->storedFileContentSearch->addContentMatch(
                     $searchQuery,
@@ -359,7 +361,7 @@ class EverythingController extends Controller
             ])
             ->selectRaw('? as type, NULL as route_parent_id, NULL as route_resource_id', ['link']);
 
-        $this->applySearch($query, $search, ['external_links.title', 'external_links.url']);
+        $this->applySearch($query, $search, FullTextSearch::EXTERNAL_LINKS);
 
         return $this->scopeProjectAccess($query, $team, $user, $projectId);
     }
@@ -378,7 +380,7 @@ class EverythingController extends Controller
             ])
             ->selectRaw('? as type, NULL as route_parent_id, NULL as route_resource_id', ['comment']);
 
-        $this->applySearch($query, $search, ['comments.body']);
+        $this->applySearch($query, $search, FullTextSearch::COMMENTS);
 
         return $this->scopeProjectAccess($query, $team, $user, $projectId);
     }
@@ -407,20 +409,14 @@ class EverythingController extends Controller
         };
     }
 
-    /**
-     * @param  list<string>  $columns
-     */
-    private function applySearch(Builder $query, ?string $search, array $columns): void
+    private function applySearch(Builder $query, ?string $search, string $target): void
     {
         if ($search === null) {
             return;
         }
 
-        $query->where(function (Builder $searchQuery) use ($search, $columns): void {
-            foreach ($columns as $index => $column) {
-                $method = $index === 0 ? 'where' : 'orWhere';
-                $searchQuery->{$method}($column, 'like', "%{$search}%");
-            }
+        $query->where(function (Builder $searchQuery) use ($search, $target): void {
+            $this->fullTextSearch->apply($searchQuery, $target, $search);
         });
     }
 
